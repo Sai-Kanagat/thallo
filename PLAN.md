@@ -124,7 +124,7 @@ Reuse: `cortex-studio/apps/api/app/graph/agents.py` (`resilient`, `_gen_and_qa`,
 4. **Every branch merges only if:** tests pass, a separate review agent finds no blocking bug, and a security review passes. The verifier agent runs the fake-clock week after each merge wave.
 5. **Reporting:** outcomes only, with a plain list of what is real, what is mocked and what is waiting on Sai.
 
-**App:** MonoCode v0.16.0 (installed) as the build cockpit, using its orchestrator, worktrees and write scopes. First run one throwaway task through a Claude lead and a Codex worker. If orchestration misbehaves, fall back to Claude Code subagents with `/codex` for review. Stay on the production app, not the Native preview.
+**App:** Claude Code directly. MonoCode was dropped after its orchestration failed. Use `/codex` for cross-model review.
 
 **Models and effort (hard ceiling: Opus 5.5 at medium; lowest usage for the highest result):** lead, contracts, gate, ledgers: Opus 5.5 at medium. State machine, agent crew, posting, analytics, Counterfactual Quarter: Sonnet 5.5 at medium. Connectors, console UI, templates, reports: Codex at medium on Sai's ChatGPT subscription. Fixtures, docs, mechanical changes: Haiku 5.5 at low.
 
