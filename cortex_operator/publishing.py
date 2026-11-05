@@ -50,4 +50,7 @@ def deliver(publisher, key: str, item: Item, attempts: int = 3) -> str | None:
             return publisher.publish(key, public)
         except ConnectionError:
             continue
+        except (TimeoutError, ValueError):
+            # A timeout may have posted, so a retry could double post.
+            return None
     return None

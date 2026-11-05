@@ -1,4 +1,5 @@
 {
   "channels": ["linkedin"],
-  "notion": {"database_id": "PASTE_TEST_DATABASE_ID", "brand": "sai"}
+  "notion": {"database_id": "PASTE_TEST_DATABASE_ID", "brand": "sai"},
+  "postiz": {"integrations": {"linkedin": {"id": "PASTE_POSTIZ_CHANNEL_ID", "type": "linkedin"}}}
 }

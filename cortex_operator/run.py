@@ -1,6 +1,7 @@
 """One pass over a brand's calendar: python -m cortex_operator.run brand.json [state.db]
 
-Real publishing does not exist yet, so approved items fail safely at publish time.
+Without POSTIZ_API_KEY nothing leaves. With it, approved items become Postiz drafts
+unless LAUNCH_MODE=live.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from cortex_operator import writer
+from cortex_operator import postiz, writer
 from cortex_operator.contracts import BrandSettings, Item
 from cortex_operator.notion import NotionCockpit, NotionMap, http_transport
 from cortex_operator.store import Store
@@ -44,6 +45,17 @@ def completer():
     return writer.mock
 
 
+def outbound(config: dict):
+    key = os.environ.get("POSTIZ_API_KEY")
+    if not key or "postiz" not in config:
+        return NoPublisher(), NoMetrics()
+    call = postiz.http_transport(key, os.environ.get("POSTIZ_API_URL", postiz.API))
+    live = os.environ.get("LAUNCH_MODE") == "live"
+    sent = Path("state") / f"{config['notion']['brand']}.sent.json"
+    return (postiz.PostizPublisher(call, config["postiz"]["integrations"], live, sent),
+            postiz.PostizMetrics(call))
+
+
 def main() -> None:
     load_env()
     if len(sys.argv) not in (2, 3) or not os.environ.get("NOTION_TOKEN"):
@@ -53,7 +65,7 @@ def main() -> None:
     cockpit = NotionCockpit(NotionMap(**config["notion"]), http_transport(os.environ["NOTION_TOKEN"]))
     brand = BrandSettings(config["notion"]["brand"], set(config["channels"]))
     engine = Engine(brand, cockpit, writer.LlmWriter(completer(), claims),
-                    NoPublisher(), NoMetrics(), claims)
+                    *outbound(config), claims)
     store = Store(sys.argv[2]) if len(sys.argv) == 3 else Store.for_brand(brand.name)
     store.load(engine)
     engine.tick(datetime.now())
