@@ -11,3 +11,6 @@ node_modules/
 *.db
 *.sqlite
 brands/
+brand.json
+state/
+brag-output*/

@@ -60,6 +60,20 @@ class NotionCockpit:
         self.reverse = {v: Status(k) for k, v in mapping.statuses.items()}
         self.cache: dict[str, Item] = {}
         self.written: dict[str, tuple] = {}
+        self.restored: dict[str, tuple[int | None, set[int]]] = {}
+
+    def progress(self) -> dict[str, tuple[int | None, set[int]]]:
+        """Per-item forecast_seq and metrics_pulled, for persistence between runs."""
+        state = dict(self.restored)
+        state.update({i: (it.forecast_seq, set(it.metrics_pulled)) for i, it in self.cache.items()})
+        return state
+
+    def restore(self, state: dict[str, tuple[int | None, set[int]]]) -> None:
+        self.restored = dict(state)
+        for item_id, (seq, pulled) in state.items():
+            if item_id in self.cache:
+                self.cache[item_id].forecast_seq = seq
+                self.cache[item_id].metrics_pulled = set(pulled)
 
     def _rows(self) -> list[dict]:
         rows, cursor = [], None
@@ -83,6 +97,9 @@ class NotionCockpit:
                 continue
             item = self.cache.get(row["id"]) or Item(
                 row["id"], self.map.brand, channel.lower(), "", datetime.now())
+            if row["id"] not in self.cache and row["id"] in self.restored:
+                item.forecast_seq, pulled = self.restored[row["id"]]
+                item.metrics_pulled = set(pulled)
             item.brief = _plain(props.get(self.map.title))
             item.channel = channel.lower()
             item.publish_at = datetime.fromisoformat(date["start"]).replace(tzinfo=None)
