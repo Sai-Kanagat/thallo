@@ -8,10 +8,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from cortex_operator import postiz, writer
+from cortex_operator.crew import CrewWriter
 from cortex_operator.contracts import BrandSettings, Item
 from cortex_operator.notion import NotionCockpit, NotionMap, http_transport
 from cortex_operator.store import Store
@@ -64,12 +66,23 @@ def main() -> None:
     claims = ClaimLedger()
     cockpit = NotionCockpit(NotionMap(**config["notion"]), http_transport(os.environ["NOTION_TOKEN"]))
     brand = BrandSettings(config["notion"]["brand"], set(config["channels"]))
-    engine = Engine(brand, cockpit, writer.LlmWriter(completer(), claims),
+    engine = Engine(brand, cockpit, CrewWriter(completer(), claims),
                     *outbound(config), claims)
     store = Store(sys.argv[2]) if len(sys.argv) == 3 else Store.for_brand(brand.name)
     store.load(engine)
-    engine.tick(datetime.now())
-    store.save(engine)
+    minutes = float(os.environ.get("CORTEX_LOOP_MINUTES", "0"))
+    while True:
+        try:
+            engine.tick(datetime.now())
+        except OSError as error:
+            print(f"Pass failed, will retry: {type(error).__name__}")
+            if not minutes:
+                raise
+        finally:
+            store.save(engine)
+        if not minutes:
+            break
+        time.sleep(minutes * 60)
     print("Pass complete.")
 
 
