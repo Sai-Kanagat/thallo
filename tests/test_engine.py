@@ -21,6 +21,9 @@ class Board:
     def items(self):
         return self.list
 
+    def save(self, item):
+        pass
+
     def notify(self, item, message):
         self.messages.append((item.id, message))
 

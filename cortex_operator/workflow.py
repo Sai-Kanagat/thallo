@@ -34,6 +34,7 @@ class Engine:
 
     def tick(self, now: datetime) -> None:
         for item in self.cockpit.items():
+            self._sync_approval(item, now)
             times = week_offsets(item.publish_at)
             if item.status is Status.IDEA and now >= times["generate"]:
                 self._generate(item, now)
@@ -46,6 +47,30 @@ class Engine:
                 self._publish(item, now)
             elif item.status is Status.PUBLISHED:
                 self._measure(item, now)
+            self.cockpit.save(item)
+
+    def _sync_approval(self, item: Item, now: datetime) -> None:
+        """A person set Approved in the cockpit. Seal it, or send it back if it no longer holds."""
+        if item.status not in (Status.APPROVED, Status.SCHEDULED):
+            return
+        passport = self.passports.get(item.id)
+        if passport:
+            current = content_hash(item, passport.rule_version, self.claims, passport.claim_ids)
+            if current == passport.content_hash:
+                return
+            self.passports.pop(item.id)
+            item.status = Status.REVIEW
+            self.cockpit.notify(item, "Changed after approval, please review again")
+            return
+        if item.status is Status.SCHEDULED:
+            item.status = Status.REVIEW
+            self.cockpit.notify(item, "Scheduled without approval, please review")
+            return
+        try:
+            self.approve(item, "cockpit", now)
+        except ValueError as error:
+            item.status = Status.REVIEW
+            self.cockpit.notify(item, f"Approval refused: {error}")
 
     def _generate(self, item: Item, now: datetime) -> None:
         item.text = self.writer.draft(item, self.taste.rules)
