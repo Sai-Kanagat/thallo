@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "env-assigned-secret"
+description = "Non-empty secret assigned in an env-style file"
+regex = '''(?i)(GATE_API_KEY|GATE_SECRET|WEBHOOK_SECRET|POSTGRES_PASSWORD|N8N_ENCRYPTION_KEY|GEMINI_API_KEY|HUBSPOT_TOKEN|CLIENT_HUBSPOT_TOKEN)[ \t]*=[ \t]*['"]?[A-Za-z0-9_\-]{12,}'''
