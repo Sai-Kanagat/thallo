@@ -101,7 +101,7 @@ class TenantRepo:
         return new_id(self.clock)
 
     def execute(self, query: str | sql.Composable, params: Any = None) -> psycopg.Cursor:
-        """Raw SQL. Row-level security still applies."""
+        """Raw SQL, for trusted code only. Row-level security still applies, but prefer the typed methods."""
         return self.conn.execute(query, params)
 
     def insert(self, row: R) -> R:
