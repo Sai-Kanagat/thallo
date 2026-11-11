@@ -27,7 +27,7 @@ from cortex_operator.contracts.enums import ClaimKind, Language
 from cortex_operator.contracts.models import Claim
 from cortex_operator.truth.claims import parse_date_value, problem
 
-SLOT = re.compile(r"\{\{(C-\d{4,})\}\}")
+SLOT = re.compile(r"\{\{(C-[0-9]{4,})\}\}")
 
 
 class FillError(ValueError):

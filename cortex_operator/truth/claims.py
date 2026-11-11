@@ -29,8 +29,8 @@ from cortex_operator.contracts.models import Claim
 from cortex_operator.contracts.states import CLAIM, ClaimState
 from cortex_operator.truth.repository import ClaimUsage
 
-NUMERIC = re.compile(r"^-?\d+(?:\.\d+)?$")
-CODE = re.compile(r"^C-(\d{4,})$")
+NUMERIC = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$")
+CODE = re.compile(r"^C-([0-9]{4,})$")
 SYSTEM = SystemActor(id="truth")
 
 
@@ -149,7 +149,7 @@ def new_candidate(*, tenant_id: str, code: str, kind: ClaimKind, value: str, clo
         id=new_id(clock), created_at=now, tenant_id=tenant_id, code=code, kind=kind,
         state=CLAIM.initial, value=value, unit=unit, as_of=as_of, source_id=source_id,
         source_span=source_span, evidence_sha256=_evidence_hash(evidence, evidence_sha256),
-        expires_at=expires_at, languages=dict(languages or {}), model_id=model_id,
+        verified_by=None, expires_at=expires_at, languages=dict(languages or {}), model_id=model_id,
         prompt_version=prompt_version,
     )
     return claim, _event(clock, claim, actor, EventName.CLAIM_CANDIDATE_ADDED,

@@ -32,6 +32,7 @@ from cortex_operator.contracts.models import Claim
 from cortex_operator.truth.claims import problem
 from cortex_operator.truth.fill import SLOT, Filled, fill
 from cortex_operator.truth.lexicon import (
+    EXCEPTIONS,
     LEFT,
     RIGHT,
     is_digit_char,
@@ -174,7 +175,7 @@ def compile_text(text: str, *, language: Language, claims: Mapping[str, Claim], 
     for a, b in _runs(masked, is_money_or_percent):
         add(FindingKind.SYMBOL, a, b, f"currency or percent sign outside a slot: {text[a:b]!r}")
 
-    taken: list[tuple[int, int]] = []
+    taken: list[tuple[int, int]] = [m.span() for m in EXCEPTIONS.finditer(masked)]
     for category, pattern in matchers(language):
         kind = FindingKind(category.value)
         for m in pattern.finditer(masked):
