@@ -42,35 +42,34 @@ class PostgresStore:
         ledger = engine.forecasts
         with self.database.tenant(self.tenant_id) as repo:  # one transaction
             tid = repo.tenant_id
-            for table in ENGINE_TABLES:  # row-level security limits this to the tenant's own rows
-                repo.execute(f"DELETE FROM {table}")
+            for table in ENGINE_TABLES:  # the WHERE and row-level security both limit this to the tenant's rows
+                repo.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tid,))
             with repo.conn.cursor() as cur:
-                cur.executemany(
-                    "INSERT INTO engine_passport VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    [(tid, p.item_id, p.approver, p.approved_at.isoformat(), p.content_hash, p.rule_version,
+
+                def put(table, columns, rows):  # named columns, never positional VALUES
+                    marks = ",".join(["%s"] * (len(columns) + 1))
+                    cur.executemany(f"INSERT INTO {table} (tenant_id, {', '.join(columns)}) VALUES ({marks})",
+                                    [(tid, *row) for row in rows])
+
+                put("engine_passport", ["item_id", "approver", "approved_at", "content_hash", "rule_version",
+                                        "claim_ids"],
+                    [(p.item_id, p.approver, p.approved_at.isoformat(), p.content_hash, p.rule_version,
                       Jsonb(list(p.claim_ids))) for p in engine.passports.values()])
-                cur.executemany("INSERT INTO engine_draft VALUES (%s,%s,%s)",
-                                [(tid, item_id, text) for item_id, text in engine.drafts.items()])
-                cur.executemany(
-                    "INSERT INTO engine_claim VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    [(tid, c.id, c.text, c.source, c.evidence_hash,
+                put("engine_draft", ["item_id", "body"], engine.drafts.items())
+                put("engine_claim", ["claim_id", "body", "source", "evidence_hash", "expires_at", "verified"],
+                    [(c.id, c.text, c.source, c.evidence_hash,
                       c.expires_at.isoformat() if c.expires_at else None, c.verified)
                      for c in engine.claims.claims.values()])
-                cur.execute("INSERT INTO engine_taste VALUES (%s,%s)", (tid, Jsonb(body)))
-                cur.executemany("INSERT INTO engine_entry VALUES (%s,%s,%s,%s,%s)",
-                                [(tid, e.seq, e.at, e.previous, e.digest) for e in ledger.entries])
-                cur.executemany("INSERT INTO engine_sealed VALUES (%s,%s,%s)",
-                                [(tid, s, json.dumps(p)) for s, p in ledger.sealed.items()])
-                cur.executemany("INSERT INTO engine_score VALUES (%s,%s,%s)",
-                                [(tid, s, json.dumps(r)) for s, r in ledger.scores.items()])
-                cur.executemany(
-                    "INSERT INTO engine_metric VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    [(tid, n, m.brand, m.channel, m.item_id, m.day, m.name, m.value,
-                      m.pulled_at.isoformat())
+                put("engine_taste", ["body"], [(Jsonb(body),)])
+                put("engine_entry", ["seq", "at", "previous", "digest"],
+                    [(e.seq, e.at, e.previous, e.digest) for e in ledger.entries])
+                put("engine_sealed", ["seq", "payload"], [(s, json.dumps(p)) for s, p in ledger.sealed.items()])
+                put("engine_score", ["seq", "result"], [(s, json.dumps(r)) for s, r in ledger.scores.items()])
+                put("engine_metric", ["n", "brand", "channel", "item_id", "day", "name", "value", "pulled_at"],
+                    [(n, m.brand, m.channel, m.item_id, m.day, m.name, m.value, m.pulled_at.isoformat())
                      for n, m in enumerate(engine.metrics.rows)])
-                cur.executemany(
-                    "INSERT INTO engine_progress VALUES (%s,%s,%s,%s)",
-                    [(tid, i, seq, Jsonb(sorted(pulled))) for i, (seq, pulled) in progress.items()])
+                put("engine_progress", ["item_id", "forecast_seq", "metrics_pulled"],
+                    [(i, seq, Jsonb(sorted(pulled))) for i, (seq, pulled) in progress.items()])
 
     def load(self, engine: Engine) -> None:
         """Replace the engine's durable state in place. A tenant with nothing saved leaves it untouched."""
