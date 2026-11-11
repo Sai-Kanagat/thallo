@@ -13,7 +13,7 @@ class ManualVideo(ManualProvider):
     def fulfil(self, request: c.Request) -> Outcome:
         assert isinstance(request, c.VideoRequest)
         return Outcome(
-            pending_media(request, MediaKind.VIDEO, "video/mp4", MediaProvenance.CLIENT_CLIP, request.width,
+            pending_media(request, MediaKind.VIDEO, "video/mp4", MediaProvenance.PERSON_FILE, request.width,
                           request.height, request.duration_ms),
             title="Upload the finished clip",
             steps=(f"Upload a {request.width}x{request.height} clip.", "Add captions before uploading."),

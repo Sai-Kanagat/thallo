@@ -6,7 +6,6 @@ from decimal import Decimal
 import pytest
 
 from cortex_operator.connections import ProviderContext, ProviderRegistry
-from cortex_operator.connections.manual_base import DONE, PENDING
 from cortex_operator.contracts import connection as c
 from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
 from cortex_operator.contracts.enums import Capability, ConnectionMode, MessageChannel
@@ -53,7 +52,8 @@ def test_manual_is_a_person_never_a_provider(providers, cap):
         res = prov.run(req)
         assert res.provenance.made_by == "person"
         assert res.provenance.mode is ConnectionMode.MANUAL
-        assert res.provenance.settings["status"] in (PENDING, DONE)
+        assert res.status in ("pending_person", "done")
+        assert (res.status == "pending_person") == bool(res.task)
         assert res.cost_eur == Decimal(0) and not res.external_ids
 
 
@@ -69,7 +69,7 @@ def test_manual_messaging_returns_a_link_and_never_sends(providers):
     assert res.output.status == "manual_link"
     assert res.output.external_id is None
     assert res.output.click_to_chat_url == "https://wa.me/393331234567?text=Ciao%20%26%20grazie"
-    assert res.provenance.settings["status"] == PENDING
+    assert res.status == "pending_person"
 
 
 def test_manual_messaging_email_and_bad_address(providers):
@@ -89,7 +89,7 @@ def test_manual_publishing_is_a_pending_copy_pack(providers):
     assert res.output.copy_pack["approval_id"] == pub.approval_id
     assert res.output.copy_pack["content_hash"] == pub.content_hash
     rb = _run(providers, Capability.PUBLISHING, readback)
-    assert rb.output.live_text is None and rb.provenance.settings["status"] == PENDING
+    assert rb.output.live_text is None and rb.status == "pending_person"
 
 
 def test_manual_ads_is_a_checklist_that_moves_no_money(providers):
@@ -101,7 +101,7 @@ def test_manual_ads_is_a_checklist_that_moves_no_money(providers):
                           approved_content_hash="0" * 64, to_daily_eur=Decimal("12.50"))
     out = _run(providers, Capability.ADS, signed)
     assert any("12.50" in r["do"] for r in out.output.rows)
-    assert out.provenance.settings["status"] == PENDING
+    assert out.status == "pending_person"
 
 
 def test_manual_analytics_reports_missing_not_zero(providers):
@@ -112,8 +112,8 @@ def test_manual_analytics_reports_missing_not_zero(providers):
 def test_manual_transcription_uses_typed_text(providers):
     base = sample_requests()[Capability.TRANSCRIPTION][0]
     typed = _run(providers, Capability.TRANSCRIPTION, base.model_copy(update={"typed_text": "hello"}))
-    assert typed.output.text == "hello" and typed.provenance.settings["status"] == DONE
-    assert _run(providers, Capability.TRANSCRIPTION, base).provenance.settings["status"] == PENDING
+    assert typed.output.text == "hello" and typed.status == "done" and typed.task is None
+    assert _run(providers, Capability.TRANSCRIPTION, base).status == "pending_person"
 
 
 def test_manual_media_is_a_marked_placeholder_not_a_generated_file(providers):
@@ -121,7 +121,6 @@ def test_manual_media_is_a_marked_placeholder_not_a_generated_file(providers):
         out = _run(providers, cap, sample_requests()[cap][0]).output
         assert out.storage_uri.startswith("manual://pending/")
         assert not out.disclosure_required
-        assert out.provenance.value.startswith("client_") or out.provenance.value == "template_render"
 
 
 def test_manual_research_is_empty_and_untrusted(providers):
@@ -142,3 +141,11 @@ def test_discover_skips_unknown_packages_and_registry_rejects_duplicates():
     reg.discover()
     with pytest.raises(Exception, match="already registered"):
         reg.discover()
+
+
+def test_manual_media_uses_person_provenance_not_client_clip(providers):
+    from cortex_operator.contracts.enums import MediaProvenance as MP
+    assert _run(providers, Capability.VOICEOVER, sample_requests()[Capability.VOICEOVER][0]).output.provenance \
+        is MP.PERSON_RECORDING
+    assert _run(providers, Capability.VIDEO, sample_requests()[Capability.VIDEO][0]).output.provenance \
+        is MP.PERSON_FILE

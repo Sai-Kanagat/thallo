@@ -13,7 +13,7 @@ class ManualVoiceover(ManualProvider):
     def fulfil(self, request: c.Request) -> Outcome:
         assert isinstance(request, c.VoiceoverRequest)
         return Outcome(
-            pending_media(request, MediaKind.AUDIO, "audio/mpeg", MediaProvenance.CLIENT_CLIP),
+            pending_media(request, MediaKind.AUDIO, "audio/mpeg", MediaProvenance.PERSON_RECORDING),
             title="Record the voiceover yourself",
             steps=("Read the text aloud and upload the recording.",),
             details={"text": request.text, "language": request.language.value})

@@ -1,9 +1,9 @@
 """Base for manual providers: a person does the step.
 
 A manual run never makes an outside call. It returns the result type the capability expects,
-shaped as a pending task or copy pack, with provenance `made_by="person"`. The task text lives in
-`provenance.settings["task"]`; `provenance.settings["status"]` is "pending_person" until a person
-has supplied the answer, then "completed_by_person".
+shaped as a pending task or copy pack, with provenance `made_by="person"` and
+`RunResult.status="pending_person"` plus a `task` sentence. When the person has already supplied
+the answer in the request (a typed transcript) the status is "done" and there is no task.
 """
 from __future__ import annotations
 
@@ -17,9 +17,6 @@ from cortex_operator.contracts import connection as c
 from cortex_operator.contracts.clock import Clock
 from cortex_operator.contracts.enums import Capability, ConnectionMode, MediaKind, MediaProvenance
 from cortex_operator.contracts.testing.mocks import MockProvider
-
-PENDING = "pending_person"
-DONE = "completed_by_person"
 
 
 def request_digest(request: c.Request) -> str:
@@ -72,13 +69,14 @@ class ManualProvider:
         c.check_request(self, request)  # type: ignore[arg-type]
         c.check_cap(self.estimate(request), request)
         out = self.fulfil(request)
-        task = {"title": out.title, "steps": list(out.steps), "details": out.details,
-                "ref": request_digest(request)[:16]}
+        task = None if out.done else " ".join([out.title.rstrip(".") + ".", *out.steps])
+        settings = {"title": out.title, "steps": list(out.steps), "details": out.details,
+                    "ref": request_digest(request)[:16]}
         return c.RunResult(
             output=out.output, cost_eur=Decimal(0),
+            status="done" if out.done else "pending_person", task=task,
             provenance=c.Provenance(made_by="person", provider=self.name, mode=ConnectionMode.MANUAL,
-                                    settings={"status": DONE if out.done else PENDING, "task": task},
-                                    made_at=self.clock.now()),
+                                    settings=settings, made_at=self.clock.now()),
         )
 
     def mock(self) -> MockProvider:
