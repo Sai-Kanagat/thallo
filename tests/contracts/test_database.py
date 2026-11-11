@@ -36,7 +36,7 @@ def db():
     params["dbname"] = name
     url = make_conninfo(**params)
     try:
-        assert migrate(url) == ["0001_core.sql"]
+        assert migrate(url)[0] == "0001_core.sql"  # later packages add numbered migrations after 0001
         assert migrate(url) == []  # idempotent
         with psycopg.connect(url, autocommit=True) as conn:
             conn.test_url = url  # type: ignore[attr-defined]
