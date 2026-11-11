@@ -1,5 +1,7 @@
 # Cortex Operator: a marketing department for one-person marketers
 
+> Superseded on 11 Nov 2026 by `docs/BUILD_PLAN.md`. Kept for history. Do not build from this file.
+
 ## Context
 
 Sai wants a full-stack AI marketing system that serves four goals at once: his portfolio, his LinkedIn story, proof of skill for AI growth operator roles, and a product he can sell. It is not built around e-FEM or any one industry. e-FEM is at most a stepping stone. Two isolated brainstorm rounds produced this direction. Existing assets: Cortex (13-agent LangGraph crew, image QA, human approval pause, cost metering, evals) and the Agency OS approval gate.
