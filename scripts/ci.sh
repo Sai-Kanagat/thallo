@@ -10,10 +10,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PY="${PYTHON:-.venv/bin/python}"
+if [ ! -x "$PY" ] && git rev-parse --git-common-dir >/dev/null 2>&1; then
+  PY="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/.venv/bin/python"  # worktree: use the main venv
+fi
 [ -x "$PY" ] || PY=python
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "1/5 lint"
-"$PY" -m ruff check cortex_operator/contracts scripts tests/contracts
+"$PY" -m ruff check cortex_operator scripts tests  # legacy engine files are excluded in pyproject.toml
 
 echo "2/5 repository rules"
 "$PY" scripts/check_rules.py
