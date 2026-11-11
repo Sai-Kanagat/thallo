@@ -22,7 +22,7 @@ Version 1.0.0, frozen 11 Nov 2026. Code lives in `cortex_operator/contracts/`. E
 - A publish request needs an idempotency key, an approval id and the approved content hash.
 - A message send needs exactly one authority: a template approval plus the recipient's consent record, or the verified human sending it.
 - A request built with `model_construct()` is re-validated at the provider boundary, so validators cannot be skipped.
-- An ad spend change carries the signed proposal, its approval and hash, the campaign and the exact signed daily amount. No free-form payload may set status, budget or bid, so ads are created paused and stay paused until a signed change.
+- An ad spend change carries the signed proposal, its approval and hash, the campaign and the exact signed daily amount. No free-form payload may carry a status, budget, bid, spend or schedule key at any depth, and every ads provider must force the paused status on create itself, so ads stay paused until a signed change.
 - Generated people need a consent record. So does a real person's voice.
 - Research results are always marked untrusted. Untrusted text travels as quoted data in `TextRequest.untrusted_data`, never as instructions.
 - Every provider refuses another capability's request and refuses to run over `cost_cap_eur`.
@@ -64,10 +64,12 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
+| 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 1.1.0 | 2026-11-11 | Additive, from WP-02 and WP-03 requests: `RunResult.status` and `task` for manual runs, `MediaProvenance.PERSON_RECORDING` and `PERSON_FILE`, `ClaimKind.OFFER`, `claim.rejected` event, `ClaimChangedPayload.voided_variant_ids`, optional foreign keys default to None |
 
 ## Migrations
 
-- `0001_core.sql` is generated. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
+- `0001_core.sql` is generated, and it may still be regenerated until the first real database is deployed (Sai's Supabase step). After that, every schema change is a new numbered migration. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
 - `scripts/migrate.py` applies files in order, once each, and refuses a file that changed after it was applied.
 - Row-level security per tenant arrives in WP-01's migration, not here.
 
@@ -76,6 +78,8 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 `scripts/ci.sh` runs lint, the repository rules, the schema drift check, a throwaway Postgres in Docker, and every test. It needs no keys. `SKIP_DB=1` skips the database. The same script runs in `.github/workflows/ci.yml` once the repository has a remote. The existing `.githooks/pre-commit` runs gitleaks, the repository rules and the drift check on every commit.
 
 ## Open items, owned elsewhere
+
+- Lead decision (11 Nov, from the WP-01 review): `tracked_link.slug` and `whatsapp_code` stay globally unique, because a redirect or a coded chat must find its tenant before any tenant is set. WP-12 allocates and resolves them only through narrow SECURITY DEFINER functions with a pinned search_path (random codes, never sequential), so a tenant cannot probe or squat another tenant's codes. No package may use a BYPASSRLS role for this.
 
 - Share proposals (calendar share changes) get their table and approval subject from WP-18 through the lead.
 - `scripts/check_rules.py` is a lint, not a security boundary. Aliased clock calls and dynamic imports slip through; review catches those.

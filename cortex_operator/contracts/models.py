@@ -140,7 +140,7 @@ class Connection(TenantRow):
 class ChannelAccount(TenantRow):
     __table__ = "channel_account"
     channel: Channel
-    connection_id: Id | None = fk("connection")
+    connection_id: Id | None = fk("connection", default=None)
     handle: str
     token_expires_at: AwareDatetime | None = None
     secret_ref: str | None = None
@@ -165,7 +165,7 @@ class GrowthModel(TenantRow, ModelMade):
     __table__ = "growth_model"
     __unique__ = (("tenant_id", "version"),)
     version: int
-    play_id: Id | None = fk("play")
+    play_id: Id | None = fk("play", default=None)
     stages: list[dict[str, Any]] = Field(default_factory=list, description="Each stage: name, rate, low, high, tag")
     bottleneck: str | None = None
     margin_per_won_eur: Money | None = None
@@ -187,7 +187,7 @@ class Pillar(TenantRow):
 
 class Consent(TenantRow):
     __table__ = "consent"
-    person_id: Id | None = fk("person")
+    person_id: Id | None = fk("person", default=None)
     subject_label: str | None = None  # for staff or customers filmed but not in the lead tables
     basis: ConsentBasis
     channel: MessageChannel | None = None
@@ -206,9 +206,9 @@ class Media(TenantRow, ModelMade):
     size_bytes: int
     storage_uri: str
     provenance: MediaProvenance
-    connection_id: Id | None = fk("connection")
+    connection_id: Id | None = fk("connection", default=None)
     generation_prompt: str | None = None
-    consent_id: Id | None = fk("consent")
+    consent_id: Id | None = fk("consent", default=None)
     alt_text: str | None = None
     disclosure_label: str | None = None
     width: int | None = None
@@ -223,8 +223,8 @@ class Source(TenantRow):
     title: str
     transcript: str | None = None
     uri: str | None = None
-    media_id: Id | None = fk("media")
-    consent_id: Id | None = fk("consent")
+    media_id: Id | None = fk("media", default=None)
+    consent_id: Id | None = fk("consent", default=None)
     untrusted: bool = False
     captured_at: AwareDatetime
 
@@ -238,10 +238,10 @@ class Claim(TenantRow, ModelMade):
     value: str
     unit: str | None = None
     as_of: date | None = None
-    source_id: Id | None = fk("source")
+    source_id: Id | None = fk("source", default=None)
     source_span: dict[str, Any] | None = Field(default=None, description="start, end, text")
     evidence_sha256: str | None = None
-    verified_by: Id | None = fk("app_user")
+    verified_by: Id | None = fk("app_user", default=None)
     verified_at: AwareDatetime | None = None
     expires_at: AwareDatetime | None = None
     languages: dict[str, str] = Field(default_factory=dict, description="Approved wording per language code")
@@ -260,7 +260,7 @@ class Signal(TenantRow):
 
 class Idea(TenantRow, ModelMade):
     __table__ = "idea"
-    pillar_id: Id | None = fk("pillar")
+    pillar_id: Id | None = fk("pillar", default=None)
     state: st.IdeaState = st.IdeaState.PROPOSED
     stage: FunnelStage
     title: str
@@ -400,7 +400,7 @@ class Publication(TenantRow):
     __unique__ = (("tenant_id", "variant_id"), ("tenant_id", "idempotency_key"))  # one go-live per variant
     variant_id: Id = fk("variant")
     approval_id: Id = fk("approval")
-    connection_id: Id | None = fk("connection")
+    connection_id: Id | None = fk("connection", default=None)
     idempotency_key: str
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", description="The exact bytes sent")
     external_id: str | None = None
@@ -446,7 +446,7 @@ class RuleProposal(TenantRow, ModelMade):
 
 class VoiceRule(TenantRow):
     __table__ = "voice_rule"
-    rule_proposal_id: Id | None = fk("rule_proposal")
+    rule_proposal_id: Id | None = fk("rule_proposal", default=None)
     scope: RuleScope
     scope_ref: str | None = None
     language: Language | None = None
@@ -465,7 +465,7 @@ class Account(TenantRow):
 
 class Person(TenantRow):
     __table__ = "person"
-    account_id: Id | None = fk("account")
+    account_id: Id | None = fk("account", default=None)
     display_name: str | None = None
     phone: str | None = None
     email: str | None = None
@@ -474,7 +474,7 @@ class Person(TenantRow):
 
 class Ad(TenantRow):
     __table__ = "ad"
-    variant_id: Id | None = fk("variant")
+    variant_id: Id | None = fk("variant", default=None)
     platform: str
     campaign: str
     external_id: str | None = None
@@ -484,8 +484,8 @@ class Ad(TenantRow):
 
 class TrackedLink(TenantRow):
     __table__ = "tracked_link"
-    variant_id: Id | None = fk("variant")
-    ad_id: Id | None = fk("ad")
+    variant_id: Id | None = fk("variant", default=None)
+    ad_id: Id | None = fk("ad", default=None)
     slug: str = unique()
     destination: str
     whatsapp_code: str | None = unique(default=None)
@@ -496,10 +496,10 @@ class Touch(TenantRow):
 
     __table__ = "touch"
     kind: TouchKind
-    person_id: Id | None = fk("person")
-    variant_id: Id | None = fk("variant")
-    ad_id: Id | None = fk("ad")
-    tracked_link_id: Id | None = fk("tracked_link")
+    person_id: Id | None = fk("person", default=None)
+    variant_id: Id | None = fk("variant", default=None)
+    ad_id: Id | None = fk("ad", default=None)
+    tracked_link_id: Id | None = fk("tracked_link", default=None)
     code: str | None = None
     self_report: str | None = None
     occurred_at: AwareDatetime
@@ -516,9 +516,9 @@ class Lead(TenantRow):
     heat: float = 0.0
     heat_updated_at: AwareDatetime | None = None
     answers: dict[str, Any] = Field(default_factory=dict)
-    first_touch_id: Id | None = fk("touch")
-    last_touch_id: Id | None = fk("touch")
-    owner_id: Id | None = fk("app_user")
+    first_touch_id: Id | None = fk("touch", default=None)
+    last_touch_id: Id | None = fk("touch", default=None)
+    owner_id: Id | None = fk("app_user", default=None)
     clock_started_at: AwareDatetime | None = None
     first_response_at: AwareDatetime | None = None
 
@@ -547,10 +547,10 @@ class Message(TenantRow, ModelMade):
     channel: MessageChannel
     state: st.MessageState = st.MessageState.DRAFTED
     body: str
-    template_id: Id | None = fk("message_template")
-    template_approval_id: Id | None = fk("approval")
+    template_id: Id | None = fk("message_template", default=None)
+    template_approval_id: Id | None = fk("approval", default=None)
     sent_by_kind: ActorKind | None = None
-    sent_by_user_id: Id | None = fk("app_user")
+    sent_by_user_id: Id | None = fk("app_user", default=None)
     sent_at: AwareDatetime | None = None
 
 
@@ -599,7 +599,7 @@ class SpendProposal(TenantRow):
     platform: str
     campaign: str
     campaign_external_id: str | None = None
-    ad_id: Id | None = fk("ad")
+    ad_id: Id | None = fk("ad", default=None)
     from_daily: Money
     to_daily: Money
     reason: str

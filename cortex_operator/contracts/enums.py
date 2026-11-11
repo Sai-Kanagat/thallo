@@ -92,6 +92,7 @@ class ClaimKind(StrEnum):
     NAME = "name"
     QUOTE = "quote"
     CAPABILITY = "capability"
+    OFFER = "offer"  # a time-limited price or promotion; expires in 30 days by default
 
 
 class SourceKind(StrEnum):
@@ -118,6 +119,8 @@ class MediaProvenance(StrEnum):
     TEMPLATE_RENDER = "template_render"
     GENERATED_BACKGROUND = "generated_background"
     GENERATED = "generated"  # people, products, premises: off by default
+    PERSON_RECORDING = "person_recording"  # someone recorded it themselves (manual voiceover, voice note)
+    PERSON_FILE = "person_file"  # a person made or uploaded the finished file
 
 
 class CheckLayer(StrEnum):

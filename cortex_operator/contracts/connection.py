@@ -93,7 +93,13 @@ class Result(_Frozen):
 
 
 class RunResult(_Frozen):
+    """status "pending_person": a manual connection prepared a task (copy pack, checklist,
+    click-to-chat link) and a person must act; `task` says what. The output is a placeholder until
+    the person confirms, and nothing downstream may treat it as done."""
+
     output: Result
+    status: Literal["done", "pending_person"] = "done"
+    task: str | None = None
     provenance: Provenance
     cost_eur: Decimal
     seconds: float = 0.0
@@ -322,15 +328,31 @@ class AdsAction(StrEnum):
     UPLOAD_OUTCOMES = "upload_outcomes"
 
 
-_MONEY_KEYS = frozenset({"status", "state", "budget", "daily_budget", "lifetime_budget", "bid", "bid_amount",
-                         "spend_cap", "effective_status", "configured_status", "amount"})
+# Any key, at any depth, whose name contains one of these is refused in a free-form payload.
+_MONEY_WORDS = ("status", "state", "budget", "bid", "spend", "amount", "micros", "cost", "price", "pacing",
+                "active", "enable", "schedule", "objective_value")
+
+
+def _money_keys(value: Any, path: str = "") -> list[str]:
+    found: list[str] = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            here = f"{path}.{k}" if path else str(k)
+            if any(w in str(k).lower() for w in _MONEY_WORDS):
+                found.append(here)
+            found += _money_keys(v, here)
+    elif isinstance(value, list | tuple):
+        for i, v in enumerate(value):
+            found += _money_keys(v, f"{path}[{i}]")
+    return found
 
 
 class AdsRequest(Request):
     """Money moves only through APPLY_SIGNED, carrying the exact signed numbers.
 
     The provider applies `to_daily_eur` to `campaign_external_id` and nothing else. Free-form
-    `payload` may never carry status, budget or bid keys, so CREATE_PAUSED cannot start spend.
+    `payload` may never carry a status, budget, bid, spend or schedule key at any depth, and every
+    provider must itself force the paused status on create rather than trust the payload.
     """
 
     capability: ClassVar[Capability] = Capability.ADS
@@ -346,9 +368,9 @@ class AdsRequest(Request):
 
     @model_validator(mode="after")
     def _money_needs_signature(self) -> AdsRequest:
-        bad = _MONEY_KEYS & {k.lower() for k in self.payload}
+        bad = _money_keys(self.payload)
         if bad:
-            raise ValueError(f"payload may not set {sorted(bad)}; spend moves only via APPLY_SIGNED")
+            raise ValueError(f"payload may not set {bad}; spend moves only via APPLY_SIGNED")
         if self.action is AdsAction.APPLY_SIGNED:
             if not (self.spend_proposal_id and self.approval_id and self.approved_content_hash
                     and self.to_daily_eur is not None and self.campaign_external_id):
