@@ -93,7 +93,13 @@ class Result(_Frozen):
 
 
 class RunResult(_Frozen):
+    """status "pending_person": a manual connection prepared a task (copy pack, checklist,
+    click-to-chat link) and a person must act; `task` says what. The output is a placeholder until
+    the person confirms, and nothing downstream may treat it as done."""
+
     output: Result
+    status: Literal["done", "pending_person"] = "done"
+    task: str | None = None
     provenance: Provenance
     cost_eur: Decimal
     seconds: float = 0.0

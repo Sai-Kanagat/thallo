@@ -27,6 +27,7 @@ from cortex_operator.contracts.enums import (
 class EventName(StrEnum):
     CLAIM_CANDIDATE_ADDED = "claim.candidate_added"
     CLAIM_VERIFIED = "claim.verified"
+    CLAIM_REJECTED = "claim.rejected"
     CLAIM_CHANGED = "claim.changed"
     CLAIM_EXPIRED = "claim.expired"
     IDEA_PROPOSED = "idea.proposed"
@@ -74,6 +75,7 @@ class ClaimPayload(Payload):
 
 class ClaimChangedPayload(ClaimPayload):
     voided_approval_ids: list[str] = Field(default_factory=list)
+    voided_variant_ids: list[str] = Field(default_factory=list)
 
 
 class IdPayload(Payload):
@@ -197,6 +199,7 @@ class KillSwitchPayload(Payload):
 PAYLOADS: dict[EventName, type[Payload]] = {
     EventName.CLAIM_CANDIDATE_ADDED: ClaimPayload,
     EventName.CLAIM_VERIFIED: ClaimPayload,
+    EventName.CLAIM_REJECTED: ClaimPayload,
     EventName.CLAIM_CHANGED: ClaimChangedPayload,
     EventName.CLAIM_EXPIRED: ClaimPayload,
     EventName.IDEA_PROPOSED: IdPayload,

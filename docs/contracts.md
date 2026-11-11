@@ -65,10 +65,11 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
 | 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 1.1.0 | 2026-11-11 | Additive, from WP-02 and WP-03 requests: `RunResult.status` and `task` for manual runs, `MediaProvenance.PERSON_RECORDING` and `PERSON_FILE`, `ClaimKind.OFFER`, `claim.rejected` event, `ClaimChangedPayload.voided_variant_ids`, optional foreign keys default to None |
 
 ## Migrations
 
-- `0001_core.sql` is generated. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
+- `0001_core.sql` is generated, and it may still be regenerated until the first real database is deployed (Sai's Supabase step). After that, every schema change is a new numbered migration. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
 - `scripts/migrate.py` applies files in order, once each, and refuses a file that changed after it was applied.
 - Row-level security per tenant arrives in WP-01's migration, not here.
 
