@@ -1,7 +1,13 @@
 #!/bin/sh
-# Blocks any commit whose staged changes contain a secret.
+# Blocks any commit whose staged changes contain a secret, or that breaks the repo rules.
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "pre-commit: gitleaks is not installed, refusing to commit." >&2
   exit 1
 fi
-exec gitleaks git --staged --redact --no-banner --config .gitleaks.toml .
+gitleaks git --staged --redact --no-banner --config .gitleaks.toml . || exit 1
+
+PY=.venv/bin/python
+[ -x "$PY" ] || PY=python3
+"$PY" scripts/check_rules.py || { echo "pre-commit: repository rules failed." >&2; exit 1; }
+"$PY" -m cortex_operator.contracts.ddl | diff -q db/migrations/0001_core.sql - >/dev/null \
+  || { echo "pre-commit: db/migrations/0001_core.sql does not match the models; regenerate it." >&2; exit 1; }

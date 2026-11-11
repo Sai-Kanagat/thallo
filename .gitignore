@@ -14,3 +14,4 @@ brands/
 brand.json
 state/
 brag-output*/
+*.egg-info/

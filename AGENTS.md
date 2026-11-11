@@ -14,6 +14,13 @@ If you are a worker, your brief is one file in `docs/packages/`. It carries your
 - Merge only when tests pass and a separate review finds no blocking bug. Gate, vault, publisher, messaging and API also need a security review.
 - After each wave, the fake-clock week must pass end to end.
 
+## Contracts and CI
+- The frozen contracts are in `cortex_operator/contracts/`, described in `docs/contracts.md`. Read that file before writing code.
+- Additive schema changes go in your package's own migration. Breaking changes go through the lead (`docs/contracts.md`, "Changing a contract").
+- Every provider you write must pass `assert_provider_contract()`.
+- Take a `Clock`; never read the system clock. Never import a network or vendor SDK outside `cortex_operator/providers/`.
+- Run `scripts/ci.sh` before asking for review. It needs no keys.
+
 ## Hard limits, in every permission mode
 - Never publish, post, send or start outreach. A human does that after explicit approval.
 - Never spend money, buy anything, or create accounts.
