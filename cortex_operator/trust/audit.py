@@ -81,14 +81,21 @@ def _check_payload(value: Any, path: str = "payload") -> None:
         for k, v in value.items():
             if not isinstance(k, str):
                 raise AuditError(f"{path}: keys must be strings")
-            if "session" in k.lower():
-                raise AuditError(f"{path}.{k}: a session never enters the audit log")
+            _check_text(k, f"{path} key")
             _check_payload(v, f"{path}.{k}")
     elif isinstance(value, list | tuple):
         for i, v in enumerate(value):
             _check_payload(v, f"{path}[{i}]")
-    elif not (value is None or isinstance(value, str | int | bool)):
+    elif isinstance(value, str):
+        _check_text(value, path)
+    elif not (value is None or isinstance(value, int | bool)):
         raise AuditError(f"{path}: {type(value).__name__} is not a JSON value")
+
+
+def _check_text(value: str | None, path: str) -> None:
+    """A session never enters the log, not even in free text. Refuses any mention, case-insensitive."""
+    if value is not None and "session" in value.lower():
+        raise AuditError(f"{path}: a session never enters the audit log")
 
 
 def _ts(value: datetime) -> str:
@@ -168,37 +175,56 @@ def verify_chain(entries: Sequence[AuditEntry], *, tenant_id: str,
 
 # ---------------------------------------------------------------- the log
 
+@dataclass(frozen=True)
+class AuditDraft:
+    actor: Actor | ActorRef
+    action: str
+    subject_kind: str | None = None
+    subject_id: str | None = None
+    payload: Mapping[str, Any] | None = None
+
+
 class AuditLog:
     def __init__(self, store: AuditStore, clock: Clock) -> None:
         self.store = store
         self.clock = clock
 
+    def prepare(self, tenant_id: str, drafts: Sequence[AuditDraft]) -> tuple[AuditEntry, ...]:
+        """Build chained entries after the current head WITHOUT writing them. The caller inserts
+        them in the same transaction as the row change they describe (see gate/AUDIT.md). If another
+        writer got there first, the unique (tenant_id, seq) makes that transaction fail as a whole."""
+        head = self.store.head(tenant_id)
+        seq = head.seq if head is not None else 0
+        prev = head.entry_hash if head is not None else None
+        now = self.clock.now()
+        out: list[AuditEntry] = []
+        for d in drafts:
+            if not d.action:
+                raise AuditError("an audit entry needs an action")
+            for text, where in ((d.action, "action"), (d.subject_kind, "subject_kind"),
+                                (d.subject_id, "subject_id")):
+                _check_text(text, where)
+            ref = ActorRef.of(d.actor)  # drops any session
+            _check_text(ref.id, "actor_id")
+            body = dict(d.payload or {})
+            _check_payload(body)
+            seq += 1
+            draft = AuditEntry(
+                id=new_id(self.clock), created_at=now, tenant_id=tenant_id, seq=seq,
+                actor_kind=ref.kind, actor_id=ref.id, action=d.action, subject_kind=d.subject_kind,
+                subject_id=d.subject_id, payload=body, prev_hash=prev, entry_hash="0" * 64, occurred_at=now,
+            )
+            entry = draft.model_copy(update={"entry_hash": compute_entry_hash(draft)})
+            prev = entry.entry_hash
+            out.append(entry)
+        return tuple(out)
+
     def append(self, tenant_id: str, actor: Actor | ActorRef, action: str, *,
                subject_kind: str | None = None, subject_id: str | None = None,
                payload: Mapping[str, Any] | None = None) -> AuditEntry:
-        if not action:
-            raise AuditError("an audit entry needs an action")
-        ref = ActorRef.of(actor)  # drops any session
-        body = dict(payload or {})
-        _check_payload(body)
-        head = self.store.head(tenant_id)
-        now = self.clock.now()
-        draft = AuditEntry(
-            id=new_id(self.clock),
-            created_at=now,
-            tenant_id=tenant_id,
-            seq=(head.seq + 1) if head is not None else 1,
-            actor_kind=ref.kind,
-            actor_id=ref.id,
-            action=action,
-            subject_kind=subject_kind,
-            subject_id=subject_id,
-            payload=body,
-            prev_hash=head.entry_hash if head is not None else None,
-            entry_hash="0" * 64,
-            occurred_at=now,
-        )
-        entry = draft.model_copy(update={"entry_hash": compute_entry_hash(draft)})
+        """Prepare and insert one entry on its own. Use `prepare` when the entry describes a row
+        change: the two must commit together."""
+        (entry,) = self.prepare(tenant_id, [AuditDraft(actor, action, subject_kind, subject_id, payload)])
         self.store.insert(entry)
         return entry
 
@@ -212,6 +238,6 @@ class AuditLog:
 
 
 __all__ = [
-    "AuditConflict", "AuditError", "AuditLog", "AuditStore", "ChainProblem", "ChainReport",
+    "AuditConflict", "AuditDraft", "AuditError", "AuditLog", "AuditStore", "ChainProblem", "ChainReport",
     "InMemoryAuditStore", "compute_entry_hash", "verify_chain",
 ]

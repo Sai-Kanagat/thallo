@@ -8,6 +8,7 @@ from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
 from cortex_operator.contracts.enums import ActorKind
 from cortex_operator.trust.audit import (
     AuditConflict,
+    AuditDraft,
     AuditError,
     AuditLog,
     InMemoryAuditStore,
@@ -135,3 +136,30 @@ def test_a_concurrent_append_conflicts_instead_of_forking(log):
 
 def test_an_empty_chain_verifies():
     assert verify_chain([], tenant_id=T).ok
+
+
+@pytest.mark.parametrize("kw", [
+    {"payload": {"reason": "copied from session abc"}},
+    {"payload": {"notes": ["fine", "SESSION=x"]}},
+    {"subject_id": "session-1"},
+    {"subject_kind": "user_session"},
+])
+def test_session_is_refused_in_free_text_too(log, kw):
+    with pytest.raises(AuditError):
+        log.append(T, SystemActor(id="w"), "x", **kw)
+
+
+def test_session_is_refused_in_the_action(log):
+    with pytest.raises(AuditError):
+        log.append(T, SystemActor(id="w"), "session.leak")
+
+
+def test_prepare_returns_chained_entries_without_writing(log):
+    head = log.head(T)
+    drafts = log.prepare(T, [AuditDraft(SystemActor(id="w"), "a"), AuditDraft(SystemActor(id="w"), "b", "x", "1")])
+    assert log.head(T) == head  # nothing written yet
+    assert [d.seq for d in drafts] == [6, 7] and drafts[0].prev_hash == head[1]
+    assert drafts[1].prev_hash == drafts[0].entry_hash
+    for d in drafts:
+        log.store.insert(d)
+    assert log.verify(T).ok
