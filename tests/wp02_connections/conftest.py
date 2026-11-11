@@ -55,4 +55,6 @@ def providers():
 
 @pytest.fixture
 def registry(clock, providers, vault):
-    return ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(), vault=vault)
+    """T1 is a demo tenant (mocks allowed); T2 is a real one."""
+    return ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(), vault=vault,
+                              mock_tenants={T1}, environ={})

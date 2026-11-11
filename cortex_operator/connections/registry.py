@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import pkgutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -39,6 +40,7 @@ from cortex_operator.contracts.models import Connection
 log = logging.getLogger(__name__)
 
 MANUAL = "manual"
+ALLOW_MOCK_ENV = "THALLO_ALLOW_MOCK"
 MANUAL_PRIORITY = 10_000
 _SCOPE_ORDER = (c.OverrideScope.PIECE, c.OverrideScope.FORMAT, c.OverrideScope.BRAND, c.OverrideScope.TENANT)
 
@@ -122,12 +124,20 @@ class Served:
 
 class ConnectionRegistry:
     def __init__(self, *, clock: Clock, providers: ProviderRegistry, connections: ConnectionStore,
-                 vault: Vault | None = None, health: HealthState | None = None) -> None:
+                 vault: Vault | None = None, health: HealthState | None = None,
+                 mock_tenants: Collection[str] = (), environ: Mapping[str, str] | None = None) -> None:
+        """Mock connections are only allowed for the demo or test tenants in `mock_tenants`, or
+        everywhere when THALLO_ALLOW_MOCK=1. A real tenant can never silently "send" through a mock."""
+        self.mock_tenants = frozenset(mock_tenants)
+        self._allow_mock_everywhere = (os.environ if environ is None else environ).get(ALLOW_MOCK_ENV) == "1"
         self.clock = clock
         self.providers = providers
         self.connections = connections
         self.vault = vault
         self.health = health
+
+    def mock_allowed(self, tenant_id: str) -> bool:
+        return self._allow_mock_everywhere or tenant_id in self.mock_tenants
 
     # ------------------------------------------------------------------ configuring
 
@@ -138,6 +148,8 @@ class ConnectionRegistry:
         for cap in ([capability] if capability else list(Capability)):
             if any(r for r in rows if r.capability is cap and _is_floor(r)):
                 continue
+            if any(r for r in rows if r.capability is cap and _is_tenant_manual(r) and r.enabled is False):
+                log.warning("tenant manual connection for %s is disabled in the store; adding a floor", cap.value)
             entry = self.providers.get(cap, MANUAL)
             row = Connection(id=new_id(self.clock), created_at=self.clock.now(), tenant_id=tenant_id,
                              capability=cap, provider=MANUAL, mode=entry.mode, scope="tenant",
@@ -152,6 +164,10 @@ class ConnectionRegistry:
             settings: dict | None = None, secret: str | Secret | None = None, enabled: bool = True) -> Connection:
         entry = self.providers.get(capability, provider)
         settings = dict(settings or {})
+        if entry.mode is ConnectionMode.MOCK and not self.mock_allowed(tenant_id):
+            raise InvalidConnection("mock connections are only for demo or test tenants")
+        if provider == MANUAL and scope is c.OverrideScope.TENANT and (not enabled or role is not None):
+            raise InvalidConnection("the tenant manual connection must be enabled and have no role")
         if (scope is c.OverrideScope.TENANT) != (scope_ref is None):
             raise InvalidConnection("tenant scope takes no scope_ref; every other scope needs one")
         if role is not None and capability is not Capability.TEXT:
@@ -183,13 +199,13 @@ class ConnectionRegistry:
         if len(keys) != 1 or len(set(ordered_ids)) != len(ordered_ids):
             raise InvalidConnection("set_order takes distinct connections of one capability, scope and role")
         for i, r in enumerate(rows):
-            if _is_floor(r):
+            if _is_tenant_manual(r):
                 raise ManualRequired("the tenant manual connection is always last and is not reordered")
             self.connections.put(r.model_copy(update={"priority": i}))
 
     def set_enabled(self, tenant_id: str, connection_id: str, enabled: bool) -> Connection:
         row = self._get(tenant_id, connection_id)
-        if _is_floor(row) and not enabled:
+        if _is_tenant_manual(row) and not enabled:
             raise ManualRequired("the tenant manual connection cannot be disabled")
         new = row.model_copy(update={"enabled": enabled})
         self.connections.put(new)
@@ -197,7 +213,7 @@ class ConnectionRegistry:
 
     def remove(self, tenant_id: str, connection_id: str) -> None:
         row = self._get(tenant_id, connection_id)
-        if _is_floor(row):
+        if _is_tenant_manual(row):
             raise ManualRequired("the tenant manual connection cannot be removed")
         self.connections.delete(tenant_id, connection_id)
         if row.secret_ref and self.vault:
@@ -211,8 +227,9 @@ class ConnectionRegistry:
         self.ensure_manual(tenant_id, capability)
         refs = {c.OverrideScope.PIECE: piece_id, c.OverrideScope.FORMAT: format,
                 c.OverrideScope.BRAND: brand_id, c.OverrideScope.TENANT: None}
+        mocks_ok = self.mock_allowed(tenant_id)
         rows = [r for r in self.connections.list_for_tenant(tenant_id)
-                if r.capability is capability and r.enabled]
+                if r.capability is capability and r.enabled and (mocks_ok or r.mode is not ConnectionMode.MOCK)]
         chain: list[Connection] = []
         top: tuple[c.OverrideScope, str | None] | None = None
         for scope in _SCOPE_ORDER:
@@ -233,7 +250,9 @@ class ConnectionRegistry:
             if r.mode is ConnectionMode.MANUAL:
                 break  # manual never fails; anything after it is unreachable
         else:
-            floor = next(r for r in rows if _is_floor(r))
+            floor = next((r for r in rows if _is_floor(r)), None)
+            if floor is None:
+                raise ManualRequired(f"tenant has no usable manual connection for {capability.value}")
             ids.append(floor.id)
         scope, ref = top or (c.OverrideScope.TENANT, None)
         return c.ConnectionChoice(capability=capability, role=role, ordered_connection_ids=tuple(ids),
@@ -247,10 +266,17 @@ class ConnectionRegistry:
 
     def run(self, tenant_id: str, request: c.Request, *, brand_id: str | None = None,
             format: str | None = None, piece_id: str | None = None) -> Served:  # noqa: A002
-        """Run a request down the chain. Falls through only when nothing could have happened:
-        a connection last seen unhealthy, ProviderUnavailable, or a cost cap that the provider's
-        own estimate exceeded before spending. Any other error propagates, because a provider that
-        reaches a third party may already have acted and a second send could duplicate it."""
+        """Run a request down the chain.
+
+        The registry does not trust a provider about money: before each provider it calls
+        `estimate()` and `check_cap()` itself, and it checks the cost on the result afterwards.
+        A connection is skipped only on that pre-check (over the cap, `ProviderUnavailable` from
+        `estimate()`) or when it was last seen unhealthy. Anything raised from inside a provider's
+        `run()`, `CostCapExceeded` and `ProviderUnavailable` included, stops the chain: the provider
+        may already have reached a third party, and a second send could duplicate it. A request
+        needs an idempotency key so a retry by the caller is safe."""
+        if not request.idempotency_key:
+            raise InvalidConnection("a request passed down the chain needs an idempotency_key")
         role = request.role if isinstance(request, c.TextRequest) else None
         choice = self.resolve(tenant_id, request.capability, role=role, brand_id=brand_id, format=format,
                               piece_id=piece_id)
@@ -261,14 +287,18 @@ class ConnectionRegistry:
             if down and row.mode is not ConnectionMode.MANUAL:
                 skipped.append((cid, "unhealthy"))
                 continue
+            provider = self.build(row)
             try:
-                result = self.build(row).run(request)
+                c.check_cap(provider.estimate(request), request)
             except ProviderUnavailable:
                 skipped.append((cid, "unavailable"))
                 continue
             except c.CostCapExceeded:
                 skipped.append((cid, "over_cost_cap"))
                 continue
+            result = provider.run(request)
+            if request.cost_cap_eur is not None and result.cost_eur > request.cost_cap_eur:
+                raise c.CostCapExceeded(f"connection {cid} reported a cost over the cap")
             return Served(cid, row.provider, row.mode, result, tuple(skipped))
         raise NoConnection(f"no connection could serve {request.capability.value}: {skipped}")
 
@@ -293,5 +323,10 @@ class ConnectionRegistry:
                 and r.role == role]
 
 
-def _is_floor(row: Connection) -> bool:
+def _is_tenant_manual(row: Connection) -> bool:
     return row.mode is ConnectionMode.MANUAL and row.scope == "tenant" and row.provider == MANUAL
+
+
+def _is_floor(row: Connection) -> bool:
+    """The row that ends every chain: tenant-level manual, enabled, and not tied to a text role."""
+    return _is_tenant_manual(row) and row.enabled and row.role is None

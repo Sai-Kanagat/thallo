@@ -37,11 +37,21 @@ class Hosted(MockProvider):
     def describe(self):
         return super().describe().model_copy(update={"mode": ConnectionMode.HOSTED, "sends_externally": True})
 
-    def run(self, request):
+    def estimate(self, request):
         if self.behaviour == "unavailable":
             raise ProviderUnavailable("down")
+        return super().estimate(request)
+
+    def run(self, request):
         if self.behaviour == "boom":
             raise RuntimeError("provider blew up after reaching the vendor")
+        if self.behaviour == "run_unavailable":
+            raise ProviderUnavailable("went away mid call")
+        if self.behaviour == "run_cap":
+            raise c.CostCapExceeded("provider says it is over the cap")
+        if self.behaviour == "overspend":
+            res = super().run(request)
+            return res.model_copy(update={"cost_eur": Decimal(9)})
         return super().run(request)
 
 
@@ -207,8 +217,8 @@ def test_adding_a_provider_is_registration_only(registry, providers):
 
 # ---------------------------------------------------------------- running down the chain
 
-def req():
-    return sample_requests()[TEXT][0]
+def req(key="idem-0001"):
+    return sample_requests()[TEXT][0].model_copy(update={"idempotency_key": key})
 
 
 def test_run_uses_the_default(registry, providers):
@@ -242,14 +252,52 @@ def test_run_does_not_fall_back_after_an_unknown_failure(registry, providers):
         registry.run(T1, req())
 
 
-def test_run_falls_back_on_cost_cap_before_spending(registry, providers):
+def test_run_requires_an_idempotency_key(registry):
+    with pytest.raises(InvalidConnection, match="idempotency"):
+        registry.run(T1, sample_requests()[TEXT][0])
+
+
+def test_run_stops_when_a_provider_raises_from_inside_run(registry, providers):
+    for behaviour in ("run_unavailable", "run_cap", "boom"):
+        register(providers, behaviour, behaviour)
+        row = registry.add(T1, TEXT, behaviour, priority=-1)
+        with pytest.raises(Exception):  # noqa: B017,PT011
+            registry.run(T1, req())
+        registry.remove(T1, row.id)
+
+
+def test_run_prechecks_the_estimate_itself(registry, providers):
+    """A provider whose run() would happily proceed is still skipped when its estimate is over the cap."""
     class Pricey(MockProvider):
+        ran = False
+
         def estimate(self, request):
             return c.Estimate(cost_eur=Decimal(5), seconds=1.0)
 
         def run(self, request):
-            c.check_cap(self.estimate(request), request)
-            return super().run(request)
+            Pricey.ran = True  # a careless provider that never checks the cap itself
+            return MockProvider.run(self, request)
+
+    providers.register(TEXT, "careless", ConnectionMode.HOSTED, lambda ctx: Pricey(TEXT, ctx.clock, "careless"))
+    registry.add(T1, TEXT, "careless")
+    capped = req().model_copy(update={"cost_cap_eur": Decimal(1)})
+    served = registry.run(T1, capped)
+    assert served.provider == "manual" and Pricey.ran is False
+    assert served.skipped[0][1] == "over_cost_cap"
+
+
+def test_run_refuses_a_result_that_cost_more_than_the_cap(registry, providers):
+    register(providers, "liar", "overspend")
+    registry.add(T1, TEXT, "liar")
+    capped = req().model_copy(update={"cost_cap_eur": Decimal(1)})
+    with pytest.raises(c.CostCapExceeded):
+        registry.run(T1, capped)
+
+
+def test_run_falls_back_on_cost_cap_before_spending(registry, providers):
+    class Pricey(MockProvider):
+        def estimate(self, request):
+            return c.Estimate(cost_eur=Decimal(5), seconds=1.0)
 
     providers.register(TEXT, "pricey", ConnectionMode.HOSTED, lambda ctx: Pricey(TEXT, ctx.clock, "pricey"))
     registry.add(T1, TEXT, "pricey")
@@ -280,3 +328,60 @@ def test_text_role_comes_from_the_request(registry, providers):
     graded = req().model_copy(update={"role": TextRole.GRADE})
     assert registry.run(T1, graded).provider == "grader"
     assert registry.run(T1, req()).provider == "any"
+
+
+# ---------------------------------------------------------------- B1: the floor
+
+@pytest.mark.parametrize("kwargs", [{"enabled": False}, {"role": TextRole.GRADE}])
+def test_manual_at_tenant_scope_must_be_enabled_and_roleless(registry, kwargs):
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "manual", **kwargs)
+
+
+def test_a_bad_manual_row_in_the_store_never_becomes_the_floor(registry):
+    """Rows written around add() (a bad import, an older version) must not break resolve."""
+    from cortex_operator.contracts.ids import new_id
+    from cortex_operator.contracts.models import Connection
+    for extra in ({"enabled": False}, {"role": TextRole.GRADE}):
+        reg_rows = registry.connections
+        reg_rows.put(Connection(id=new_id(registry.clock), created_at=registry.clock.now(), tenant_id=T2,
+                                capability=TEXT, provider="manual", mode=ConnectionMode.MANUAL, scope="tenant",
+                                priority=10_000, **extra))
+        choice = registry.resolve(T2, TEXT)
+        assert ids(registry, choice) == ["manual"]
+        row = next(r for r in registry.connections.list_all() if r.id == choice.ordered_connection_ids[-1])
+        assert row.enabled and row.role is None
+
+
+def test_missing_floor_is_an_explicit_error_not_stopiteration(registry):
+    registry.ensure_manual = lambda *a, **k: []  # as if the store failed to keep the row
+    with pytest.raises(ManualRequired):
+        registry.resolve(T2, Capability.CRM)
+
+
+# ---------------------------------------------------------------- S2: mocks only for demo tenants
+
+def test_mock_refused_for_a_real_tenant(registry):
+    with pytest.raises(InvalidConnection, match="mock"):
+        registry.add(T2, TEXT, "mock")
+
+
+def test_mock_allowed_for_a_demo_tenant_and_by_env_flag(registry, clock, providers, vault):
+    from cortex_operator.connections import ConnectionRegistry, InMemoryConnectionStore
+    registry.add(T1, TEXT, "mock")
+    flagged = ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(),
+                                 vault=vault, environ={"THALLO_ALLOW_MOCK": "1"})
+    flagged.add(T2, TEXT, "mock")
+    off = ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(),
+                             vault=vault, environ={"THALLO_ALLOW_MOCK": "0"})
+    with pytest.raises(InvalidConnection):
+        off.add(T2, TEXT, "mock")
+
+
+def test_resolve_and_run_ignore_mock_rows_of_a_real_tenant(registry):
+    from cortex_operator.contracts.ids import new_id
+    from cortex_operator.contracts.models import Connection
+    registry.connections.put(Connection(id=new_id(registry.clock), created_at=registry.clock.now(), tenant_id=T2,
+                                        capability=TEXT, provider="mock", mode=ConnectionMode.MOCK, priority=0))
+    assert ids(registry, registry.resolve(T2, TEXT)) == ["manual"]
+    assert registry.run(T2, req()).provider == "manual"
