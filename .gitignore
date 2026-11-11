@@ -15,3 +15,4 @@ brand.json
 state/
 brag-output*/
 *.egg-info/
+.claude/worktrees/

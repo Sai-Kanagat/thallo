@@ -6,7 +6,12 @@ if ! command -v gitleaks >/dev/null 2>&1; then
 fi
 gitleaks git --staged --redact --no-banner --config .gitleaks.toml . || exit 1
 
+# Worktrees have no .venv of their own: fall back to the main checkout's.
 PY=.venv/bin/python
+if [ ! -x "$PY" ]; then
+  MAIN="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+  PY="$MAIN/.venv/bin/python"
+fi
 [ -x "$PY" ] || PY=python3
 "$PY" scripts/check_rules.py || { echo "pre-commit: repository rules failed." >&2; exit 1; }
 "$PY" -m cortex_operator.contracts.ddl | diff -q db/migrations/0001_core.sql - >/dev/null \
