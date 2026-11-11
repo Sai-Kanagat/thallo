@@ -77,6 +77,8 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 
 ## Open items, owned elsewhere
 
+- Lead decision (11 Nov, from the WP-01 review): `tracked_link.slug` and `whatsapp_code` stay globally unique, because a redirect or a coded chat must find its tenant before any tenant is set. WP-12 allocates and resolves them only through narrow SECURITY DEFINER functions with a pinned search_path (random codes, never sequential), so a tenant cannot probe or squat another tenant's codes. No package may use a BYPASSRLS role for this.
+
 - Share proposals (calendar share changes) get their table and approval subject from WP-18 through the lead.
 - `scripts/check_rules.py` is a lint, not a security boundary. Aliased clock calls and dynamic imports slip through; review catches those.
 
