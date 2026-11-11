@@ -22,7 +22,7 @@ Version 1.0.0, frozen 11 Nov 2026. Code lives in `cortex_operator/contracts/`. E
 - A publish request needs an idempotency key, an approval id and the approved content hash.
 - A message send needs exactly one authority: a template approval plus the recipient's consent record, or the verified human sending it.
 - A request built with `model_construct()` is re-validated at the provider boundary, so validators cannot be skipped.
-- An ad spend change carries the signed proposal, its approval and hash, the campaign and the exact signed daily amount. No free-form payload may set status, budget or bid, so ads are created paused and stay paused until a signed change.
+- An ad spend change carries the signed proposal, its approval and hash, the campaign and the exact signed daily amount. No free-form payload may carry a status, budget, bid, spend or schedule key at any depth, and every ads provider must force the paused status on create itself, so ads stay paused until a signed change.
 - Generated people need a consent record. So does a real person's voice.
 - Research results are always marked untrusted. Untrusted text travels as quoted data in `TextRequest.untrusted_data`, never as instructions.
 - Every provider refuses another capability's request and refuses to run over `cost_cap_eur`.
@@ -64,6 +64,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
+| 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
 
 ## Migrations
 
