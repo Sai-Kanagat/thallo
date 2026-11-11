@@ -32,10 +32,20 @@ def seeded(database, tenants):
     return a, b, pa, pb
 
 
-def test_app_role_is_not_privileged(admin):
-    sup, bypass = admin.execute(
-        "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname='cortex_app'").fetchone()
-    assert (sup, bypass) == (False, False)
+def test_helpers_pin_their_search_path(admin):
+    rows = admin.execute("SELECT proname, proconfig FROM pg_proc WHERE proname IN "
+                         "('app_current_tenant', 'app_enable_tenant_rls')").fetchall()
+    assert len(rows) == 2 and all(cfg == ["search_path=pg_catalog"] for _, cfg in rows)
+
+
+def test_app_role_is_not_privileged(admin, urls):
+    with psycopg.connect(urls["app"]) as conn:
+        who = conn.execute("SELECT current_user").fetchone()[0]
+    for role in ("cortex_app", who):
+        sup, bypass = admin.execute(
+            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=%s", (role,)).fetchone()
+        assert (sup, bypass) == (False, False)
+    assert who != "cortex_app"  # the test role is a per-run member, the shared role is untouched
 
 
 def test_tenant_a_sees_nothing_of_tenant_b(database, tenants, admin):
@@ -105,9 +115,8 @@ def test_app_role_cannot_create_or_edit_tenants(database, tenants):
         repo.execute("UPDATE tenant SET name = 'x' WHERE id = %s", (a.id,))
     with pytest.raises(psycopg.errors.InsufficientPrivilege), database.tenant(a.id) as repo:
         repo.execute("DELETE FROM tenant WHERE id = %s", (a.id,))
-    with database.tenant(a.id) as repo:  # the kill switch is allowed
-        repo.execute("UPDATE tenant SET paused = true WHERE id = %s", (a.id,))
-        repo.execute("UPDATE tenant SET paused = false WHERE id = %s", (a.id,))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege), database.tenant(a.id) as repo:
+        repo.execute("UPDATE tenant SET paused = true WHERE id = %s", (a.id,))  # kill switch is operator-only
 
 
 def test_ledgers_are_append_only_for_the_app_role(database, tenants):
