@@ -92,6 +92,12 @@ def test_no_side_door_for_spend():
                      payload={"status": "ACTIVE", "daily_budget": 500})
     with pytest.raises(ValidationError):
         c.AdsRequest(tenant_id=T, action=c.AdsAction.PAUSE, platform="meta", to_daily_eur=Decimal(5))
+    for nested in ({"campaign": {"daily_budget_micros": 5_000_000}}, {"ad_sets": [{"Status": "ACTIVE"}]},
+                   {"campaign_budget": 1}, {"x": {"y": {"bid_strategy": "max"}}}):
+        with pytest.raises(ValidationError):
+            c.AdsRequest(tenant_id=T, action=c.AdsAction.CREATE_PAUSED, platform="meta", payload=nested)
+    c.AdsRequest(tenant_id=T, action=c.AdsAction.CREATE_PAUSED, platform="meta",
+                 payload={"creative": {"headline": "x"}, "targeting": {"region": "IT"}})
 
 
 def test_model_construct_cannot_skip_validation_at_the_provider():

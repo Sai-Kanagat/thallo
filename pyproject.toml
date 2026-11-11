@@ -18,6 +18,16 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+# The original engine, linted only once its owning package ports it.
+extend-exclude = [
+    "cortex_operator/analytics.py", "cortex_operator/crew.py", "cortex_operator/foresight.py",
+    "cortex_operator/notion.py", "cortex_operator/postiz.py", "cortex_operator/publishing.py",
+    "cortex_operator/run.py", "cortex_operator/taste.py", "cortex_operator/workflow.py",
+    "cortex_operator/writer.py", "cortex_operator/*/legacy.py", "cortex_operator/store.py",
+    "cortex_operator/truth.py", "cortex_operator/gate.py",
+    "tests/test_crew.py", "tests/test_engine.py", "tests/test_notion_writer.py", "tests/test_postiz.py",
+    "tests/test_store.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "DTZ", "S", "PL"]

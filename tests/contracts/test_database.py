@@ -27,7 +27,7 @@ def db():
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     sys.path.insert(0, str(ROOT / "scripts"))
-    from migrate import migrate
+    from migrate import MIGRATIONS, migrate
 
     name = f"cortex_ct_{secrets.token_hex(4)}"
     with psycopg.connect(URL, autocommit=True) as admin:
@@ -36,7 +36,7 @@ def db():
     params["dbname"] = name
     url = make_conninfo(**params)
     try:
-        assert migrate(url) == ["0001_core.sql"]
+        assert migrate(url) == sorted(p.name for p in MIGRATIONS.glob("*.sql"))
         assert migrate(url) == []  # idempotent
         with psycopg.connect(url, autocommit=True) as conn:
             conn.test_url = url  # type: ignore[attr-defined]
