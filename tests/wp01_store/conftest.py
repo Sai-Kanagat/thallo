@@ -1,7 +1,8 @@
 """Fixtures: a throwaway database, fully migrated, with the app role able to log in.
 
-The app role's password is generated per run and lives only in the throwaway cluster for the
-length of the run. Tests are skipped with a reason when DATABASE_URL is unset
+The shared cortex_app role is never touched. Each run creates its own login role, a member of
+cortex_app (so it holds exactly cortex_app's grants), with a random password, and drops it at the end.
+Tests are skipped with a reason when DATABASE_URL is unset
 (scripts/ci.sh sets it).
 """
 from __future__ import annotations
@@ -47,15 +48,17 @@ def urls():
     admin_url = make_conninfo(**params)
     migrate(admin_url)
     password = secrets.token_hex(16)
-    with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(f"ALTER ROLE cortex_app LOGIN PASSWORD '{password}'")
-    params.update(user="cortex_app", password=password)
+    role = f"cortex_app_{secrets.token_hex(4)}"
+    with psycopg.connect(URL, autocommit=True) as conn:
+        conn.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}' IN ROLE cortex_app "
+                     "NOSUPERUSER NOBYPASSRLS INHERIT")
+    params.update(user=role, password=password)
     try:
         yield {"admin": admin_url, "app": make_conninfo(**params)}
     finally:
         with psycopg.connect(URL, autocommit=True) as admin:
             admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-            admin.execute("ALTER ROLE cortex_app NOLOGIN PASSWORD NULL")
+            admin.execute(f"DROP ROLE IF EXISTS {role}")
 
 
 @pytest.fixture
