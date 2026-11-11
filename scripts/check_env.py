@@ -26,8 +26,8 @@ def read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
         return values
-    for line in path.read_text().splitlines():
-        line = line.strip()
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
