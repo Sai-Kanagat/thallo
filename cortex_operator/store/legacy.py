@@ -1,4 +1,7 @@
-"""SQLite persistence for an Engine's durable state, so passes in separate processes agree."""
+"""SQLite persistence for an Engine's durable state, so passes in separate processes agree.
+
+Legacy: kept so existing imports and tests work unchanged. The Postgres equivalent is
+cortex_operator.store.PostgresStore."""
 from __future__ import annotations
 
 import json
@@ -41,7 +44,7 @@ class Store:
         self.path = Path(path)
 
     @classmethod
-    def for_brand(cls, brand: str, folder: str | Path = "state") -> "Store":
+    def for_brand(cls, brand: str, folder: str | Path = "state") -> Store:
         return cls(Path(folder) / f"{brand}.db")
 
     def _connect(self) -> sqlite3.Connection:
