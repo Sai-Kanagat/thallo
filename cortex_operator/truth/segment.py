@@ -1,18 +1,21 @@
-"""Sentence segmentation that respects decimals, abbreviations and claim markers.
+"""Sentence segmentation that respects decimals, abbreviations and claim markers, and fails closed.
 
 The legacy splitter cut on every period, so "3.5 tonnes [[C-0001]]." became "3." plus
 "5 tonnes [[C-0001]].", and the first fragment was flagged as unsupported (BUILD_PLAN 0.1).
 
-Rules, in order:
-- A line break always ends a sentence (social copy often has no final period).
-- A run of terminators (. ! ? and the ellipsis) ends a sentence only when followed, after any
-  closing quotes or brackets, by whitespace or the end of the text. So "3.5", "3,5",
-  "example.com" and "S.p.A" never split.
-- A single period does not end a sentence after a known abbreviation for the language, after an
-  initial (one letter, or one Tamil syllable), or after a token with an internal period ("e.g").
-- A single period followed by a lowercase Latin letter does not end a sentence.
-- A fragment that holds only claim markers ("{{C-0001}}" or "[[C-0001]]") joins the sentence
-  before it.
+The legacy gate checks each sentence for its own marker, so a wrong merge would let an unmarked
+sentence ride on its neighbour's marker. When in doubt this splitter therefore produces MORE
+fragments, never fewer. Rules, in order:
+- A line break always ends a sentence.
+- A run of terminators (. ! ? and the ellipsis) ends a sentence, except:
+  - a period between two digits (a decimal: "3.5");
+  - a terminator inside a URL or email address detected explicitly;
+  - an internal period of a listed abbreviation ("e.g", "Sig.ra", "S.p.A", the Tamil km);
+  - a single period after a known abbreviation or an initial, and only when the next visible
+    character is a lowercase letter or a digit ("e.g. spanners", "no. 7"). Before an uppercase
+    letter, an uncased letter (Tamil) or anything else, it splits ("parts etc. We sold").
+- A fragment that holds only claim markers joins the sentence before it, and only when it sits
+  on the same line, right after that sentence.
 
 Offsets refer to the text as given, so callers can point at the exact span.
 """
@@ -59,8 +62,6 @@ def _is_abbreviation(text: str, dot: int, language: Language) -> bool:
     token = _token_before(text, dot)
     if not token:
         return False
-    if "." in token and not token.endswith("."):
-        return True  # internal period: e.g, S.p.A, கி.மீ
     return token.casefold() in ABBREVIATIONS[language] or _is_initial(token)
 
 
@@ -70,7 +71,51 @@ def _next_visible(text: str, j: int) -> str:
     return text[j] if j < len(text) else ""
 
 
+URL_OR_EMAIL = re.compile(
+    r"(?:https?://|www\.)[^\s<>\"]*[^\s<>\".,;:!?)\]]"
+    r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[a-z]{2,}"
+    r"|(?<![\w.@])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|it|in|org|net|io|eu|info|biz|co\.in|co\.uk)"
+    r"(?:/[^\s<>\"]*[^\s<>\".,;:!?)\]])?(?![\w])"
+)
+
+
+def _protected(text: str) -> list[tuple[int, int]]:
+    return [m.span() for m in URL_OR_EMAIL.finditer(text)]
+
+
+def _token_at(text: str, i: int) -> str:
+    """The whitespace-delimited token around position i, without outer quotes, brackets and
+    trailing terminators, casefolded."""
+    a = i
+    while a > 0 and not text[a - 1].isspace():
+        a -= 1
+    b = i
+    while b < len(text) and not text[b].isspace():
+        b += 1
+    return text[a:b].lstrip(OPENERS).rstrip(CLOSERS + TERMINATORS).casefold()
+
+
+def _holds_together(text: str, i: int, j: int, run: str, language: Language,
+                    protected: list[tuple[int, int]]) -> bool:
+    """True when the terminator run at text[i:j] (closers included up to j) must NOT split."""
+    if any(a <= i and i + 1 < b for a, b in protected):
+        return True  # inside an explicitly detected URL or email
+    if run != ".":
+        return False
+    if 0 < i < len(text) - 1 and text[i - 1].isdigit() and text[i + 1].isdigit():
+        return True  # decimal
+    if j < len(text) and not text[j].isspace():
+        # an internal period of a listed abbreviation ("e.g", "sig.ra", "s.p.a", the Tamil km)
+        token = _token_at(text, i)
+        return "." in token and token in ABBREVIATIONS[language]
+    if _is_abbreviation(text, i, language):
+        nxt = _next_visible(text, j)
+        return bool(nxt) and (nxt.isdigit() or (nxt.islower() and nxt.lower() != nxt.upper()))
+    return False
+
+
 def segment(text: str, language: Language = Language.EN) -> list[Sentence]:
+    protected = _protected(text)
     cuts: list[tuple[int, int]] = []
     start = 0
     i = 0
@@ -90,17 +135,9 @@ def segment(text: str, language: Language = Language.EN) -> list[Sentence]:
         run = text[i:j]
         while j < n and text[j] in CLOSERS:
             j += 1
-        if j < n and not text[j].isspace():
-            i = j  # decimal, URL, internal period
+        if _holds_together(text, i, j, run, language, protected):
+            i = i + 1 if run == "." else j
             continue
-        if run == ".":
-            if _is_abbreviation(text, i, language):
-                i = j
-                continue
-            nxt = _next_visible(text, j)
-            if nxt and nxt.islower() and unicodedata.name(nxt, "").startswith("LATIN"):
-                i = j
-                continue
         cuts.append((start, j))
         start = i = j
     cuts.append((start, n))
@@ -114,7 +151,7 @@ def segment(text: str, language: Language = Language.EN) -> list[Sentence]:
             b -= 1
         if a == b:
             continue
-        if spans and MARKER_ONLY.match(text[a:b]):
+        if spans and MARKER_ONLY.match(text[a:b]) and "\n" not in text[spans[-1][1]:a]:
             spans[-1] = (spans[-1][0], b)
             continue
         spans.append((a, b))

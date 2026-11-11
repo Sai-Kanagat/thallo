@@ -179,7 +179,8 @@ TA = Lexicon(
 )
 
 # Fixed product categories that contain a number word but state no claim. Masked before matching.
-EXCEPTIONS = re.compile(LEFT + r"(?:two|three|four)[-\s]?wheelers?" + RIGHT, re.IGNORECASE)
+# Only the closed or hyphenated compound: "three wheelers" with a space is a count and stays checkable.
+EXCEPTIONS = re.compile(LEFT + r"(?:two|three|four)-?wheelers?" + RIGHT, re.IGNORECASE)
 
 LEXICONS: dict[Language, Lexicon] = {Language.EN: EN, Language.IT: IT, Language.TA: TA}
 

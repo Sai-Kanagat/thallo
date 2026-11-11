@@ -99,7 +99,7 @@ def test_named_customer_outside_a_slot_fails_any_claim_state(clock, make):
 
 
 def test_hidden_character_cannot_split_a_word(clock):
-    result = run("The be​st dealer.", clock)
+    result = run("The be\u200bst dealer.", clock)
     assert FindingKind.HIDDEN_CHARACTER in kinds(result)
 
 
@@ -156,3 +156,13 @@ def test_build_compiles_then_fills_or_raises(clock, make):
         build("Porta {{C-0001}}, il migliore.", language=Language.IT, claims=claims, clock=clock,
               default_language=Language.EN)
     assert err.value.result.findings[0].kind is FindingKind.SUPERLATIVE
+
+
+@pytest.mark.parametrize("text", ["We sold three wheelers.", "Three  wheelers in stock.", "two\nwheelers"])
+def test_spaced_number_word_before_wheelers_stays_checkable(clock, text):
+    assert FindingKind.NUMBER_WORD in kinds(run(text, clock))
+
+
+@pytest.mark.parametrize("text", ["Our three-wheelers.", "A threewheeler.", "Two-wheeler service."])
+def test_closed_or_hyphenated_wheeler_compound_is_a_category(clock, text):
+    assert run(text, clock).ok
