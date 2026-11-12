@@ -3,10 +3,12 @@ compile step that keeps numbers, superlatives, comparisons and names out of mode
 
 Modules
 - `claims`: candidate, human-only verification, expiry, change with its void list
-- `compiler`: `compile_text`, `build` (compile then fill), the `Detector` hook
-- `fill`: `fill`, `render_claim`, per-language number, unit, price and date formatting
-- `segment`: sentence segmentation that respects decimals and abbreviations
-- `lexicon`: per-language superlative, comparative and number-word lists
+- `compiler`: `compile_text`, `scan`, `build` (compile, fill, check the output), the `Detector` hook
+- `fill`: `render_claim` and per-language number, unit, price and date formatting. Filling text
+  is private and reached only through `build`
+- `units`: the units and ISO 4217 codes a claim may carry
+- `segment`: sentence segmentation, for display only (not a security boundary)
+- `lexicon`: per-language word lists, lookalike folding and script rules
 - `repository`: the storage Protocols WP-01 implements, and an in-memory version
 - `legacy`: the original engine's `ClaimLedger`, re-exported below so its imports keep working
 
@@ -33,8 +35,9 @@ from cortex_operator.truth.compiler import (
     FindingKind,
     build,
     compile_text,
+    scan,
 )
-from cortex_operator.truth.fill import Filled, FillError, fill, render_claim
+from cortex_operator.truth.fill import Filled, FillError, LibraryError, render_claim
 from cortex_operator.truth.legacy import REF, Claim, ClaimLedger, render
 from cortex_operator.truth.repository import ClaimRepository, ClaimUsage, InMemoryClaimRepository
 from cortex_operator.truth.segment import Sentence, segment
@@ -58,17 +61,18 @@ __all__ = [
     "Finding",
     "FindingKind",
     "InMemoryClaimRepository",
+    "LibraryError",
     "Sentence",
     "build",
     "change_claim",
     "compile_text",
     "expire_due",
-    "fill",
     "new_candidate",
     "next_code",
     "reject_claim",
     "render",
     "render_claim",
+    "scan",
     "segment",
     "verify_claim",
 ]

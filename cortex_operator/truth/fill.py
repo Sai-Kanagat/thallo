@@ -1,13 +1,16 @@
 """Slot filling. The writer emits `{{C-0012}}`; code fills the value and unit in the right language.
 
+Filling is reached only through `compiler.build`, which compiles first and checks the output after.
+`_fill` is private on purpose: filling text that was never compiled would skip the gate.
+
 Precedence for each slot:
 1. The claim's approved wording for the language (`claim.languages[lang]`), used verbatim. A human
    approved it when verifying, so it wins over any formatting below.
 2. NUMBER and PRICE: the canonical value formatted for the language (decimal separator, digit
-   grouping) with the unit rendered from UNITS or CURRENCIES.
+   grouping) with the unit from `units.py`.
 3. DATE: "5 January 2026", "5 gennaio 2026", "5 ஜனவரி 2026".
 4. NAME: the value verbatim. Names are not translated.
-5. QUOTE and CAPABILITY: the value verbatim, only when the copy is in the tenant's default
+5. QUOTE, CAPABILITY and OFFER: the value verbatim, only when the copy is in the tenant's default
    language (the language the value was captured and verified in). Otherwise the fill refuses:
    a model translation of a quote or capability would be an unverified claim.
 
@@ -19,13 +22,13 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 
 from cortex_operator.contracts.clock import Clock
 from cortex_operator.contracts.enums import ClaimKind, Language
 from cortex_operator.contracts.models import Claim
 from cortex_operator.truth.claims import parse_date_value, problem
+from cortex_operator.truth.units import CURRENCY_SYMBOLS, PERCENT, SYMBOL_UNITS, UNITS
 
 SLOT = re.compile(r"\{\{(C-[0-9]{4,})\}\}")
 
@@ -34,6 +37,19 @@ class FillError(ValueError):
     def __init__(self, problems: list[str]) -> None:
         super().__init__("; ".join(problems))
         self.problems = problems
+
+
+class LibraryError(ValueError):
+    """The claims mapping is not this tenant's library: a claim of another tenant, or a key that
+    is not the claim's own code. A programming error, so it raises instead of reporting."""
+
+
+def check_library(claims: Mapping[str, Claim], tenant_id: str) -> None:
+    for code, claim in claims.items():
+        if claim.tenant_id != tenant_id:
+            raise LibraryError(f"{code}: claim belongs to another tenant")
+        if claim.code != code:
+            raise LibraryError(f"mapping key {code} holds claim {claim.code}")
 
 
 # ---------------------------------------------------------------- numbers
@@ -68,51 +84,26 @@ def format_number(value: str, language: Language) -> str:
     """Format a canonical decimal string ("1234.50") for a language, keeping every given digit."""
     dec, grp = SEPARATORS[language]
     sign = "-" if value.startswith("-") else ""
-    body = value.lstrip("-")
-    whole, _, frac = body.partition(".")
+    whole, _, frac = value.lstrip("-").partition(".")
     out = _group(whole, language, grp)
     return f"{sign}{out}{dec}{frac}" if frac else f"{sign}{out}"
 
 
-# ---------------------------------------------------------------- units
-
-# unit code -> language -> (singular, plural). Symbols are the same in every language.
-SYMBOL_UNITS = frozenset({"kg", "g", "km", "m", "cm", "mm", "km/h", "L", "ml", "kW", "kWh", "W", "cc", "hp",
-                          "CV", "Nm", "m2", "m3", "km/l"})
-UNITS: dict[str, dict[Language, tuple[str, str]]] = {
-    "t": {Language.EN: ("tonne", "tonnes"), Language.IT: ("tonnellata", "tonnellate"),
-          Language.TA: ("டன்", "டன்")},
-    "hour": {Language.EN: ("hour", "hours"), Language.IT: ("ora", "ore"),
-             Language.TA: ("மணி நேரம்", "மணி நேரம்")},
-    "day": {Language.EN: ("day", "days"), Language.IT: ("giorno", "giorni"),
-            Language.TA: ("நாள்", "நாட்கள்")},
-    "week": {Language.EN: ("week", "weeks"), Language.IT: ("settimana", "settimane"),
-             Language.TA: ("வாரம்", "வாரங்கள்")},
-    "month": {Language.EN: ("month", "months"), Language.IT: ("mese", "mesi"),
-              Language.TA: ("மாதம்", "மாதங்கள்")},
-    "year": {Language.EN: ("year", "years"), Language.IT: ("anno", "anni"),
-             Language.TA: ("ஆண்டு", "ஆண்டுகள்")},
-}
-CURRENCIES: dict[str, str] = {"EUR": "€", "INR": "₹", "USD": "$", "GBP": "£"}
-
-
-def _with_unit(number: str, value: str, unit: str | None, language: Language, default: Language) -> str:
+def _with_unit(number: str, value: str, unit: str | None, language: Language) -> str:
     if unit is None:
         return number
-    if unit == "%":
+    if unit == PERCENT:
         return f"{number}%"
     if unit in SYMBOL_UNITS:
         return f"{number} {unit}"
     forms = UNITS.get(unit, {}).get(language)
     if forms:
         return f"{number} {forms[0] if Decimal(value) == 1 else forms[1]}"
-    if language is default:
-        return f"{number} {unit}"
-    raise FillError([f"no wording for unit {unit!r} in {language.value}; add it to the claim's languages"])
+    raise FillError([f"no wording for unit {unit!r} in {language.value}"])
 
 
 def _price(number: str, unit: str, language: Language) -> str:
-    symbol = CURRENCIES.get(unit)
+    symbol = CURRENCY_SYMBOLS.get(unit)
     if language is Language.IT:
         return f"{number} {symbol or unit}"
     return f"{symbol}{number}" if symbol else f"{unit} {number}"
@@ -141,13 +132,13 @@ def format_date(value: str, language: Language) -> str:
 # ---------------------------------------------------------------- one claim
 
 def render_claim(claim: Claim, language: Language, *, default_language: Language) -> str:
+    """The wording one claim takes in one language. Pure; does not check that it is usable."""
     approved = claim.languages.get(language.value)
     if approved:
         return unicodedata.normalize("NFC", approved)
     kind = claim.kind
     if kind is ClaimKind.NUMBER:
-        return _with_unit(format_number(claim.value, language), claim.value, claim.unit, language,
-                          default_language)
+        return _with_unit(format_number(claim.value, language), claim.value, claim.unit, language)
     if kind is ClaimKind.PRICE:
         return _price(format_number(claim.value, language), claim.unit or "", language)
     if kind is ClaimKind.DATE:
@@ -166,14 +157,14 @@ class Filled:
     text: str
     codes: tuple[str, ...]  # in order of first use
     claim_ids: tuple[str, ...]
+    slot_spans: tuple[tuple[int, int], ...]  # where each rendered slot sits in `text`
 
 
-def fill(text: str, *, language: Language, claims: Mapping[str, Claim], clock: Clock,
-         default_language: Language) -> Filled:
-    """Replace every `{{C-xxxx}}` slot with the claim's wording. `claims` is keyed by code.
-    Run `compile_text` first; `build` does both."""
+def _fill(text: str, *, language: Language, claims: Mapping[str, Claim], clock: Clock,
+          default_language: Language, tenant_id: str) -> Filled:
+    check_library(claims, tenant_id)
     text = unicodedata.normalize("NFC", text)
-    now: datetime = clock.now()
+    now = clock.now()
     problems: list[str] = []
     rendered: dict[str, str] = {}
     order: list[str] = []
@@ -192,7 +183,21 @@ def fill(text: str, *, language: Language, claims: Mapping[str, Claim], clock: C
             problems.extend(exc.problems)
     if problems:
         raise FillError(problems)
-    out = SLOT.sub(lambda m: rendered[m.group(1)], text)
-    if "{{" in out or "}}" in out:
+    out: list[str] = []
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    length = 0
+    for m in SLOT.finditer(text):
+        out.append(text[pos:m.start()])
+        length += m.start() - pos
+        value = rendered[m.group(1)]
+        spans.append((length, length + len(value)))
+        out.append(value)
+        length += len(value)
+        pos = m.end()
+    out.append(text[pos:])
+    result = "".join(out)
+    if "{{" in result or "}}" in result:
         raise FillError(["malformed slot left after filling"])
-    return Filled(text=out, codes=tuple(order), claim_ids=tuple(claims[c].id for c in order))
+    return Filled(text=result, codes=tuple(order), claim_ids=tuple(claims[c].id for c in order),
+                  slot_spans=tuple(spans))

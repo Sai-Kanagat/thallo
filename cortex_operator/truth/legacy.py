@@ -1,20 +1,25 @@
-"""Truth ledger of the original engine: factual sentences must reference a live, verified claim.
+"""Truth ledger of the original engine, kept until WP-06 ports the engine to `truth.compiler`.
 
-Kept so the engine and its tests run unchanged until WP-06 ports them to `truth.compiler`.
-Sentence splitting now uses `truth.segment`, which fixes the BUILD_PLAN 0.1 bug: "3.5 tonnes
-[[C-0001]]." used to split at the decimal point and flag "3." as unsupported.
+The original rule was "a factual sentence must carry a [[C-0001]] reference", which made the
+sentence splitter a security boundary: any wrong merge let an unmarked sentence ride on its
+neighbour's marker. `compile` now delegates to the token-level `truth.compiler.scan`. Every digit,
+number word, superlative, comparative or protected name outside a marker fails wherever it sits,
+and a reference supports nothing but itself. The segmenter only names the sentence in the error
+message. The return shape, (claim ids, errors), is unchanged.
 """
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 
 from cortex_operator.contracts import sha256
-from cortex_operator.truth.segment import segment
+from cortex_operator.contracts.enums import Language
+from cortex_operator.truth.compiler import scan
+from cortex_operator.truth.segment import segment as _segment  # display only; tests swap it
 
-REF = re.compile(r"\[\[(C-\d+)\]\]")
-CHECKABLE = re.compile(r"\d|%|\b(first|only|best|fastest|largest|guaranteed|proven)\b", re.I)
+REF = re.compile(r"\[\[(C-[0-9]+)\]\]")
 
 
 @dataclass
@@ -50,13 +55,21 @@ class ClaimLedger:
             return f"{claim_id} has expired"
         return None
 
-    def compile(self, text: str, now: datetime) -> tuple[list[str], list[str]]:
+    def compile(self, text: str, now: datetime,
+                protected_names: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
         """Returns claim IDs used and errors. Any error blocks the draft."""
+        text = unicodedata.normalize("NFC", text)
         ids = REF.findall(text)
         errors = [p for p in (self.problem(i, now) for i in ids) if p]
-        for sentence in (s.text for s in segment(text)):
-            if CHECKABLE.search(REF.sub("", sentence)) and not REF.search(sentence):
-                errors.append(f"unsupported: {sentence.strip()}")
+        findings = scan(text, language=Language.EN, marker_spans=[m.span() for m in REF.finditer(text)],
+                        protected_names=protected_names)
+        if findings:
+            sentences = _segment(text, Language.EN)
+            grouped: dict[str, list[str]] = {}
+            for f in findings:
+                where = next((s.text for s in sentences if s.start <= f.start < s.end), f.match)
+                grouped.setdefault(where, []).append(f"{f.kind.value} {f.match!r}")
+            errors += [f"unsupported: {where} ({', '.join(why)})" for where, why in grouped.items()]
         return sorted(set(ids)), errors
 
     def fingerprint(self, claim_ids: list[str] | tuple[str, ...]) -> list[str]:
@@ -65,4 +78,4 @@ class ClaimLedger:
 
 def render(text: str) -> str:
     """Public text, with claim references removed."""
-    return re.sub(r" ?\[\[C-\d+\]\]", "", text)
+    return re.sub(r" ?\[\[C-[0-9]+\]\]", "", text)
