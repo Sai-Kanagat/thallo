@@ -38,14 +38,41 @@ _SCHEME_IN = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _IPV4 = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
 _LABEL_RUN = re.compile(r"[\w-]+(?:\.[\w-]+)+")
 _NUMBER = re.compile(r"[+-]?\d+(?:[.,]\d+)*")
-_EMAIL = re.compile(r"[^@/:]+@[^@/:]+")
-# Final labels that are common file extensions and are not real top-level domains. zip, mov and
-# others ARE real TLDs and stay links.
-FILE_EXTENSIONS = frozenset({"pdf", "md", "js", "ts", "py", "png", "jpg", "jpeg", "gif", "docx", "xlsx", "pptx",
-                             "csv", "txt"})
-# "word.Word" with no space is prose, unless the second word is one of these common TLDs.
-_PROSE_GUARD = frozenset({"com", "net", "org", "info", "biz", "io", "co", "it", "eu", "uk", "de", "fr", "es",
-                          "app", "dev", "shop", "me"})
+_EMAIL = re.compile(r"([^@/:?#]+)@([^@/:?#]+)")
+# Final labels that are common file extensions and are NOT real IANA top-level domains. md
+# (Moldova), py (Paraguay), zip, mov and other real TLDs are deliberately absent: they stay links
+# unless the tenant vouches for the token through its non-link allowlist.
+FILE_EXTENSIONS = frozenset({"pdf", "js", "ts", "png", "jpg", "jpeg", "gif", "docx", "xlsx", "pptx", "csv", "txt"})
+# A small embedded set of real generic TLDs. Every two-letter alphabetic label is also treated as a
+# real TLD (country codes), and every xn-- label as one (internationalised TLDs). This is not the
+# full IANA list: a word missing here only loses the prose exemption below if it is on this list,
+# so the list errs towards treating words as TLDs.
+GENERIC_TLDS = frozenset("""
+com net org info biz name pro mobi asia tel travel jobs aero coop museum int edu gov mil arpa
+app dev page shop store online site website web tech cloud digital network systems solutions
+blog news media press live life world today link click one top xyz club vip win bid icu fun
+art design studio gallery photo photos pics video film music radio tv show game games
+bike auto car cars taxi tours travel holiday house home casa immo realestate properties
+email mail chat social team group company business agency consulting services support
+center expert guru ninja rocks cool best plus pink red blue black green gold
+eco bio green organic farm garden energy solar city town zone place space land
+academy school college university education training courses
+health care clinic dental doctor fitness yoga
+food pizza cafe restaurant bar wine beer kitchen recipes
+money bank finance capital fund cash credit loans insurance tax
+law legal lawyer attorney
+fashion clothing shoes jewelry watch
+sale deals discount coupons market markets trade exchange
+tools software hosting domains host server
+love sex porn adult
+zip mov foo nexus
+global international
+""".split())
+
+
+def is_real_tld(label: str) -> bool:
+    lab = label.lower()
+    return (len(lab) == 2 and lab.isalpha()) or lab.startswith("xn--") or lab in GENERIC_TLDS
 _SLOT = re.compile(r"\{\{\s*(C-\d{4,})\s*\}\}")
 _DEFAULT_PORTS = {"http": ":80", "https": ":443"}
 
@@ -125,6 +152,11 @@ def _strip(token: str) -> str:
     return token
 
 
+def _hostish(text: str) -> bool:
+    """True when `text` holds a dot-label run ending in a real TLD."""
+    return any(is_real_tld(m.group(0).split(".")[-1]) for m in _LABEL_RUN.finditer(text))
+
+
 def _token_link(t: str) -> str | None:
     """The normalised URL a token stands for, or None when it is plainly not a link."""
     m = _SCHEME_IN.search(t)
@@ -132,8 +164,8 @@ def _token_link(t: str) -> str | None:
         return normalise_url(t[m.start():])
     if t.startswith("//"):
         return normalise_url("https:" + t)
-    if _EMAIL.fullmatch(t):
-        return None
+    if (em := _EMAIL.fullmatch(t)) and not _hostish(em.group(1)):
+        return None  # a plain email address: nothing after @ but a host, nothing like a host before it
     if _IPV4.search(t) or t.lower().startswith("www."):
         return normalise_url("https://" + t.lstrip("/:.-"))
     run = _LABEL_RUN.search(t)
@@ -144,7 +176,7 @@ def _token_link(t: str) -> str | None:
     if len(tld) < 2 or tld.lower() in FILE_EXTENSIONS:
         return None
     prose = (len(labels) == 2 and run.group(0) == t and labels[0].isalpha() and tld.isalpha()
-             and tld[0].isupper() and tld[1:].islower() and tld.lower() not in _PROSE_GUARD)
+             and tld[0].isupper() and tld[1:].islower() and not is_real_tld(tld))
     if prose:
         return None
     return normalise_url("https://" + t[run.start():])
@@ -469,9 +501,10 @@ def media_hashes(vc: VariantContent) -> tuple[str, ...]:
 
 
 __all__ = [
-    "CANONICAL_VERSION", "FILE_EXTENSIONS", "BundleContent", "BundleHash", "CanonicalFormError", "LinkResolver",
-    "MediaItem", "MemoResolver", "PayloadMedia", "PublishPayload", "Snapshot", "VariantContent", "build_snapshot",
-    "bundle_hash", "canonical_json", "canonical_text", "claim_slots", "find_link_tokens", "find_links",
-    "find_unresolved_links", "has_unrendered_slot", "link_key", "media_hashes", "normalise_url", "outgoing_text",
-    "publish_payload", "resolved_links", "sha256_bytes", "unresolved", "variant_hash", "variant_leaf",
+    "CANONICAL_VERSION", "FILE_EXTENSIONS", "GENERIC_TLDS", "BundleContent", "BundleHash", "CanonicalFormError",
+    "LinkResolver", "MediaItem", "MemoResolver", "PayloadMedia", "PublishPayload", "Snapshot", "VariantContent",
+    "build_snapshot", "bundle_hash", "canonical_json", "canonical_text", "claim_slots", "find_link_tokens",
+    "find_links", "find_unresolved_links", "has_unrendered_slot", "is_real_tld", "link_key", "media_hashes",
+    "normalise_url", "outgoing_text", "publish_payload", "resolved_links", "sha256_bytes", "unresolved",
+    "variant_hash", "variant_leaf",
 ]
