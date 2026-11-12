@@ -21,6 +21,8 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from cortex_operator.connections.errors import (
     InvalidConnection,
     ManualRequired,
@@ -63,12 +65,19 @@ class ProviderContext:
 Factory = Callable[[ProviderContext], c.Provider]
 
 
+class NoSettings(BaseModel):
+    """Settings schema for providers that take none (manual, mock)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 @dataclass(frozen=True)
 class ProviderEntry:
     capability: Capability
     name: str
     mode: ConnectionMode
     factory: Factory
+    settings_schema: type[BaseModel] | None = None
 
 
 class ProviderRegistry:
@@ -76,11 +85,13 @@ class ProviderRegistry:
         self._entries: dict[tuple[Capability, str], ProviderEntry] = {}
 
     def register(self, capability: Capability, name: str, mode: ConnectionMode, factory: Factory,
-                 *, replace: bool = False) -> None:
+                 *, replace: bool = False, settings_schema: type[BaseModel] | None = None) -> None:
+        """`settings_schema` is a pydantic model with extra="forbid": the settings a connection of
+        this provider may carry. Declare one for every provider that takes settings."""
         key = (capability, name)
         if key in self._entries and not replace:
             raise InvalidConnection(f"provider {capability.value}/{name} is already registered")
-        self._entries[key] = ProviderEntry(capability, name, mode, factory)
+        self._entries[key] = ProviderEntry(capability, name, mode, factory, settings_schema)
 
     def get(self, capability: Capability, name: str) -> ProviderEntry:
         try:
@@ -172,6 +183,15 @@ class ConnectionRegistry:
             raise InvalidConnection("tenant scope takes no scope_ref; every other scope needs one")
         if role is not None and capability is not Capability.TEXT:
             raise InvalidConnection("only text connections are per role")
+        if entry.settings_schema is not None:
+            try:
+                parsed = entry.settings_schema.model_validate(settings)
+            except ValidationError as exc:
+                fields = sorted({".".join(map(str, e["loc"])) for e in exc.errors()})
+                raise InvalidConnection(f"settings do not match {provider}'s schema: {fields}") from None
+            settings = parsed.model_dump(mode="json")
+        elif settings and entry.mode in (ConnectionMode.MANUAL, ConnectionMode.MOCK):
+            raise InvalidConnection(f"{provider} takes no settings")
         bad = find_secret_keys(settings)
         if bad:
             raise InvalidConnection(f"settings may not hold secrets ({bad}); pass secret= and the vault stores it")

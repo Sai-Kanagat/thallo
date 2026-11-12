@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote
 
 from cortex_operator.connections.manual_base import ManualProvider, Outcome
-from cortex_operator.connections.registry import ProviderContext, ProviderRegistry
+from cortex_operator.connections.registry import NoSettings, ProviderContext, ProviderRegistry
 from cortex_operator.contracts import connection as c
 from cortex_operator.contracts.enums import Capability, ConnectionMode, MessageChannel
 
@@ -36,4 +36,4 @@ def create(ctx: ProviderContext) -> ManualMessaging:
 
 
 def register(registry: ProviderRegistry) -> None:
-    registry.register(Capability.MESSAGING, "manual", ConnectionMode.MANUAL, create)
+    registry.register(Capability.MESSAGING, "manual", ConnectionMode.MANUAL, create, settings_schema=NoSettings)

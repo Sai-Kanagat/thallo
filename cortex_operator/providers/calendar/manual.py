@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from cortex_operator.connections.manual_base import ManualProvider, Outcome
-from cortex_operator.connections.registry import ProviderContext, ProviderRegistry
+from cortex_operator.connections.registry import NoSettings, ProviderContext, ProviderRegistry
 from cortex_operator.contracts import connection as c
 from cortex_operator.contracts.enums import Capability, ConnectionMode
 
@@ -21,4 +21,4 @@ def create(ctx: ProviderContext) -> ManualCalendar:
 
 
 def register(registry: ProviderRegistry) -> None:
-    registry.register(Capability.CALENDAR, "manual", ConnectionMode.MANUAL, create)
+    registry.register(Capability.CALENDAR, "manual", ConnectionMode.MANUAL, create, settings_schema=NoSettings)

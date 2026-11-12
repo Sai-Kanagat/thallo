@@ -7,6 +7,8 @@ the moment it builds a request. Never log, store or return what `reveal()` gives
 from __future__ import annotations
 
 import hmac
+import math
+import re
 from typing import Any
 
 from pydantic import GetCoreSchemaHandler
@@ -80,25 +82,60 @@ class Secret:
         )
 
 
-_SECRETISH = ("secret", "token", "password", "passwd", "api_key", "apikey", "private_key", "authorization",
-              "bearer", "credential")
+_SECRET_TOKENS = frozenset({
+    "secret", "secrets", "token", "password", "passwd", "pwd", "key", "apikey", "accesskey",
+    "privatekey", "signingkey", "credential", "credentials", "authorization", "auth", "bearer", "dsn",
+    "webhook", "webhooks", "signature", "cookie", "passphrase",
+})
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_VALUE_PATTERNS = (
+    re.compile(r"\bBearer\s+\S{8,}", re.I),
+    re.compile(r"\bBasic\s+[A-Za-z0-9+/=]{8,}"),
+    re.compile(r"\bsk[-_][A-Za-z0-9_-]{8,}"),
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    re.compile(r"://[^/\s:@]+:[^/\s@]+@"),
+    re.compile(r"hooks\.slack\.com/(?:services|triggers)/", re.I),
+    re.compile(r"hooks\.zapier\.com/hooks/", re.I),
+    re.compile(r"(?:discord(?:app)?\.com/api/webhooks/|webhook\.office\.com/|maker\.ifttt\.com/trigger/)", re.I),
+    re.compile(r"\b(?:ghp|gho|ghs|xox[abprs]|AIza)[-_A-Za-z0-9]{10,}"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+)
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{32,}")
+
+
+def _entropy(text: str) -> float:
+    counts = {ch: text.count(ch) for ch in set(text)}
+    return -sum(n / len(text) * math.log2(n / len(text)) for n in counts.values())
 
 
 def looks_secret_key(name: str) -> bool:
-    low = name.lower().replace("-", "_")
-    return any(s in low for s in _SECRETISH)
+    spaced = _CAMEL.sub("_", name)
+    tokens = [t for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if t]
+    if not tokens or tokens[-1] in ("ref", "hint"):
+        return False  # secret_ref and friends point at a secret, they are not one
+    return any(t in _SECRET_TOKENS for t in tokens) or "".join(tokens) in _SECRET_TOKENS
+
+
+def looks_secret_value(value: str) -> bool:
+    if any(p.search(value) for p in _VALUE_PATTERNS):
+        return True
+    return any(_entropy(m.group()) >= 3.5 and not m.group().isalpha() for m in _LONG_TOKEN.finditer(value))
 
 
 def find_secret_keys(settings: Any, _path: str = "") -> list[str]:
-    """Paths in a settings dict whose key name suggests a raw secret. Rows hold a secret_ref instead."""
+    """Paths in a settings structure that look like a raw secret, by key name or by value.
+    Rows hold a `secret_ref` instead; the vault holds the secret."""
     found: list[str] = []
     if isinstance(settings, dict):
         for k, v in settings.items():
             p = f"{_path}.{k}" if _path else str(k)
-            if isinstance(k, str) and looks_secret_key(k) and k != "secret_ref":
+            if isinstance(k, str) and looks_secret_key(k):
                 found.append(p)
-            found.extend(find_secret_keys(v, p))
+            else:
+                found.extend(find_secret_keys(v, p))
     elif isinstance(settings, list | tuple):
         for i, v in enumerate(settings):
             found.extend(find_secret_keys(v, f"{_path}[{i}]"))
+    elif isinstance(settings, str) and looks_secret_value(settings):
+        found.append(_path or "<value>")
     return found
