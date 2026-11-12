@@ -143,7 +143,7 @@ def test_expired_approval_blocks(world):
 def test_voided_approval_blocks(world):
     a = world.approve()
     world.apply(void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="claim changed",
-                                      actor=world.human(), clock=world.clock, audit=world.audit))
+                                      actor=world.human(), clock=world.clock, audit=world.audit, signer=world.signer))
     assert_blocked(publish(world, a.id), BlockReason.APPROVAL_VOIDED)
 
 

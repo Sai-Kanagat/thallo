@@ -231,7 +231,8 @@ def test_void_returns_the_rows_and_audit_entries_without_writing_them(world):
     a = world.approve()
     n = len(world.audit_store.entries(world.tenant.id))
     change = void_bundle_approvals(world.bundle, tuple(world.variants.values()), tuple(world.approvals.values()),
-                                   reason="text edited", actor=world.human(), clock=world.clock, audit=world.audit)
+                                   reason="text edited", actor=world.human(), clock=world.clock, audit=world.audit,
+                                   signer=world.signer)
     assert len(world.audit_store.entries(world.tenant.id)) == n
     assert world.approvals[a.id].voided_at is None  # still live until the caller commits
     assert change.voided_approvals[0].voided_at == world.clock.now()
@@ -245,7 +246,7 @@ def test_void_reason_mentioning_a_session_is_refused(world):
     with pytest.raises((ApprovalRefused, AuditError)):
         void_bundle_approvals(world.bundle, tuple(world.variants.values()), tuple(world.approvals.values()),
                               reason="session token pasted here", actor=world.human(), clock=world.clock,
-                              audit=world.audit)
+                              audit=world.audit, signer=world.signer)
 
 
 # ---------------------------------------------------------------- 7. verified claims need a verifier

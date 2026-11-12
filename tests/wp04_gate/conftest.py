@@ -214,7 +214,8 @@ class World:
         """The documented edit path: the edit and the voiding commit together."""
         change = void_bundle_approvals(self.bundle, tuple(self.variants.values()),
                                        tuple(self.approvals.values()), reason="text edited after approval",
-                                       actor=self.human(), clock=self.clock, audit=self.audit)
+                                       actor=self.human(), clock=self.clock, audit=self.audit,
+                                       signer=self.signer)
         self.apply(change)
         self.edit_variant(vid, **update)
 

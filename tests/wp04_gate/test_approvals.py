@@ -118,12 +118,12 @@ def test_grant_and_void_are_audited_without_a_session(world):
     world.apply(g)
     a = g.new_approval
     change = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="claim C-0012 changed",
-                                   actor=world.human(), clock=world.clock, audit=world.audit)
+                                   actor=world.human(), clock=world.clock, audit=world.audit, signer=world.signer)
     world.apply(change)
     voided = world.approvals[a.id]
     assert voided.voided_at == world.clock.now() and voided.void_reason == "claim C-0012 changed"
     again = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (voided,), reason="again",
-                                  actor=world.human(), clock=world.clock, audit=world.audit)
+                                  actor=world.human(), clock=world.clock, audit=world.audit, signer=world.signer)
     assert again.voided_approvals == () and again.audit_entries == ()  # already void: nothing to do
     entries = world.audit_store.entries(world.tenant.id)
     assert [e.action for e in entries] == ["approval.granted", "approval.voided"]
@@ -137,4 +137,4 @@ def test_void_needs_a_reason(world):
     a = call(world).new_approval
     with pytest.raises(ApprovalRefused):
         void_bundle_approvals(world.bundle, (), (a,), reason="  ", actor=world.human(), clock=world.clock,
-                              audit=world.audit)
+                              audit=world.audit, signer=world.signer)

@@ -65,8 +65,9 @@ def test_plain_text_is_not_a_link(text):
 
 
 @pytest.mark.parametrize("text", [
-    "See report.pdf", "Built on Node.js", "Read README.md", "Il Dr.Rossi risponde", "Va bene ciao.Grazie",
-    "e.g. this", "Demo S.p.A.", "a.m. or p.m.", "main.py and data.csv", "foto.JPEG",
+    "See report.pdf", "Built on Node.js", "Il Dr.Rossi risponde", "Va bene ciao.Grazie",
+    "e.g. this", "Demo S.p.A.", "a.m. or p.m.", "data.csv and notes.txt", "foto.JPEG",
+    "Write to mario.rossi@demo.example", "info@demo.it",
 ])
 def test_file_names_abbreviations_and_prose_are_not_links(text):
     assert find_links(text) == [], text
@@ -74,6 +75,9 @@ def test_file_names_abbreviations_and_prose_are_not_links(text):
 
 @pytest.mark.parametrize("text", [
     "evil.zip", "evil.mov",  # real TLDs, not just file extensions
+    "Read README.md", "run main.py",  # .md (Moldova) and .py (Paraguay) are real TLDs
+    "Ciao.It", "Vieni.Shop", "Grazie.Com",  # prose shape, but the last label is a real TLD
+    "a@b.example/x", "x@evil.example?q=1", "evil.com@x.example",  # not plain email addresses
     "Visit evil.Com", "www.evil", "demo.shop", "Shop.Example/x", "https://x.y",
 ])
 def test_plausible_hosts_still_count(text):
@@ -328,3 +332,34 @@ def test_payload_that_differs_from_the_hashed_leaf_blocks(world, monkeypatch):
     monkeypatch.setattr(canonical.Snapshot, "payload",
                         lambda self, vid: dataclasses.replace(real(self, vid), variant_hash="0" * 64))
     blocked(publish(world, a.id), BlockReason.PAYLOAD_MISMATCH)
+
+
+# ---------------------------------------------------------------- 6. a void is bound into the chain
+
+def test_a_signed_void_in_the_chain_blocks_even_if_the_row_says_live(world):
+    from cortex_operator.gate import void_bundle_approvals
+
+    a = world.approve()
+    change = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="withdrawn",
+                                   actor=world.human(), clock=world.clock, audit=world.audit, signer=world.signer)
+    assert change.audit_entries[0].payload.get("mac")
+    for e in change.audit_entries:  # the log is written, but the row update is lost
+        world.audit_store.insert(e)
+    blocked(publish(world, a.id), BlockReason.NO_GRANT_RECORD)
+
+
+def test_an_unsigned_void_entry_also_blocks(world):
+    """Voiding only removes permission, so any void entry for the approval after the grant counts."""
+    a = world.approve()
+    world.audit.append(world.tenant.id, world.human(), "approval.voided", subject_kind="approval",
+                       subject_id=a.id, payload={"reason": "withdrawn"})
+    blocked(publish(world, a.id), BlockReason.NO_GRANT_RECORD)
+
+
+def test_supersede_voids_are_signed(world):
+    world.approve()
+    world.edit_after_grant(vid0(world), rendered_text="Version B")
+    world.back_to_review()
+    world.approve()
+    voids = [e for e in world.audit_store.entries(world.tenant.id) if e.action == "approval.voided"]
+    assert voids and all(e.payload.get("mac") for e in voids)
