@@ -38,6 +38,9 @@ class Secret:
     def reveal_bytes(self) -> bytes:
         return self._value
 
+    def size(self) -> int:
+        return len(self._value)
+
     def __repr__(self) -> str:
         return f"Secret({REDACTED})"
 

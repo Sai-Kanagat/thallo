@@ -5,7 +5,6 @@ Postgres implementations of these Protocols are a small follow-up once WP-01 lan
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -27,10 +26,15 @@ class SealedSecret:
 
 
 class SecretStore(Protocol):
+    """Sealed secrets. `put` is compare-and-set on `version`: a new row must be version 1, a
+    replacement must be exactly the stored version plus one, so an old row cannot be written back.
+    It returns False when that does not hold."""
+
     def get(self, tenant_id: str, ref: str) -> SealedSecret | None: ...
     def put(self, sealed: SealedSecret, *, replace: bool) -> bool: ...
     def delete(self, tenant_id: str, ref: str) -> bool: ...
-    def all(self) -> Iterable[SealedSecret]: ...
+    def list_for_tenant(self, tenant_id: str) -> list[SealedSecret]: ...
+    def tenant_ids(self) -> list[str]: ...
 
 
 class InMemorySecretStore:
@@ -42,7 +46,11 @@ class InMemorySecretStore:
 
     def put(self, sealed: SealedSecret, *, replace: bool) -> bool:
         key = (sealed.tenant_id, sealed.ref)
-        if key in self.rows and not replace:
+        old = self.rows.get(key)
+        if replace:
+            if old is None or sealed.version != old.version + 1:
+                return False
+        elif old is not None or sealed.version != 1:
             return False
         self.rows[key] = sealed
         return True
@@ -50,8 +58,11 @@ class InMemorySecretStore:
     def delete(self, tenant_id: str, ref: str) -> bool:
         return self.rows.pop((tenant_id, ref), None) is not None
 
-    def all(self) -> list[SealedSecret]:
-        return list(self.rows.values())
+    def list_for_tenant(self, tenant_id: str) -> list[SealedSecret]:
+        return [r for (t, _), r in self.rows.items() if t == tenant_id]
+
+    def tenant_ids(self) -> list[str]:
+        return sorted({t for t, _ in self.rows})
 
 
 class ConnectionStore(Protocol):
@@ -59,6 +70,7 @@ class ConnectionStore(Protocol):
     def list_all(self) -> list[Connection]: ...
     def get(self, tenant_id: str, connection_id: str) -> Connection | None: ...
     def put(self, connection: Connection) -> None: ...
+    def put_many(self, connections: list[Connection]) -> None: ...  # all or nothing
     def delete(self, tenant_id: str, connection_id: str) -> bool: ...
 
 
@@ -77,6 +89,10 @@ class InMemoryConnectionStore:
 
     def put(self, connection: Connection) -> None:
         self.rows[(connection.tenant_id, connection.id)] = connection
+
+    def put_many(self, connections: list[Connection]) -> None:
+        staged = {(c.tenant_id, c.id): c for c in connections}
+        self.rows.update(staged)
 
     def delete(self, tenant_id: str, connection_id: str) -> bool:
         return self.rows.pop((tenant_id, connection_id), None) is not None

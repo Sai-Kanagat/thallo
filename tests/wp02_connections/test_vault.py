@@ -58,8 +58,8 @@ def test_replace_uses_new_nonce(vault, secret_store):
 def test_ciphertext_moved_to_another_tenant_fails(vault, secret_store):
     ref = vault.put(T1, PLAIN)
     row = secret_store.get(T1, ref)
-    secret_store.put(SealedSecret(T2, ref, row.key_id, row.nonce, row.ciphertext, row.created_at,
-                                  row.updated_at), replace=True)
+    secret_store.rows[(T2, ref)] = SealedSecret(T2, ref, row.key_id, row.nonce, row.ciphertext, row.created_at,
+                                                row.updated_at)
     with pytest.raises(SecretUnreadable):
         vault.get(T2, ref)
 
@@ -67,8 +67,8 @@ def test_ciphertext_moved_to_another_tenant_fails(vault, secret_store):
 def test_ciphertext_moved_to_another_ref_fails(vault, secret_store):
     ref = vault.put(T1, PLAIN)
     row = secret_store.get(T1, ref)
-    secret_store.put(SealedSecret(T1, "other_ref", row.key_id, row.nonce, row.ciphertext, row.created_at,
-                                  row.updated_at), replace=True)
+    secret_store.rows[(T1, "other_ref")] = SealedSecret(T1, "other_ref", row.key_id, row.nonce, row.ciphertext,
+                                                        row.created_at, row.updated_at)
     with pytest.raises(SecretUnreadable):
         vault.get(T1, "other_ref")
 
@@ -83,8 +83,8 @@ def test_tampered_ciphertext_and_nonce_fail(vault, secret_store):
     ref = vault.put(T1, PLAIN)
     row = secret_store.get(T1, ref)
     flipped = bytes([row.ciphertext[0] ^ 1]) + row.ciphertext[1:]
-    secret_store.put(SealedSecret(T1, ref, row.key_id, row.nonce, flipped, row.created_at, row.updated_at),
-                     replace=True)
+    secret_store.rows[(T1, ref)] = SealedSecret(T1, ref, row.key_id, row.nonce, flipped, row.created_at,
+                                                row.updated_at)
     with pytest.raises(SecretUnreadable):
         vault.get(T1, ref)
 
@@ -243,13 +243,44 @@ def test_errors_never_carry_the_secret_or_key(vault, secret_store, clock):
         assert PLAIN not in text
 
 
-def test_nothing_logged_contains_the_secret(vault, caplog, clock, secret_store):
+def test_nothing_logged_contains_the_secret(vault, key, caplog, clock, secret_store):
     caplog.set_level(logging.DEBUG)
     ref = vault.put(T1, PLAIN)
     vault.get(T1, ref)
     vault.replace(T1, ref, PLAIN + "-2")
-    Vault(KeyRing(new_key(), [vault._keys.current]), secret_store, clock).rewrap_all()
+    Vault(KeyRing(new_key(), [key]), secret_store, clock).rewrap_all()
     vault.delete(T1, ref)
     assert caplog.records
     for rec in caplog.records:
         assert PLAIN not in rec.getMessage() and PLAIN not in str(rec.__dict__)
+
+
+def test_version_is_bound_into_the_ciphertext(vault, secret_store):
+    import dataclasses
+    ref = vault.put(T1, PLAIN)
+    row = secret_store.get(T1, ref)
+    secret_store.rows[(T1, ref)] = dataclasses.replace(row, version=row.version + 1)
+    with pytest.raises(SecretUnreadable):
+        vault.get(T1, ref)
+
+
+def test_an_old_row_cannot_be_written_back(vault, secret_store):
+    ref = vault.put(T1, PLAIN)
+    old = secret_store.get(T1, ref)
+    vault.replace(T1, ref, "newer")
+    assert secret_store.put(old, replace=True) is False
+    assert secret_store.put(old, replace=False) is False
+    assert vault.get(T1, ref).reveal() == "newer"
+    assert secret_store.get(T1, ref).version == 2
+
+
+def test_versions_count_up_on_replace_and_rewrap(clock):
+    store = InMemorySecretStore()
+    old, new = new_key(), new_key()
+    ref = Vault(KeyRing(old), store, clock).put(T1, PLAIN)
+    v = Vault(KeyRing(new, [old]), store, clock)
+    v.replace(T1, ref, "two")
+    assert store.get(T1, ref).version == 2
+    Vault(KeyRing(old), store, clock)  # no-op
+    store.rows[(T1, ref)] = store.rows[(T1, ref)]
+    assert v.rewrap_all() == 0  # already under the current key

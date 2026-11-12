@@ -29,19 +29,25 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", boom)
 
 
-def test_every_capability_has_manual_and_mock(providers):
-    for cap in Capability:
-        assert providers.names(cap) == ["manual", "mock"], cap
+_DISCOVERED = ProviderRegistry.with_discovered()
+ALL = [(cap, name) for cap in Capability for name in _DISCOVERED.names(cap)]
 
 
 @pytest.mark.parametrize("cap", list(Capability))
-@pytest.mark.parametrize("name,mode", [("manual", ConnectionMode.MANUAL), ("mock", ConnectionMode.MOCK)])
-def test_provider_passes_contract(providers, cap, name, mode):
+def test_every_capability_has_a_manual_provider(providers, cap):
+    assert "manual" in providers.names(cap)
+
+
+@pytest.mark.parametrize(("cap", "name"), ALL)
+def test_provider_passes_contract(providers, cap, name):
+    """Parametrised over discovery: a new provider file is covered with no edit here."""
     clock = FakeClock(FAKE_EPOCH)
-    prov = providers.get(cap, name).factory(_ctx(cap, name, mode, clock))
+    entry = providers.get(cap, name)
+    prov = entry.factory(_ctx(cap, name, entry.mode, clock))
     assert_provider_contract(prov, clock)
-    assert prov.describe().mode is mode
-    assert not prov.describe().sends_externally
+    assert prov.describe().mode is entry.mode
+    if entry.mode in (ConnectionMode.MANUAL, ConnectionMode.MOCK):
+        assert not prov.describe().sends_externally
 
 
 @pytest.mark.parametrize("cap", list(Capability))

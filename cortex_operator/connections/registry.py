@@ -201,14 +201,22 @@ class ConnectionRegistry:
         if priority is None:
             real = [r.priority for r in group if r.priority < MANUAL_PRIORITY]
             priority = (max(real) + 1) if real else 0
-        ref = self.vault.put(tenant_id, secret) if secret is not None and self.vault else None
         if secret is not None and self.vault is None:
             raise InvalidConnection("no vault configured, cannot store a secret")
         row = Connection(id=new_id(self.clock), created_at=self.clock.now(), tenant_id=tenant_id,
                          capability=capability, provider=provider, mode=entry.mode, model=model, role=role,
                          scope=scope.value, scope_ref=scope_ref, priority=priority, enabled=enabled,
-                         settings=settings, secret_ref=ref)
-        self.connections.put(row)
+                         settings=settings)  # validated before anything is written to the vault
+        if secret is not None and self.vault is not None:
+            ref = self.vault.put(tenant_id, secret)
+            row = row.model_copy(update={"secret_ref": ref})
+            try:
+                self.connections.put(row)
+            except BaseException:
+                self.vault.delete(tenant_id, ref)
+                raise
+        else:
+            self.connections.put(row)
         self.ensure_manual(tenant_id, capability)
         return row
 
@@ -218,10 +226,9 @@ class ConnectionRegistry:
         keys = {(r.capability, r.scope, r.scope_ref, r.role) for r in rows}
         if len(keys) != 1 or len(set(ordered_ids)) != len(ordered_ids):
             raise InvalidConnection("set_order takes distinct connections of one capability, scope and role")
-        for i, r in enumerate(rows):
-            if _is_tenant_manual(r):
-                raise ManualRequired("the tenant manual connection is always last and is not reordered")
-            self.connections.put(r.model_copy(update={"priority": i}))
+        if any(_is_tenant_manual(r) for r in rows):
+            raise ManualRequired("the tenant manual connection is always last and is not reordered")
+        self.connections.put_many([r.model_copy(update={"priority": i}) for i, r in enumerate(rows)])  # atomic
 
     def set_enabled(self, tenant_id: str, connection_id: str, enabled: bool) -> Connection:
         row = self._get(tenant_id, connection_id)
