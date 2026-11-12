@@ -1,12 +1,33 @@
-# Status
+# Status (paused by Sai, 12 Nov 2026, 07:50)
 
-The plan of record is `docs/BUILD_PLAN.md` (11 Nov 2026). It replaces `PLAN.md`.
+Product name: Thallo, tagline "Grown, not generated." The Python package is still `cortex_operator`; rename it before wave 2 fans out. Plan of record: `docs/BUILD_PLAN.md`. Contracts: `docs/contracts.md` (version 2.0.0). Model policy: AGENTS.md (Opus by default; Fable at low effort for contracts, WP-15 play data and bugs that cross three or more modules).
 
-The build is split into 42 work packages in 8 waves. Each package has its own brief in `docs/packages/`. Nothing from the new plan is built yet. The existing engine in `cortex_operator/` runs on mocks and its tests are the first regression suite.
+Run everything: `bash scripts/ci.sh` (needs Docker; 448 tests green on main at 3c983c6).
 
-Run tests: `.venv/bin/python -m pytest -q`
+## Wave 1
+| Package | State |
+|---|---|
+| WP-00 contracts | Merged, at 2.0.0 after a Fable review |
+| WP-01 data layer | Merged |
+| WP-02 connections and vault | Merged |
+| WP-03 truth library | Branch `worktree-agent-a84d480e55ac49165`: paused mid-merge of contracts 2.0.0 |
+| WP-04 gate | Branch `worktree-agent-ae202a7cd6122358e`: paused mid fix round |
 
-MonoCode failed on its last assignment card. If it is used again, try it on WP-01 before giving it a whole wave.
+Both paused workers keep their work in `.claude/worktrees/`. Resume each with its remaining list:
+
+**WP-03, still to do:** apply the approved legacy test fix (scratchpad engine_fix.diff: drop digits from two `tests/test_engine.py` texts); add the REVIEW_FLAG tier for ambiguous words (sei, uno, una, prima, secondo, pronoun "one") and universal claims (never, always, every, all, sempre, mai, tutti), hard-blocking only next to a digit, slot, unit or quantity noun; finish the 2.0.0 merge (claim versions: change writes a new row, VOIDED is terminal, lookups take the latest live version); fix two new automated findings: the Italian number-root regex can backtrack catastrophically (make the roots unambiguous or tokenise first, and cap input length), and the multiplier check after a slot runs on raw text, so run it on folded text and add multiplication signs, or reject any non-space, non-punctuation character right after a slot. Then an independent review, and a cross-family review once a Gemini key exists.
+
+**WP-04, still to do:** a keyed MAC on approval grants (`THALLO_GATE_SIGNING_KEY`, block if missing) and correct the AUDIT.md wording; link fail-closed but no false hits on file names ("report.pdf", "Node.js") or on prose with no space after a full stop; `find_unresolved_links()` for WP-07; consent scope (likeness or voice by media kind, given_at before now); `_grant_recorded` checks approved_at, expires_at, canary and chain linkage; one resolver snapshot shared by the hash and the payload; then merge main (2.0.0: bind claim id AND version). Then a final security re-check and merge.
+
+After both merge: run the fake-clock week end to end, then start wave 2 with two Opus workers at a time.
+
+## Waiting on Sai
+1. `.env`: `DATABASE_ADMIN_URL` holds only the tail of the Supabase URI. It needs the full `postgresql://postgres.<ref>:<password>@aws-0-eu-west-1.pooler.supabase.com:5432/postgres`. Check with `.venv/bin/python scripts/check_env.py` (prints SET or MISSING, never values).
+2. Then: apply migrations to Supabase, create the cortex_app login and the cortex_worker login, generate `THALLO_VAULT_KEY`, then the Anthropic and Gemini keys, Postiz, and a private GitHub repo for CI.
+3. Platform access applications: WhatsApp Cloud, Google Ads, Business Profile.
+4. Pilot consents: done (written, kept out of the repo).
+
+Build log page: https://saikanagat.com/build-log/ (repo ~/code/portfolio-live).
 
 # Kickoff prompt for the orchestrator
 
