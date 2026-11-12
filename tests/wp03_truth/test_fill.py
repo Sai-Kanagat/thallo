@@ -1,7 +1,7 @@
 import pytest
 
 from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import FillError, fill
+from cortex_operator.truth import ClaimError, FillError, render_claim
 from cortex_operator.truth.fill import format_number
 from tests.wp03_truth.conftest import DAY
 
@@ -17,10 +17,12 @@ def test_number_formatting_keeps_every_digit(value, language, out):
     assert format_number(value, language) == out
 
 
-def one(make, clock, kind, value, unit=None, language=EN, default=EN, **kw):
-    claim = make("C-0001", kind, value, unit, **kw)
-    return fill("{{C-0001}}", language=language, claims={"C-0001": claim}, clock=clock,
-                default_language=default).text
+@pytest.fixture
+def one(make, built):
+    def _one(kind, value, unit=None, language=EN, default=EN, **kw):
+        claim = make("C-0001", kind, value, unit, **kw)
+        return built("{{C-0001}}", {"C-0001": claim}, language, default)
+    return _one
 
 
 @pytest.mark.parametrize(("value", "unit", "language", "out"), [
@@ -29,68 +31,75 @@ def one(make, clock, kind, value, unit=None, language=EN, default=EN, **kw):
     ("48", "hour", IT, "48 ore"), ("30", "day", TA, "30 நாட்கள்"), ("1", "year", TA, "1 ஆண்டு"),
     ("12.5", "%", IT, "12,5%"), ("120", "km", IT, "120 km"), ("40", None, IT, "40"),
 ])
-def test_numbers_with_units(make, clock, value, unit, language, out):
-    assert one(make, clock, ClaimKind.NUMBER, value, unit, language) == out
+def test_numbers_with_units(one, value, unit, language, out):
+    assert one(ClaimKind.NUMBER, value, unit, language) == out
 
 
 @pytest.mark.parametrize(("value", "unit", "language", "out"), [
     ("1234.50", "EUR", EN, "€1,234.50"), ("1234.50", "EUR", IT, "1.234,50 €"),
     ("245000", "INR", TA, "₹2,45,000"), ("99", "CHF", EN, "CHF 99"), ("99", "CHF", IT, "99 CHF"),
 ])
-def test_prices(make, clock, value, unit, language, out):
-    assert one(make, clock, ClaimKind.PRICE, value, unit, language) == out
+def test_prices(one, value, unit, language, out):
+    assert one(ClaimKind.PRICE, value, unit, language) == out
 
 
 @pytest.mark.parametrize(("value", "language", "out"), [
     ("2026-01-05", EN, "5 January 2026"), ("2026-01-05", IT, "5 gennaio 2026"), ("2026-01-05", TA, "5 ஜனவரி 2026"),
     ("2026-03", IT, "marzo 2026"), ("1998", TA, "1998"),
 ])
-def test_dates(make, clock, value, language, out):
-    assert one(make, clock, ClaimKind.DATE, value, language=language) == out
+def test_dates(one, value, language, out):
+    assert one(ClaimKind.DATE, value, language=language) == out
 
 
-def test_approved_wording_wins(make, clock):
-    out = one(make, clock, ClaimKind.NUMBER, "3.5", "t", TA, languages={"ta": "மூன்றரை டன்"})
-    assert out == "மூன்றரை டன்"
+def test_approved_wording_wins(one):
+    assert one(ClaimKind.NUMBER, "3.5", "t", TA, languages={"ta": "மூன்றரை டன்"}) == "மூன்றரை டன்"
 
 
-def test_names_are_not_translated(make, clock):
-    assert one(make, clock, ClaimKind.NAME, "Rossi Trasporti", language=TA) == "Rossi Trasporti"
+def test_names_are_not_translated(one):
+    assert one(ClaimKind.NAME, "Rossi Trasporti", language=TA) == "Rossi Trasporti"
 
 
-def test_quote_needs_approved_wording_outside_the_default_language(make, clock):
-    assert one(make, clock, ClaimKind.QUOTE, "Never late.", language=EN, default=EN) == "Never late."
+def test_quote_capability_and_offer_need_approved_wording_outside_the_default_language(one, make, built):
+    assert one(ClaimKind.QUOTE, "Never late.", language=EN, default=EN) == "Never late."
     with pytest.raises(FillError, match="no approved it wording"):
-        one(make, clock, ClaimKind.CAPABILITY, "Delivers on Sundays", language=IT, default=EN)
+        one(ClaimKind.CAPABILITY, "Delivers on Sundays", language=IT, default=EN)
+    offer = make("C-0002", ClaimKind.OFFER, "Free first service", languages={"it": "Primo tagliando gratis"})
+    assert built("{{C-0002}}", {"C-0002": offer}, IT) == "Primo tagliando gratis"
 
 
-def test_unknown_unit_outside_the_default_language_refuses(make, clock):
-    assert one(make, clock, ClaimKind.NUMBER, "3", "trucks", EN) == "3 trucks"
-    with pytest.raises(FillError, match="unit 'trucks'"):
-        one(make, clock, ClaimKind.NUMBER, "3", "trucks", IT)
+@pytest.mark.parametrize(("kind", "unit"), [(ClaimKind.NUMBER, "trucks"), (ClaimKind.NUMBER, "tonne, the best"),
+                                            (ClaimKind.PRICE, "EUR best"), (ClaimKind.PRICE, "eur"),
+                                            (ClaimKind.PRICE, "XYZ"), (ClaimKind.NAME, "kg")])
+def test_units_outside_the_tables_are_refused_at_creation(make, kind, unit):
+    with pytest.raises(ClaimError):
+        make("C-0001", kind, "1" if kind is not ClaimKind.NAME else "Acme", unit)
 
 
-def test_fill_refuses_whole_text_on_any_bad_slot(make, clock):
+def test_build_refuses_whole_text_on_any_bad_slot(make, built):
     good = make("C-0001", ClaimKind.NUMBER, "3.5", "t")
     pending = make("C-0002", ClaimKind.NUMBER, "40", verified=False)
     claims = {c.code: c for c in (good, pending)}
-    with pytest.raises(FillError) as err:
-        fill("{{C-0001}} and {{C-0002}} and {{C-0003}}", language=EN, claims=claims, clock=clock,
-             default_language=EN)
-    assert len(err.value.problems) == 2
+    with pytest.raises(ValueError, match="C-0002"):
+        built("{{C-0001}} and {{C-0002}}", claims)
 
 
-def test_fill_refuses_expired_price(make, clock):
+def test_build_refuses_expired_price(make, built, clock):
     price = make("C-0001", ClaimKind.PRICE, "9.99", "EUR")
     clock.advance(30 * DAY)
-    with pytest.raises(FillError, match="expired"):
-        fill("{{C-0001}}", language=EN, claims={"C-0001": price}, clock=clock, default_language=EN)
+    with pytest.raises(ValueError, match="expired"):
+        built("{{C-0001}}", {"C-0001": price})
 
 
-def test_fill_reports_codes_and_ids_in_order(make, clock):
+def test_build_reports_codes_ids_and_slot_spans(make, clock, tenant):
+    from cortex_operator.truth import build
     a = make("C-0001", ClaimKind.NUMBER, "1", "t")
     b = make("C-0002", ClaimKind.NAME, "Acme")
-    out = fill("{{C-0002}} moves {{C-0001}}; {{C-0002}} again.", language=EN, claims={"C-0001": a, "C-0002": b},
-               clock=clock, default_language=EN)
+    out = build("{{C-0002}} moves {{C-0001}}; {{C-0002}} again.", tenant_id=tenant, language=EN,
+                claims={"C-0001": a, "C-0002": b}, clock=clock, default_language=EN).filled
     assert out.text == "Acme moves 1 tonne; Acme again."
     assert out.codes == ("C-0002", "C-0001") and out.claim_ids == (b.id, a.id)
+    assert [out.text[x:y] for x, y in out.slot_spans] == ["Acme", "1 tonne", "Acme"]
+
+
+def test_render_claim_is_pure(make):
+    assert render_claim(make("C-0001", ClaimKind.NUMBER, "2", "day"), IT, default_language=EN) == "2 giorni"

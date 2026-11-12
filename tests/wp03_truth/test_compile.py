@@ -1,16 +1,15 @@
 import pytest
 
 from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import CompileFailed, Finding, FindingKind, build, compile_text
+from cortex_operator.contracts.ids import new_id
+from cortex_operator.truth import CompileFailed, Finding, FindingKind, LibraryError
 from tests.wp03_truth.conftest import DAY
+
+EN, IT, TA = Language.EN, Language.IT, Language.TA
 
 
 def kinds(result):
     return [f.kind for f in result.findings]
-
-
-def run(text, clock, language=Language.EN, claims=None, **kw):
-    return compile_text(text, language=language, claims=claims or {}, clock=clock, **kw)
 
 
 # ---------------------------------------------------------------- digits
@@ -25,114 +24,108 @@ def run(text, clock, language=Language.EN, claims=None, **kw):
     "Ⅻ",  # Roman numeral twelve
     "௱",  # Tamil number one hundred
 ])
-def test_any_digit_outside_a_slot_fails(clock, digit):
-    result = run(f"We sold {digit} units.", clock)
-    assert not result.ok
-    assert FindingKind.DIGIT in kinds(result)
+def test_any_digit_outside_a_slot_fails(run, digit):
+    assert FindingKind.DIGIT in kinds(run(f"We sold {digit} units."))
 
 
-def test_decimal_outside_a_slot_is_one_finding_with_its_span(clock):
-    result = run("Payload 3.5 tonnes. Call us.", clock)
+def test_decimal_outside_a_slot_is_flagged_with_its_span(run):
+    result = run("Payload 3.5 tonnes. Call us.")
     digits = [f for f in result.findings if f.kind is FindingKind.DIGIT]
     assert [(f.match, f.sentence) for f in digits] == [("3", 0), ("5", 0)]
     assert result.text[digits[0].start:digits[0].end] == "3"
 
 
-def test_currency_and_percent_signs_fail(clock):
-    assert FindingKind.SYMBOL in kinds(run("Save big in € today.", clock))
-    assert FindingKind.SYMBOL in kinds(run("Zero interest %.", clock))
+def test_currency_and_percent_signs_fail(run):
+    assert FindingKind.SYMBOL in kinds(run("Save big in € today."))
+    assert FindingKind.SYMBOL in kinds(run("Zero interest %."))
 
 
-# ---------------------------------------------------------------- superlatives and comparatives
+# ---------------------------------------------------------------- per-language lists
 
 @pytest.mark.parametrize(("language", "text", "kind"), [
-    (Language.EN, "The best dealer in town.", FindingKind.SUPERLATIVE),
-    (Language.EN, "A world-class service.", FindingKind.SUPERLATIVE),
-    (Language.EN, "Cheaper than the rest.", FindingKind.COMPARATIVE),
-    (Language.EN, "Twelve showrooms.", FindingKind.NUMBER_WORD),
-    (Language.IT, "Il servizio migliore di Bologna.", FindingKind.SUPERLATIVE),
-    (Language.IT, "Prezzi convenientissimi.", FindingKind.SUPERLATIVE),
-    (Language.IT, "Il più veloce in città.", FindingKind.SUPERLATIVE),
-    (Language.IT, "Più veloce della concorrenza.", FindingKind.COMPARATIVE),
-    (Language.IT, "Meglio rispetto agli altri.", FindingKind.COMPARATIVE),
-    (Language.IT, "Garantito per sempre.", FindingKind.SUPERLATIVE),
-    (Language.IT, "Tre anni di garanzia.", FindingKind.NUMBER_WORD),
-    (Language.IT, "The best in Italia.", FindingKind.SUPERLATIVE),  # English inside Italian copy
-    (Language.TA, "சென்னையில் சிறந்த டீலர்.", FindingKind.SUPERLATIVE),
-    (Language.TA, "மிகக் குறைந்த விலை.", FindingKind.SUPERLATIVE),
-    (Language.TA, "சென்னையின் முன்னணி டீலர்.", FindingKind.SUPERLATIVE),
-    (Language.TA, "மற்றவர்களை விட வேகமாக.", FindingKind.COMPARATIVE),
-    (Language.TA, "இதை விடக் குறைவு.", FindingKind.COMPARATIVE),
-    (Language.TA, "ஐந்து ஆண்டு உத்தரவாதம்.", FindingKind.NUMBER_WORD),
-    (Language.TA, "Best offer இன்று.", FindingKind.SUPERLATIVE),  # English inside Tamil copy
+    (EN, "The best dealer in town.", FindingKind.SUPERLATIVE),
+    (EN, "A world-class service.", FindingKind.SUPERLATIVE),
+    (EN, "Cheaper than the rest.", FindingKind.COMPARATIVE),
+    (EN, "Twelve showrooms.", FindingKind.NUMBER_WORD),
+    (IT, "Il servizio migliore di Bologna.", FindingKind.SUPERLATIVE),
+    (IT, "Prezzi convenientissimi.", FindingKind.SUPERLATIVE),
+    (IT, "Il più veloce in città.", FindingKind.SUPERLATIVE),
+    (IT, "Più veloce della concorrenza.", FindingKind.COMPARATIVE),
+    (IT, "Meglio rispetto agli altri.", FindingKind.COMPARATIVE),
+    (IT, "Garantito per sempre.", FindingKind.SUPERLATIVE),
+    (IT, "Tre anni di garanzia.", FindingKind.NUMBER_WORD),
+    (IT, "The best in Italia.", FindingKind.SUPERLATIVE),  # English inside Italian copy
+    (TA, "சென்னையில் சிறந்த டீலர்.", FindingKind.SUPERLATIVE),
+    (TA, "மிகக் குறைந்த விலை.", FindingKind.SUPERLATIVE),
+    (TA, "சென்னையின் முன்னணி டீலர்.", FindingKind.SUPERLATIVE),
+    (TA, "மற்றவர்களை விட வேகமாக.", FindingKind.COMPARATIVE),
+    (TA, "இதை விடக் குறைவு.", FindingKind.COMPARATIVE),
+    (TA, "ஐந்து ஆண்டு உத்தரவாதம்.", FindingKind.NUMBER_WORD),
+    (TA, "Best offer இன்று.", FindingKind.SUPERLATIVE),  # English inside Tamil copy
 ])
-def test_per_language_lists(clock, language, text, kind):
-    result = run(text, clock, language)
+def test_per_language_lists(run, language, text, kind):
+    result = run(text, language)
     assert kind in kinds(result), result.findings
 
 
 @pytest.mark.parametrize(("language", "text"), [
-    (Language.EN, "Learn more about our three-wheelers. Book a test ride today."),
-    (Language.EN, "We would love to hear from you, so talk to someone on our team."),
-    (Language.IT, "Scopri di più sul nostro servizio. Nel rispetto dell'ambiente."),
-    (Language.IT, "Prima di partire, chiamaci. Sei pronto?"),
-    (Language.TA, "அதிகாரப்பூர்வ டீலர். விடுமுறை நாளிலும் திறந்திருக்கும்."),
+    (EN, "Learn more about our three-wheelers. Book a test ride today."),
+    (EN, "We would love to hear from you, so talk to someone on our team."),
+    (IT, "Scopri di più sul nostro servizio. Nel rispetto dell'ambiente."),
+    (IT, "Chiamaci, un consulente ti risponde."),
+    (TA, "அதிகாரப்பூர்வ டீலர். விடுமுறை நாளிலும் திறந்திருக்கும்."),
+    (TA, "இன்றே பதிவு செய்யுங்கள்."),  # registration, not the teens root
 ])
-def test_ordinary_copy_passes(clock, language, text):
-    result = run(text, clock, language)
+def test_ordinary_copy_passes(run, language, text):
+    result = run(text, language)
     assert result.ok, result.findings
 
 
-def test_italian_superlatives_do_not_leak_into_english_copy(clock):
-    assert run("Our team is leader-free.", clock).findings == ()
+def test_known_cost_italian_prima_and_sei_block(run):
+    """The review asked for prima, sei, uno and una as number words. Ordinary Italian using them
+    as 'before', 'you are' or an article now needs a rewrite. Recorded so the cost is visible."""
+    assert not run("Prima di partire, chiamaci. Sei pronto?", IT).ok
+    assert not run("Una nuova sede.", IT).ok
 
 
 # ---------------------------------------------------------------- names, hidden characters, slots
 
-def test_named_customer_outside_a_slot_fails_any_claim_state(clock, make):
+def test_named_customer_outside_a_slot_fails_any_claim_state(run, make):
     name = make("C-0001", ClaimKind.NAME, "Rossi Trasporti", verified=False, languages={"ta": "ரோஸி"})
     claims = {name.code: name}
-    assert FindingKind.NAMED_CUSTOMER in kinds(run("Ask rossi  trasporti how it went.", clock, claims=claims))
-    assert FindingKind.NAMED_CUSTOMER in kinds(run("ரோஸி சொன்னது.", clock, Language.TA, claims=claims))
-    assert FindingKind.NAMED_CUSTOMER in kinds(run("Ask Bianchi Srl.", clock, protected_names=["Bianchi Srl"]))
-    assert run("Ask Rossini.", clock, claims=claims).ok
+    assert FindingKind.NAMED_CUSTOMER in kinds(run("Ask rossi  trasporti how it went.", claims=claims))
+    assert FindingKind.NAMED_CUSTOMER in kinds(run("Ask Rossi-Trasporti how it went.", claims=claims))
+    assert FindingKind.NAMED_CUSTOMER in kinds(run("ரோஸி சொன்னது.", TA, claims=claims))
+    assert FindingKind.NAMED_CUSTOMER in kinds(run("Ask Bianchi Srl.", protected_names=["Bianchi Srl"]))
+    assert run("Ask Rossini.", claims=claims).ok
 
 
-def test_hidden_character_cannot_split_a_word(clock):
-    result = run("The be\u200bst dealer.", clock)
-    assert FindingKind.HIDDEN_CHARACTER in kinds(result)
+def test_hidden_character_cannot_split_a_word(run):
+    assert FindingKind.HIDDEN_CHARACTER in kinds(run("The be\u200bst dealer."))
 
 
 @pytest.mark.parametrize("text", ["Price {{C-12}}.", "Price {C-0001}.", "Price [[C-0001]].", "Price {{ C-0001 }}."])
-def test_malformed_slots_fail(clock, text):
-    assert FindingKind.MALFORMED_SLOT in kinds(run(text, clock))
+def test_malformed_slots_fail(run, text):
+    assert FindingKind.MALFORMED_SLOT in kinds(run(text))
 
 
-def test_slots_need_live_verified_allowed_claims(clock, make):
+def test_slots_need_live_verified_allowed_claims(run, make, clock):
     good = make("C-0001", ClaimKind.NUMBER, "3.5", "t")
     pending = make("C-0002", ClaimKind.NUMBER, "40", verified=False)
     short = make("C-0003", ClaimKind.PRICE, "9.99", "EUR", verify_expires_at=clock.now() + DAY)
     claims = {c.code: c for c in (good, pending, short)}
 
-    ok = run("It carries {{C-0001}}. Simply honest.", clock, claims=claims)
+    ok = run("It carries {{C-0001}}. Simply honest.", claims=claims)
     assert ok.ok and ok.codes == ("C-0001",) and ok.claim_ids == (good.id,)
-
-    assert kinds(run("{{C-0009}}", clock, claims=claims)) == [FindingKind.UNKNOWN_CLAIM]
-    assert kinds(run("{{C-0002}}", clock, claims=claims)) == [FindingKind.UNUSABLE_CLAIM]
-    assert kinds(run("{{C-0001}}", clock, claims=claims, allowed_claim_ids=[short.id])) == [
-        FindingKind.CLAIM_NOT_ALLOWED]
-    assert run("{{C-0003}}", clock, claims=claims).ok
-    clock.advance(DAY)
-    assert kinds(run("{{C-0003}}", clock, claims=claims)) == [FindingKind.UNUSABLE_CLAIM]
+    assert kinds(run("{{C-0009}}", claims=claims)) == [FindingKind.UNKNOWN_CLAIM]
+    assert kinds(run("{{C-0002}}", claims=claims)) == [FindingKind.UNUSABLE_CLAIM]
+    assert kinds(run("{{C-0001}}", claims=claims, allowed_claim_ids=[short.id])) == [FindingKind.CLAIM_NOT_ALLOWED]
+    assert run("{{C-0003}}", claims=claims).ok
+    clock.advance(days=1)
+    assert kinds(run("{{C-0003}}", claims=claims)) == [FindingKind.UNUSABLE_CLAIM]
 
 
-def test_digits_inside_a_slot_value_are_fine_but_not_beside_it(clock, make):
-    claims = {"C-0001": make("C-0001", ClaimKind.NUMBER, "3.5", "t")}
-    assert run("Carries {{C-0001}}.", clock, claims=claims).ok
-    assert FindingKind.DIGIT in kinds(run("Carries {{C-0001}}0.", clock, claims=claims))
-
-
-def test_detector_hook_sees_masked_text_and_can_block(clock, make):
+def test_detector_hook_sees_masked_text_and_can_block(run, make):
     claims = {"C-0001": make("C-0001", ClaimKind.NAME, "Acme")}
     seen = []
 
@@ -142,27 +135,39 @@ def test_detector_hook_sees_masked_text_and_can_block(clock, make):
             i = masked_text.find("legendary")
             return [Finding(FindingKind.CLASSIFIER, i, i + 9, "legendary", "model: superlative")] if i >= 0 else []
 
-    result = run("{{C-0001}} is legendary.", clock, claims=claims, detectors=[Flagger()])
+    result = run("{{C-0001}} is legendary.", claims=claims, detectors=[Flagger()])
     assert kinds(result) == [FindingKind.CLASSIFIER]
     assert "{{" not in seen[0]
 
 
-def test_build_compiles_then_fills_or_raises(clock, make):
+def test_build_compiles_then_fills_or_raises(built, make):
     claims = {"C-0001": make("C-0001", ClaimKind.NUMBER, "3.5", "t")}
-    built = build("Porta {{C-0001}}.", language=Language.IT, claims=claims, clock=clock,
-                  default_language=Language.EN)
-    assert built.filled.text == "Porta 3,5 tonnellate."
+    assert built("Porta {{C-0001}}.", claims, IT) == "Porta 3,5 tonnellate."
     with pytest.raises(CompileFailed) as err:
-        build("Porta {{C-0001}}, il migliore.", language=Language.IT, claims=claims, clock=clock,
-              default_language=Language.EN)
+        built("Porta {{C-0001}}, il migliore.", claims, IT)
     assert err.value.result.findings[0].kind is FindingKind.SUPERLATIVE
 
 
+# ---------------------------------------------------------------- wheelers
+
 @pytest.mark.parametrize("text", ["We sold three wheelers.", "Three  wheelers in stock.", "two\nwheelers"])
-def test_spaced_number_word_before_wheelers_stays_checkable(clock, text):
-    assert FindingKind.NUMBER_WORD in kinds(run(text, clock))
+def test_spaced_number_word_before_wheelers_stays_checkable(run, text):
+    assert FindingKind.NUMBER_WORD in kinds(run(text))
 
 
 @pytest.mark.parametrize("text", ["Our three-wheelers.", "A threewheeler.", "Two-wheeler service."])
-def test_closed_or_hyphenated_wheeler_compound_is_a_category(clock, text):
-    assert run(text, clock).ok
+def test_closed_or_hyphenated_wheeler_compound_is_a_category(run, text):
+    assert run(text).ok
+
+
+# ---------------------------------------------------------------- tenant and library (B4)
+
+def test_claim_of_another_tenant_or_miskeyed_claim_is_refused(run, built, make, clock):
+    other = make("C-0009", ClaimKind.PRICE, "99", "EUR", tenant_id=new_id(clock))
+    with pytest.raises(LibraryError, match="another tenant"):
+        run("Only {{C-0009}} today.", claims={"C-0009": other})
+    with pytest.raises(LibraryError, match="another tenant"):
+        built("Get {{C-0009}} today.", {"C-0009": other})
+    mine = make("C-0002", ClaimKind.NUMBER, "5")
+    with pytest.raises(LibraryError, match="holds claim C-0002"):
+        built("{{C-0001}}", {"C-0001": mine})

@@ -6,11 +6,12 @@ import pytest
 
 from cortex_operator.contracts.actors import HumanActor, SystemActor
 from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import ClaimKind
+from cortex_operator.contracts.enums import ClaimKind, Language
 from cortex_operator.contracts.ids import new_id
-from cortex_operator.truth import new_candidate, verify_claim
+from cortex_operator.truth import build, compile_text, new_candidate, verify_claim
 
 SYSTEM = SystemActor(id="extractor")
+DAY = timedelta(days=1)
 
 
 class FakeVerifier:
@@ -43,17 +44,38 @@ def verifier() -> FakeVerifier:
 
 @pytest.fixture
 def make(clock, tenant, human, verifier):
-    """make(code, kind, value, unit=None, verified=True, **kw) -> Claim"""
+    """make(code, kind, value, unit=None, verified=True, tenant_id=..., **kw) -> Claim"""
 
-    def _make(code: str, kind: ClaimKind, value: str, unit: str | None = None, *, verified: bool = True, **kw):
+    def _make(code: str, kind: ClaimKind, value: str, unit: str | None = None, *, verified: bool = True,
+              tenant_id: str | None = None, **kw):
         expires_at = kw.pop("verify_expires_at", None)
-        claim, _ = new_candidate(tenant_id=tenant, code=code, kind=kind, value=value, unit=unit, clock=clock,
+        owner = tenant_id or tenant
+        claim, _ = new_candidate(tenant_id=owner, code=code, kind=kind, value=value, unit=unit, clock=clock,
                                  actor=SYSTEM, evidence=f"source for {code}", **kw)
         if verified:
-            claim, _ = verify_claim(claim, human, verifier=verifier, clock=clock, expires_at=expires_at)
+            actor = human if owner == tenant else HumanActor(id=human.id, tenant_id=owner, session_id="live")
+            claim, _ = verify_claim(claim, actor, verifier=verifier, clock=clock, expires_at=expires_at)
         return claim
 
     return _make
 
 
-DAY = timedelta(days=1)
+@pytest.fixture
+def run(clock, tenant):
+    """run(text, language=EN, claims=None, **kw) -> CompileResult"""
+
+    def _run(text: str, language: Language = Language.EN, claims=None, **kw):
+        return compile_text(text, tenant_id=tenant, language=language, claims=claims or {}, clock=clock, **kw)
+
+    return _run
+
+
+@pytest.fixture
+def built(clock, tenant):
+    """built(text, claims, language=EN, default=EN) -> output text"""
+
+    def _built(text: str, claims, language: Language = Language.EN, default: Language = Language.EN, **kw):
+        return build(text, tenant_id=tenant, language=language, claims=claims, clock=clock,
+                     default_language=default, **kw).filled.text
+
+    return _built

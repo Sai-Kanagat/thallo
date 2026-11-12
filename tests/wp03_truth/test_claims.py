@@ -33,8 +33,10 @@ def test_candidate_is_typed_and_emits_event(clock, tenant):
 
 
 @pytest.mark.parametrize(("kind", "value", "unit"), [
-    (ClaimKind.NUMBER, "3,5", "t"), (ClaimKind.NUMBER, "௯", None), (ClaimKind.PRICE, "10", None),
-    (ClaimKind.DATE, "05/01/2026", None), (ClaimKind.NAME, " Acme", None),
+    (ClaimKind.NUMBER, "3,5", "t"), (ClaimKind.NUMBER, "\u0bef", None), (ClaimKind.PRICE, "10", None),
+    (ClaimKind.DATE, "05/01/2026", None), (ClaimKind.NAME, " Acme", None), (ClaimKind.NUMBER, "007", None),
+    (ClaimKind.NUMBER, "-0", None), (ClaimKind.NUMBER, "-0.0", None),
+    (ClaimKind.DATE, "\u0be8\u0be6\u0be8\u0bec", None),
 ])
 def test_values_must_be_canonical(clock, tenant, kind, value, unit):
     with pytest.raises(ClaimError):
@@ -82,9 +84,21 @@ def test_prices_and_offers_expire_in_thirty_days(clock, tenant, human, verifier)
     clock.advance(DAY * 3)
     verified, _ = verify_claim(price, human, verifier=verifier, clock=clock)
     assert verified.expires_at == clock.now() + 30 * DAY
-    offer, _ = candidate(clock, tenant, ClaimKind.CAPABILITY, "Free first service", None)
-    verified, _ = verify_claim(offer, human, verifier=verifier, clock=clock, offer=True)
+    offer, _ = candidate(clock, tenant, ClaimKind.OFFER, "Free first service", None)
+    verified, _ = verify_claim(offer, human, verifier=verifier, clock=clock)
     assert verified.expires_at == clock.now() + 30 * DAY
+
+
+def test_human_set_price_or_offer_expiry_is_capped_at_ninety_days(clock, tenant, human, verifier):
+    for kind, value, unit in ((ClaimKind.PRICE, "9.99", "EUR"), (ClaimKind.OFFER, "Free service", None)):
+        claim, _ = candidate(clock, tenant, kind, value, unit)
+        ok, _ = verify_claim(claim, human, verifier=verifier, clock=clock, expires_at=clock.now() + 90 * DAY)
+        assert ok.expires_at == clock.now() + 90 * DAY
+        with pytest.raises(ClaimError, match="at most 90 days"):
+            verify_claim(claim, human, verifier=verifier, clock=clock, expires_at=clock.now() + 91 * DAY)
+    number, _ = candidate(clock, tenant)
+    long, _ = verify_claim(number, human, verifier=verifier, clock=clock, expires_at=clock.now() + 3650 * DAY)
+    assert long.expires_at == clock.now() + 3650 * DAY
 
 
 def test_reverification_never_extends_a_shorter_expiry(clock, tenant, human, verifier):
@@ -131,7 +145,8 @@ def test_change_lists_what_it_voids_and_returns_to_candidate(clock, tenant, huma
     assert change.passed_through == (ClaimState.VOIDED, ClaimState.CANDIDATE)
     assert change.claim.state is ClaimState.CANDIDATE and change.claim.verified_by is None
     assert change.event.name is EventName.CLAIM_CHANGED
-    assert ClaimChangedPayload.model_validate(change.event.payload).voided_approval_ids == ["a1", "a2"]
+    payload = ClaimChangedPayload.model_validate(change.event.payload)
+    assert payload.voided_approval_ids == ["a1", "a2"] and payload.voided_variant_ids == ["v1", "v2"]
 
 
 def test_evidence_and_wording_changes_are_material(clock, tenant, human, verifier):
@@ -157,8 +172,9 @@ def test_expired_claim_stays_expired_after_change_and_rejected_cannot_change(clo
     assert change.claim.state is ClaimState.EXPIRED and change.passed_through == ()
 
     fresh, _ = candidate(clock, tenant)
-    rejected = reject_claim(fresh)
+    rejected, event = reject_claim(fresh, SYSTEM, clock=clock)
+    assert rejected.state is ClaimState.REJECTED and event.name is EventName.CLAIM_REJECTED
     with pytest.raises(ClaimError):
         change_claim(rejected, actor=SYSTEM, clock=clock, usage=InMemoryClaimRepository(), value="4")
     with pytest.raises(IllegalTransition):
-        reject_claim(rejected)
+        reject_claim(rejected, SYSTEM, clock=clock)
