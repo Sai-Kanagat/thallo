@@ -211,9 +211,6 @@ IT = Lexicon(
             r"(?:in\s+)?confronto\s+(?:a|con|al|allo|alla|ai|agli|alle|all['’])",
         ),
         Category.NUMBER_WORD: (
-            # any word built only from number roots: trentacinque, ventitré, duemilacinquecento.
-            # "un" alone is the article and is left out; uno and una are caught.
-            rf"(?!un{RIGHT})(?:(?:{'|'.join(_IT_ROOTS)})[aeiouéè]?)+",
             r"(?:second|terz|quart|quint|sest|settim|ottav|non|decim)[oaie]",
             r"per\s+cento",
         ),
@@ -247,6 +244,67 @@ TA = Lexicon(
 )
 
 LEXICONS: dict[Language, Lexicon] = {Language.EN: EN, Language.IT: IT, Language.TA: TA}
+
+# Italian words built only from number roots (trentacinque, ventitré, duemilacinquecento) are
+# found by `italian_number_word`, a memoised parse of one word at a time: no regex, so no
+# catastrophic backtracking. "un" alone is the article and is left out.
+_IT_ROOTS_FOLDED = tuple(sorted({fold_str(r) for r in _IT_ROOTS}, key=len, reverse=True))
+_IT_LINK_VOWELS = frozenset("aeiou")
+WORD = re.compile(rf"(?:[^\W\d_]|[{MARKS}])+")  # a word, Tamil vowel signs included
+MAX_WORD = 64
+
+
+def italian_number_word(word: str) -> bool:
+    """True if a folded word is made only of Italian number roots, each optionally followed by one
+    vowel. Linear in the word length times the number of roots."""
+    if word == "un" or not word or len(word) > MAX_WORD:
+        return False
+    ok = [False] * (len(word) + 1)
+    ok[len(word)] = True
+    for i in range(len(word) - 1, -1, -1):
+        for root in _IT_ROOTS_FOLDED:
+            if word.startswith(root, i):
+                j = i + len(root)
+                if ok[j] or (j < len(word) and word[j] in _IT_LINK_VOWELS and ok[j + 1]):
+                    ok[i] = True
+                    break
+    return ok[0]
+
+
+# ---------------------------------------------------------------- review flags
+
+# Words that are often not a number or a claim at all ("sei" is also "you are", "prima" is also
+# "before", "una" is the article, "the one" is a pronoun). They raise a review flag instead of a
+# block, unless they sit next to a digit, a slot, a unit or a quantity noun, where they are a count.
+AMBIGUOUS: dict[Language, frozenset[str]] = {
+    Language.EN: frozenset({"one"}),
+    Language.IT: frozenset({"sei", "uno", "una", "prima", "secondo"}),
+    Language.TA: frozenset(),
+}
+
+# Universal claims ("never breaks down", "every customer"): always a review flag, never a block.
+UNIVERSAL: dict[Language, tuple[str, ...]] = {
+    Language.EN: ("never", "always", "every", "all", "everyone", "everybody", "everything"),
+    Language.IT: ("nessuno", "nessuna", "sempre", "mai", "tutti", "tutte"),
+    # Tamil, needs a native reader: always, never, all
+    Language.TA: ("எப்போதும்", "ஒருபோதும்", "அனைத்து", "எல்லா"),
+}
+
+# Nouns that make a nearby ambiguous word a count. Folded forms. Units and currencies are added
+# from units.py by the compiler.
+QUANTITY_NOUNS: frozenset[str] = frozenset(fold_str(w) for w in (
+    "customer", "customers", "client", "clients", "year", "years", "month", "months", "week", "weeks", "day",
+    "days", "hour", "hours", "unit", "units", "truck", "trucks", "vehicle", "vehicles", "model", "models",
+    "branch", "branches", "showroom", "showrooms", "store", "stores", "shop", "shops", "dealer", "dealers",
+    "dealership", "dealerships", "order", "orders", "sale", "sales", "people", "employee", "employees",
+    "location", "locations", "city", "cities", "time", "times", "percent", "tonne", "tonnes",
+    "cliente", "clienti", "anno", "anni", "mese", "mesi", "settimana", "settimane", "giorno", "giorni", "ora",
+    "ore", "sede", "sedi", "modello", "modelli", "negozio", "negozi", "veicolo", "veicoli", "camion",
+    "mezzo", "mezzi", "dipendente", "dipendenti", "persona", "persone", "città", "ordine", "ordini",
+    "vendita", "vendite", "filiale", "filiali", "concessionaria", "concessionarie", "concessionario",
+    "concessionari", "volta", "volte", "tonnellata", "tonnellate", "euro", "punto", "punti",
+    "வாடிக்கையாளர்", "வாடிக்கையாளர்கள்", "ஆண்டு", "ஆண்டுகள்", "மாதம்", "நாள்", "நாட்கள்", "கடை", "கடைகள்",
+))
 
 # Product categories that contain a number word but state no claim. Only the closed or hyphenated
 # compound: "three wheelers" with a space is a count and stays checkable.

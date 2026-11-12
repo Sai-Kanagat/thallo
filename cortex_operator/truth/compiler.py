@@ -10,21 +10,29 @@ The writer's text carries slots like `{{C-0012}}`. Outside a slot the text may n
 - an invisible character, or letters spaced out to dodge the lists ("b e s t")
 - a malformed slot or a legacy `[[C-...]]` reference
 
+Two verdict tiers. A BLOCK finding fails the build. A FLAG finding passes the build and goes to
+the human reviewer: ambiguous words that are often not a number ("sei", "una", "prima", "the
+one") and universal claims ("never", "always", "every", "sempre"). An ambiguous word next to a
+digit, a slot, a unit or a quantity noun ("sei anni", "one truck") is a count and blocks.
+
 Word and name lists run on a folded view (NFKC, casefold, no Latin accents), so fullwidth,
 mathematical and ligature lookalikes match too.
 
 Every slot must name a claim of this tenant that exists, is verified, has not expired and, when
-the brief limits them, is in `allowed_claim_ids`. A slot may not touch a letter, a digit or
-another slot, may not join another slot through . , ' : / or -, and may not be followed by a
-multiplier such as k, M, mln or x: each of those would let code print a number nobody verified
+the brief limits them, is in `allowed_claim_ids`. A slot must stand alone: the characters right
+beside it may only be whitespace, punctuation or the text edge; it may not join another slot
+through . , ' : / or -; and the next word may not be a multiplier (k, M, mln, x, fold) or a
+symbol (the multiplication sign). Otherwise code could print a number nobody verified
 ("{{C-0001}}{{C-0002}}" prints 105).
 
 Segmentation is not a security boundary. The verdict is span-based (`scan` plus the slot checks);
 the segmenter only labels each finding with the sentence to show the writer. `build` then checks
 the filled output: every digit must sit inside one rendered slot, or the build fails.
 
-Any finding fails the build. The model classifier and the second reader of another model family
-are backstops that plug in through `Detector`; they are not the guard.
+Text longer than MAX_TEXT_CHARS is refused before any pattern runs.
+
+The model classifier and the second reader of another model family are backstops that plug in
+through `Detector`; they are not the guard.
 
 Spans refer to `CompileResult.text`, the input in Unicode NFC form.
 """
@@ -43,32 +51,49 @@ from cortex_operator.contracts.models import Claim
 from cortex_operator.truth.claims import problem
 from cortex_operator.truth.fill import SLOT, Filled, FillError, _fill, check_library
 from cortex_operator.truth.lexicon import (
+    AMBIGUOUS,
     EXCEPTIONS,
     LEFT,
     MARKS,
+    QUANTITY_NOUNS,
     RIGHT,
+    UNIVERSAL,
+    WORD,
+    Category,
     fold,
     fold_str,
     foreign_letter,
     is_digit_char,
     is_hidden_char,
     is_money_or_percent,
+    italian_number_word,
     matchers,
 )
 from cortex_operator.truth.segment import Sentence, sentence_at
 from cortex_operator.truth.segment import segment as _segment  # display only; tests swap it
+from cortex_operator.truth.units import ISO_4217, SYMBOL_UNITS, UNITS
+
+MAX_TEXT_CHARS = 20_000
+
+
+class Severity(StrEnum):
+    BLOCK = "block"  # fails the build
+    FLAG = "flag"  # passes the build, shown to the human reviewer
 
 
 class FindingKind(StrEnum):
     DIGIT = "digit"
     SYMBOL = "symbol"
     NUMBER_WORD = "number_word"
+    AMBIGUOUS_NUMBER_WORD = "ambiguous_number_word"
+    UNIVERSAL_CLAIM = "universal_claim"
     SUPERLATIVE = "superlative"
     COMPARATIVE = "comparative"
     NAMED_CUSTOMER = "named_customer"
     FOREIGN_SCRIPT = "foreign_script"
     HIDDEN_CHARACTER = "hidden_character"
     SPACED_LETTERS = "spaced_letters"
+    TEXT_TOO_LONG = "text_too_long"
     MALFORMED_SLOT = "malformed_slot"
     SLOT_ADJACENT = "slot_adjacent"
     UNKNOWN_CLAIM = "unknown_claim"
@@ -85,6 +110,7 @@ class Finding:
     match: str
     message: str
     sentence: int | None = None
+    severity: Severity = Severity.BLOCK
 
 
 @runtime_checkable
@@ -108,17 +134,32 @@ class CompileResult:
     findings: tuple[Finding, ...] = field(default_factory=tuple)
 
     @property
+    def blocks(self) -> tuple[Finding, ...]:
+        return tuple(f for f in self.findings if f.severity is Severity.BLOCK)
+
+    @property
+    def flags(self) -> tuple[Finding, ...]:
+        return tuple(f for f in self.findings if f.severity is Severity.FLAG)
+
+    @property
     def ok(self) -> bool:
-        return not self.findings
+        return not self.blocks
 
     def errors(self) -> list[str]:
-        return [f"{f.kind.value}: {f.message}" for f in self.findings]
+        return [f"{f.kind.value}: {f.message}" for f in self.blocks]
 
 
 MALFORMED = re.compile(r"\{\{|\}\}|\[\[|\]\]|[{\[]\s*C-\d+")
 SPACED = re.compile(r"(?<![\w])(?:[^\W\d_][\s.\-_*·]+){2,}[^\W\d_](?![\w])")
 SLOT_JOINERS = ".,'’:/-‐‑‒"
-MULTIPLIER_AFTER = re.compile(r"\s*(?:k|m|mn|bn|mln|mld|mio|mrd|cr|x|fold)" + RIGHT, re.IGNORECASE)
+MULTIPLIERS = frozenset({"k", "m", "mn", "bn", "mln", "mld", "mio", "mrd", "cr", "x", "fold"})
+NAME_SPLIT = re.compile(rf"(?:[^\w{MARKS}]|_)+")
+NAME_GAP = rf"(?:[^\w{MARKS}]|_)*"  # "Rossi Trasporti", "Rossi-Trasporti", "RossiTrasporti"
+_UNIT_WORDS = frozenset(
+    {fold_str(u) for u in SYMBOL_UNITS} | {fold_str(c) for c in ISO_4217}
+    | {fold_str(w) for forms in UNITS.values() for pair in forms.values() for w in pair}
+)
+COUNT_NEIGHBOURS = QUANTITY_NOUNS | _UNIT_WORDS
 
 
 def _blank(text: str, spans: Iterable[tuple[int, int]]) -> str:
@@ -156,10 +197,6 @@ def protected_names_from(claims: Iterable[Claim], extra: Iterable[str] = ()) -> 
     return sorted({n.strip() for n in names if len(n.strip()) >= 2}, key=len, reverse=True)
 
 
-NAME_SPLIT = re.compile(rf"(?:[^\w{MARKS}]|_)+")
-NAME_GAP = rf"(?:[^\w{MARKS}]|_)*"  # "Rossi Trasporti", "Rossi-Trasporti", "RossiTrasporti"
-
-
 def _name_pattern(names: Sequence[str]) -> re.Pattern[str] | None:
     parts = []
     for name in names:
@@ -169,16 +206,40 @@ def _name_pattern(names: Sequence[str]) -> re.Pattern[str] | None:
     return re.compile("|".join(sorted(parts, key=len, reverse=True))) if parts else None
 
 
+def _neighbours_count(raw: str, folded: str, origin: list[int], a: int, b: int,
+                      marker_spans: Sequence[tuple[int, int]]) -> bool:
+    """True when the folded word folded[a:b] sits next to a digit, a slot, a unit, a currency
+    sign or a quantity noun (only whitespace or a hyphen in between)."""
+    ra, rb = origin[a], origin[b - 1] + 1
+    i = ra - 1
+    while i >= 0 and raw[i] in " \t-":
+        i -= 1
+    j = rb
+    while j < len(raw) and raw[j] in " \t-":
+        j += 1
+    for k in (i, j):
+        if 0 <= k < len(raw) and (is_digit_char(raw[k]) or is_money_or_percent(raw[k])
+                                  or any(x <= k < y for x, y in marker_spans)):
+            return True
+    before = WORD.findall(folded[:a])[-1:] if a else []
+    after = WORD.match(folded, b + len(folded[b:]) - len(folded[b:].lstrip(" \t-")))
+    words = [*before, *([after.group(0)] if after else [])]
+    return any(w in COUNT_NEIGHBOURS for w in words)
+
+
 def scan(text: str, *, language: Language, marker_spans: Iterable[tuple[int, int]] = (),
          protected_names: Iterable[str] = ()) -> list[Finding]:
     """The gate's token check. Blanks the given marker spans, then flags every checkable token
     left anywhere in the text. It never looks at sentence boundaries: a marker covers only its own
     span, so segmentation cannot change the verdict. Findings carry no sentence index."""
-    masked = _blank(text, marker_spans)
+    if len(text) > MAX_TEXT_CHARS:
+        return [Finding(FindingKind.TEXT_TOO_LONG, 0, 0, "", f"text is over {MAX_TEXT_CHARS} characters")]
+    markers = list(marker_spans)
+    masked = _blank(text, markers)
     findings: list[Finding] = []
 
-    def add(kind: FindingKind, a: int, b: int, message: str) -> None:
-        findings.append(Finding(kind, a, b, text[a:b], message))
+    def add(kind: FindingKind, a: int, b: int, message: str, severity: Severity = Severity.BLOCK) -> None:
+        findings.append(Finding(kind, a, b, text[a:b], message, severity=severity))
 
     for m in MALFORMED.finditer(masked):
         add(FindingKind.MALFORMED_SLOT, *m.span(), "malformed slot; write claims as {{C-0001}}")
@@ -193,28 +254,50 @@ def scan(text: str, *, language: Language, marker_spans: Iterable[tuple[int, int
 
     folded, origin = fold(masked)
 
-    def span(m: re.Match[str]) -> tuple[int, int]:
-        a, b = m.span()
+    def span(a: int, b: int) -> tuple[int, int]:
         return origin[a], origin[b - 1] + 1
 
     for m in SPACED.finditer(folded):
-        add(FindingKind.SPACED_LETTERS, *span(m), f"spaced-out letters: {m.group(0)!r}")
+        add(FindingKind.SPACED_LETTERS, *span(*m.span()), f"spaced-out letters: {m.group(0)!r}")
 
-    taken: list[tuple[int, int]] = [m.span() for m in EXCEPTIONS.finditer(folded)]
+    # word lists: (category, folded span), first match wins on overlap
+    hits: list[tuple[Category, int, int]] = []
     for category, pattern in matchers(language):
+        hits += [(category, *m.span()) for m in pattern.finditer(folded) if m.end() > m.start()]
+    if language is Language.IT:
+        hits += [(Category.NUMBER_WORD, *m.span()) for m in WORD.finditer(folded)
+                 if italian_number_word(m.group(0))]
+    taken: list[tuple[int, int]] = [m.span() for m in EXCEPTIONS.finditer(folded)]
+    ambiguous = AMBIGUOUS[language] | AMBIGUOUS[Language.EN]
+    for category, a, b in hits:
+        if any(a < y and x < b for x, y in taken):
+            continue
+        taken.append((a, b))
+        word = folded[a:b]
+        if word in ambiguous and not _neighbours_count(masked, folded, origin, a, b, markers):
+            add(FindingKind.AMBIGUOUS_NUMBER_WORD, *span(a, b),
+                f"may state a number: {word!r}; check it is not a count", Severity.FLAG)
+            continue
         kind = FindingKind(category.value)
-        for m in pattern.finditer(folded):
-            a, b = m.span()
-            if a == b or any(a < y and x < b for x, y in taken):
-                continue
-            taken.append((a, b))
-            add(kind, *span(m), f"{kind.value} outside a slot: {m.group(0)!r}")
+        add(kind, *span(a, b), f"{kind.value} outside a slot: {word!r}")
+
+    universal = {fold_str(w) for lang in {language, Language.EN} for w in UNIVERSAL[lang]}
+    for m in WORD.finditer(folded):
+        a, b = m.span()
+        word = m.group(0)
+        if word in universal or (language is Language.TA and any(word.startswith(w) for w in universal)):
+            if not any(a < y and x < b for x, y in taken):
+                add(FindingKind.UNIVERSAL_CLAIM, *span(a, b), f"universal claim: {word!r}", Severity.FLAG)
 
     name_re = _name_pattern(list(protected_names))
     if name_re is not None:
         for m in name_re.finditer(folded):
-            add(FindingKind.NAMED_CUSTOMER, *span(m), f"name outside a slot: {m.group(0)!r}")
+            add(FindingKind.NAMED_CUSTOMER, *span(*m.span()), f"name outside a slot: {m.group(0)!r}")
     return findings
+
+
+def _allowed_beside_slot(ch: str) -> bool:
+    return ch == "" or ch.isspace() or unicodedata.category(ch)[0] == "P"
 
 
 def _slot_findings(text: str, slots: list[tuple[int, int]]) -> list[Finding]:
@@ -224,17 +307,23 @@ def _slot_findings(text: str, slots: list[tuple[int, int]]) -> list[Finding]:
     for a, b in slots:
         before = text[a - 1] if a > 0 else ""
         after = text[b] if b < len(text) else ""
+        nxt = text[b:b + 40].lstrip()
+        next_char = nxt[:1]
+        word = WORD.match(fold_str(nxt))
+        next_word = word.group(0) if word else ""
         why = None
-        if before and unicodedata.category(before)[0] in "LNM":
-            why = f"slot touches {before!r} before it"
-        elif after and unicodedata.category(after)[0] in "LNM":
-            why = f"slot touches {after!r} after it"
-        elif b in starts:
+        if b in starts:
             why = "slot touches the next slot"
         elif after and after in SLOT_JOINERS and b + 1 in starts:
             why = f"slot joined to the next slot by {after!r}"
-        elif (m := MULTIPLIER_AFTER.match(text, b)) is not None:
-            why = f"multiplier after a slot: {m.group(0).strip()!r}"
+        elif not _allowed_beside_slot(before):
+            why = f"slot touches {before!r} before it"
+        elif not _allowed_beside_slot(after):
+            why = f"slot touches {after!r} after it"
+        elif next_char and unicodedata.category(next_char)[0] == "S":
+            why = f"symbol after a slot: {next_char!r}"
+        elif next_word in MULTIPLIERS:
+            why = f"multiplier after a slot: {next_word!r}"
         if why:
             out.append(Finding(FindingKind.SLOT_ADJACENT, a, b, text[a:b], why))
     return out
@@ -243,13 +332,18 @@ def _slot_findings(text: str, slots: list[tuple[int, int]]) -> list[Finding]:
 def compile_text(text: str, *, tenant_id: str, language: Language, claims: Mapping[str, Claim], clock: Clock,
                  allowed_claim_ids: Collection[str] | None = None, protected_names: Iterable[str] = (),
                  detectors: Sequence[Detector] = ()) -> CompileResult:
-    """Check writer output before any slot is filled. `claims` is this tenant's whole library,
-    keyed by code, so that NAME claims protect their names even when unused. A claim of another
-    tenant, or under a key that is not its code, raises LibraryError."""
+    """Check writer output before any slot is filled. `claims` is this tenant's library of latest
+    versions keyed by code (`repository.library`), so that NAME claims protect their names even
+    when unused. A claim of another tenant, or under a key that is not its code, raises
+    LibraryError."""
     check_library(claims, tenant_id)
     text = unicodedata.normalize("NFC", text)
     now = clock.now()
     findings: list[Finding] = []
+    if len(text) > MAX_TEXT_CHARS:
+        findings = scan(text, language=language)
+        return CompileResult(text=text, language=language, tenant_id=tenant_id, sentences=(), codes=(),
+                             claim_ids=(), findings=tuple(findings))
 
     codes: list[str] = []
     slot_spans: list[tuple[int, int]] = []
@@ -298,6 +392,11 @@ class Built:
     compiled: CompileResult
     filled: Filled
 
+    @property
+    def flags(self) -> tuple[Finding, ...]:
+        """For the human reviewer: ambiguous number words and universal claims."""
+        return self.compiled.flags
+
 
 def check_filled(filled: Filled) -> None:
     """Every digit in the output must lie inside one rendered slot."""
@@ -310,7 +409,8 @@ def build(text: str, *, tenant_id: str, language: Language, claims: Mapping[str,
           default_language: Language, allowed_claim_ids: Collection[str] | None = None,
           protected_names: Iterable[str] = (), detectors: Sequence[Detector] = ()) -> Built:
     """Compile, fill, then check the output. The only public way to fill slots. Raises
-    CompileFailed, FillError or LibraryError; never returns half-checked text."""
+    CompileFailed, FillError or LibraryError; never returns half-checked text. Review flags pass
+    through on `Built.flags`."""
     result = compile_text(text, tenant_id=tenant_id, language=language, claims=claims, clock=clock,
                           allowed_claim_ids=allowed_claim_ids, protected_names=protected_names,
                           detectors=detectors)

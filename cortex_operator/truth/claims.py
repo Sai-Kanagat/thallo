@@ -6,8 +6,8 @@ the same transaction; nothing here stores anything.
 - Only a verified live human session can verify a claim (`require_human`, VERIFY_CLAIM).
 - Prices and offers (ClaimKind.PRICE and OFFER) expire 30 days after verification by default. A
   human may set a different date; re-verification never silently extends an earlier, shorter expiry.
-- A change to a claim's value, unit, date, evidence or approved wording lists every approval it
-  voids, and sends the claim back to candidate for a fresh human check.
+- A change to a claim's value, unit, date, evidence or approved wording writes a new version
+  (append-only, contracts 2.0.0), voids the old verified row and lists every approval it voids.
 """
 from __future__ import annotations
 
@@ -239,12 +239,16 @@ _UNSET: Any = object()
 
 @dataclass(frozen=True)
 class ClaimChange:
-    claim: Claim
-    event: Event
+    """`previous` is the row as it now stands (VOIDED if it was verified, unchanged if expired);
+    `current` is the new version, a candidate awaiting a human. For a change to a candidate,
+    which was never usable, `previous` is None and `current` is the edited row."""
+
+    previous: Claim | None
+    current: Claim
+    events: tuple[Event, ...]  # CLAIM_CHANGED for the old row, then CLAIM_CANDIDATE_ADDED for the new one
     changed: tuple[str, ...]
     voided_variant_ids: tuple[str, ...]
     voided_approval_ids: tuple[str, ...]
-    passed_through: tuple[ClaimState, ...]
 
 
 def change_claim(claim: Claim, *, actor: Actor, clock: Clock, usage: ClaimUsage, value: str = _UNSET,
@@ -252,13 +256,18 @@ def change_claim(claim: Claim, *, actor: Actor, clock: Clock, usage: ClaimUsage,
                  source_span: dict[str, Any] | None = _UNSET, evidence: str | bytes | None = None,
                  evidence_sha256: str | None = _UNSET,
                  languages: Mapping[str, str] | None = _UNSET) -> ClaimChange:
-    """Change what a claim says or what backs it. Lists every variant and live approval that used
-    it; the caller voids those approvals (WP-04) and writes the CLAIM_CHANGED event.
+    """Change what a claim says or what backs it. Claims are append-only by version (contracts
+    2.0.0), so the exact fact a published piece used is never overwritten:
 
-    A verified claim passes through voided back to candidate. An expired claim stays expired and a
-    candidate stays a candidate: both still need a human to verify. A rejected claim cannot change."""
-    if claim.state is ClaimState.REJECTED:
-        raise ClaimError(f"{claim.code} is rejected; add a new claim instead")
+    - VERIFIED: the row goes to VOIDED (terminal) and a new row, version + 1 with `supersedes_id`,
+      starts as a CANDIDATE until a human verifies it. Every variant and live approval that used
+      the old row is listed; the caller voids those approvals (WP-04) and writes the events.
+    - EXPIRED: the machine has no EXPIRED to VOIDED edge, so the row stays EXPIRED (already
+      unusable and on record) and the new version is written the same way.
+    - CANDIDATE: never usable in copy, so it is edited in place and nothing is voided.
+    - REJECTED or VOIDED: refused. Change the latest version instead."""
+    if claim.state in (ClaimState.REJECTED, ClaimState.VOIDED):
+        raise ClaimError(f"{claim.code} v{claim.version} is {claim.state.value}; change the latest version")
     updates: dict[str, Any] = {}
     for name, new in (("value", value), ("unit", unit), ("as_of", as_of), ("source_id", source_id),
                       ("source_span", source_span), ("languages", languages)):
@@ -272,21 +281,28 @@ def change_claim(claim: Claim, *, actor: Actor, clock: Clock, usage: ClaimUsage,
     if not changed:
         raise ClaimError(f"{claim.code}: nothing material changed")
     check_value(claim.kind, updates.get("value", claim.value), updates.get("unit", claim.unit))
+    material = {k: updates[k] for k in changed}
 
-    path: list[ClaimState] = []
-    state = claim.state
-    if state is ClaimState.VERIFIED:
-        state = CLAIM.check(state, ClaimState.VOIDED)
-        path.append(state)
-    if state is ClaimState.VOIDED:
-        state = CLAIM.check(state, ClaimState.CANDIDATE)
-        path.append(state)
+    if claim.state is ClaimState.CANDIDATE:
+        edited = _rebuild(claim, **material)
+        return ClaimChange(previous=None, current=edited, events=(), changed=changed, voided_variant_ids=(),
+                           voided_approval_ids=())
 
+    now = clock.now()
+    previous = _rebuild(claim, state=CLAIM.check(claim.state, ClaimState.VOIDED)) \
+        if claim.state is ClaimState.VERIFIED else claim
+    keep_expiry = claim.expires_at if claim.expires_at is not None and claim.expires_at > now else None
+    current = _rebuild(claim, **material, id=new_id(clock), created_at=now, version=claim.version + 1,
+                       supersedes_id=claim.id, state=CLAIM.initial, verified_by=None, verified_at=None,
+                       expires_at=keep_expiry)
     variants = tuple(usage.variants_using_claim(claim.tenant_id, claim.id))
     approvals = tuple(usage.live_approvals_for_variants(claim.tenant_id, list(variants))) if variants else ()
-    updated = _rebuild(claim, **{k: updates[k] for k in changed}, state=state, verified_by=None, verified_at=None)
-    event = _event(clock, updated, actor, EventName.CLAIM_CHANGED,
-                   ClaimChangedPayload(claim_id=updated.id, code=updated.code,
-                                       voided_approval_ids=list(approvals), voided_variant_ids=list(variants)))
-    return ClaimChange(claim=updated, event=event, changed=changed, voided_variant_ids=variants,
-                       voided_approval_ids=approvals, passed_through=tuple(path))
+    events = (
+        _event(clock, previous, actor, EventName.CLAIM_CHANGED,
+               ClaimChangedPayload(claim_id=previous.id, code=previous.code, voided_approval_ids=list(approvals),
+                                   voided_variant_ids=list(variants))),
+        _event(clock, current, actor, EventName.CLAIM_CANDIDATE_ADDED,
+               ClaimPayload(claim_id=current.id, code=current.code)),
+    )
+    return ClaimChange(previous=previous, current=current, events=events, changed=changed,
+                       voided_variant_ids=variants, voided_approval_ids=approvals)
