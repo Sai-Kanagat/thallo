@@ -31,7 +31,7 @@ from cortex_operator.contracts.states import (
 from cortex_operator.gate.canonical import BundleContent, BundleHash, LinkResolver, Snapshot, build_snapshot
 from cortex_operator.gate.consent import consent_problem
 from cortex_operator.gate.repository import GateRepository, load_bundle
-from cortex_operator.gate.signing import GateSigner, grant_fields
+from cortex_operator.gate.signing import GateSigner, grant_fields, void_fields
 from cortex_operator.trust.audit import AuditDraft, AuditLog
 
 DEFAULT_APPROVAL_TTL = timedelta(days=7)
@@ -98,8 +98,8 @@ def _content_problems(content: BundleContent, now: datetime, snapshot: Snapshot,
     return out
 
 
-def _void_drafts(approvals: Sequence[Approval], *, reason: str, actor: Actor | ActorRef,
-                 now: datetime) -> tuple[list[Approval], list[AuditDraft]]:
+def _void_drafts(approvals: Sequence[Approval], *, reason: str, actor: Actor | ActorRef, now: datetime,
+                 signer: GateSigner) -> tuple[list[Approval], list[AuditDraft]]:
     voided: list[Approval] = []
     drafts: list[AuditDraft] = []
     for a in approvals:
@@ -107,7 +107,8 @@ def _void_drafts(approvals: Sequence[Approval], *, reason: str, actor: Actor | A
             continue
         voided.append(a.model_copy(update={"voided_at": now, "void_reason": reason}))
         drafts.append(AuditDraft(actor, ACTION_VOIDED, AUDIT_SUBJECT, a.id,
-                                 {"reason": reason, "bundle_id": a.subject_id, "content_hash": a.content_hash}))
+                                 {"reason": reason, "bundle_id": a.subject_id, "content_hash": a.content_hash,
+                                  "mac": signer.sign(void_fields(a, reason))}))
     return voided, drafts
 
 
@@ -153,7 +154,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
     )
     earlier = [a for a in prior_approvals if a.subject_id == bundle.id and a.tenant_id == bundle.tenant_id]
     voided, drafts = _void_drafts(earlier, reason="superseded by a new approval", actor=ActorRef.of(person),
-                                  now=now)
+                                  now=now, signer=signer)
     drafts.append(AuditDraft(ActorRef.of(person), ACTION_GRANTED, AUDIT_SUBJECT, approval.id, {
         "bundle_id": bundle.id,
         "content_hash": approval.content_hash,
@@ -195,7 +196,8 @@ def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id:
 
 
 def void_bundle_approvals(bundle: Bundle, variants: Sequence[Variant], approvals: Sequence[Approval], *,
-                          reason: str, actor: Actor | ActorRef, clock: Clock, audit: AuditLog) -> GateChange:
+                          reason: str, actor: Actor | ActorRef, clock: Clock, audit: AuditLog,
+                          signer: GateSigner) -> GateChange:
     """Void every live approval of a bundle. Call it for ANY edit after a grant (text, media,
     claim, link, rule version), in the same transaction as the edit. Anyone may void: voiding
     only ever removes permission. The bundle goes to VOIDED and approved variants to CHECKING."""
@@ -203,9 +205,11 @@ def void_bundle_approvals(bundle: Bundle, variants: Sequence[Variant], approvals
         raise ApprovalRefused("a void needs a reason")
     if "session" in reason.lower():
         raise ApprovalRefused("a void reason may not mention a session")
+    if not isinstance(signer, GateSigner):
+        raise ApprovalRefused("no gate signing key: voids cannot be signed")
     now = clock.now()
     mine = [a for a in approvals if a.subject_id == bundle.id and a.tenant_id == bundle.tenant_id]
-    voided, drafts = _void_drafts(mine, reason=reason, actor=actor, now=now)
+    voided, drafts = _void_drafts(mine, reason=reason, actor=actor, now=now, signer=signer)
     new_bundle = bundle
     if bundle.state is BundleState.APPROVED:
         new_bundle = bundle.model_copy(update={"state": BundleState.VOIDED})

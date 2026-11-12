@@ -21,7 +21,13 @@ from cortex_operator.contracts.clock import Clock
 from cortex_operator.contracts.enums import ActorKind, ApprovalSubject
 from cortex_operator.contracts.models import Approval, AppUser, AuditEntry, Bundle, Tenant
 from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate.approvals import ACTION_GRANTED, AUDIT_SUBJECT, MAX_APPROVAL_TTL, approver_problem
+from cortex_operator.gate.approvals import (
+    ACTION_GRANTED,
+    ACTION_VOIDED,
+    AUDIT_SUBJECT,
+    MAX_APPROVAL_TTL,
+    approver_problem,
+)
 from cortex_operator.gate.canonical import (
     BundleContent,
     BundleHash,
@@ -216,8 +222,14 @@ def _grant_problem(evidence: ApprovalEvidence, signer: GateSigner) -> str | None
     for e in signed:
         in_chain = any(c.seq == e.seq and c.entry_hash == e.entry_hash for c in chain)
         starts_before = chain[0].seq <= max(1, e.seq - 1)
-        if in_chain and starts_before:
-            return None
+        if not (in_chain and starts_before):
+            continue
+        # A void after the grant ends it, whatever the approval row says. Voids are signed, but any
+        # void entry counts: voiding only ever removes permission.
+        if any(c.seq > e.seq and c.action == ACTION_VOIDED and c.subject_kind == AUDIT_SUBJECT
+               and c.subject_id == approval.id for c in chain):
+            return "the audit log records a void of this approval after its grant"
+        return None
     return "the signed grant is not part of the intact chain"
 
 

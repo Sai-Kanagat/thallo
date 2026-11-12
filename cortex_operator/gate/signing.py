@@ -48,6 +48,18 @@ def grant_fields(approval: Approval) -> dict[str, Any]:
     }
 
 
+def void_fields(approval: Approval, reason: str) -> dict[str, Any]:
+    """What a void MAC covers: which approval, of what content, and why."""
+    return {
+        "action": "voided",
+        "approval_id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "bundle_id": approval.subject_id,
+        "content_hash": approval.content_hash,
+        "reason": reason,
+    }
+
+
 @dataclass(frozen=True)
 class GateSigner:
     key: bytes = field(repr=False)
@@ -76,4 +88,4 @@ class GateSigner:
         return isinstance(mac, str) and hmac.compare_digest(self.sign(fields), mac)
 
 
-__all__ = ["ENV_KEY", "GateKeyMissing", "GateSigner", "grant_fields"]
+__all__ = ["ENV_KEY", "GateKeyMissing", "GateSigner", "grant_fields", "void_fields"]
