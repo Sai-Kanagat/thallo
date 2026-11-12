@@ -28,9 +28,10 @@ from cortex_operator.contracts.states import (
     IllegalTransition,
     VariantState,
 )
-from cortex_operator.gate.canonical import BundleContent, BundleHash, LinkResolver, bundle_hash, resolved_links
-from cortex_operator.gate.canonical import outgoing_text as _outgoing
+from cortex_operator.gate.canonical import BundleContent, BundleHash, LinkResolver, Snapshot, build_snapshot
+from cortex_operator.gate.consent import consent_problem
 from cortex_operator.gate.repository import GateRepository, load_bundle
+from cortex_operator.gate.signing import GateSigner, grant_fields
 from cortex_operator.trust.audit import AuditDraft, AuditLog
 
 DEFAULT_APPROVAL_TTL = timedelta(days=7)
@@ -76,7 +77,8 @@ def approver_problem(user: AppUser | None, approver_id: str, tenant_id: str) -> 
     return None
 
 
-def _content_problems(content: BundleContent, now: datetime, resolver: LinkResolver) -> list[str]:
+def _content_problems(content: BundleContent, now: datetime, snapshot: Snapshot,
+                      non_links: frozenset[str]) -> list[str]:
     out: list[str] = list(content.foreign_rows())
     for vc in content.variants:
         for c in vc.claims:
@@ -89,14 +91,10 @@ def _content_problems(content: BundleContent, now: datetime, resolver: LinkResol
         for m in vc.media:
             if not m.matches_record:
                 out.append(f"media {m.media.id}: stored bytes differ from the recorded hash")
-            if m.media.consent_id is not None:
-                if m.consent is None or m.consent.id != m.media.consent_id:
-                    out.append(f"media {m.media.id}: consent record missing")
-                elif m.consent.withdrawn_at is not None and m.consent.withdrawn_at <= now:
-                    out.append(f"media {m.media.id}: consent withdrawn")
-        for url, dest in resolved_links(_outgoing(vc.variant), resolver):
-            if dest is None:
-                out.append(f"link {url} does not resolve; the reviewer cannot see where it goes")
+            if problem := consent_problem(m, now):
+                out.append(problem[1])
+        out += [f"link {url} does not resolve; the reviewer cannot see where it goes"
+                for url in snapshot.unresolved(vc.variant.id, non_links)]
     return out
 
 
@@ -115,8 +113,8 @@ def _void_drafts(approvals: Sequence[Approval], *, reason: str, actor: Actor | A
 
 def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | None, verifier: SessionVerifier,
                    shown_hash: str, method: ApprovalMethod, seconds_on_screen: float, clock: Clock, audit: AuditLog,
-                   resolver: LinkResolver, prior_approvals: Sequence[Approval] = (),
-                   ttl: timedelta = DEFAULT_APPROVAL_TTL) -> GateChange:
+                   resolver: LinkResolver, signer: GateSigner, non_links: frozenset[str] = frozenset(),
+                   prior_approvals: Sequence[Approval] = (), ttl: timedelta = DEFAULT_APPROVAL_TTL) -> GateChange:
     """A human approves exactly what they saw. Raises HumanOnlyViolation or ApprovalRefused.
     Any earlier live approval of the same bundle is voided in the same change."""
     bundle = content.bundle
@@ -138,10 +136,13 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
             VARIANT.check(vc.variant.state, VariantState.APPROVED)
     except IllegalTransition as exc:
         raise ApprovalRefused(f"not in review: {exc}") from exc
+    if not isinstance(signer, GateSigner):
+        raise ApprovalRefused("no gate signing key: approvals cannot be signed")
     now = clock.now()
-    if problems := _content_problems(content, now, resolver):
+    snapshot = build_snapshot(content, resolver)  # one resolution for checks and hash
+    if problems := _content_problems(content, now, snapshot, frozenset(non_links)):
         raise ApprovalRefused("; ".join(problems))
-    hashed = bundle_hash(content, resolver)
+    hashed = snapshot.hash
     if hashed.root != shown_hash:
         raise ApprovalRefused("the bundle changed after it was shown; show it again")
     canary = any(vc.variant.is_canary for vc in content.variants)
@@ -161,6 +162,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
         "approved_at": approval.approved_at.isoformat(),
         "expires_at": approval.expires_at.isoformat(),
         "canary": canary,
+        "mac": signer.sign(grant_fields(approval)),
     }))
     return GateChange(
         tenant_id=bundle.tenant_id,
@@ -177,7 +179,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
 
 def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id: str, actor: Actor,
                              verifier: SessionVerifier, shown_hash: str, method: ApprovalMethod,
-                             seconds_on_screen: float, clock: Clock, audit: AuditLog,
+                             seconds_on_screen: float, clock: Clock, audit: AuditLog, signer: GateSigner,
                              ttl: timedelta = DEFAULT_APPROVAL_TTL) -> GateChange:
     """The approval entry point for WP-09. Loads through the same path as `check_publish`."""
     bundle = repo.get_bundle(tenant_id, bundle_id)
@@ -187,7 +189,8 @@ def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id:
     approver = repo.get_user(tenant_id, actor.id)
     return approve_bundle(content, actor=actor, approver=approver, verifier=verifier, shown_hash=shown_hash,
                           method=method, seconds_on_screen=seconds_on_screen, clock=clock, audit=audit,
-                          resolver=lambda url: repo.resolve_link(tenant_id, url),
+                          resolver=lambda url: repo.resolve_link(tenant_id, url), signer=signer,
+                          non_links=frozenset(repo.non_link_allowlist(tenant_id)),
                           prior_approvals=tuple(repo.get_approvals(tenant_id, bundle_id)), ttl=ttl)
 
 

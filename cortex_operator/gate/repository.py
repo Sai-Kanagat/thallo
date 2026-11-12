@@ -5,7 +5,7 @@ re-checks tenant ids itself and never trusts the repository to have filtered.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from typing import Protocol
 
 from cortex_operator.contracts.models import (
@@ -59,6 +59,18 @@ class GateRepository(Protocol):
 
     def get_audit_entries(self, tenant_id: str, subject_kind: str, subject_id: str) -> Sequence[AuditEntry]:
         """Audit entries about one subject, for example ("approval", approval_id)."""
+        ...
+
+    def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:
+        """Every audit entry with seq >= from_seq, in seq order, through the current head."""
+        ...
+
+    def audit_anchor(self, tenant_id: str) -> tuple[int, str] | None:
+        """The last (seq, entry_hash) recorded outside the database by WP-20, or None."""
+        ...
+
+    def non_link_allowlist(self, tenant_id: str) -> Collection[str]:
+        """Tokens the tenant vouched are not links (for example a product name with a dot)."""
         ...
 
     def resolve_link(self, tenant_id: str, url: str) -> str | None:

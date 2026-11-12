@@ -26,6 +26,7 @@ from cortex_operator.gate.canonical import (
     VariantContent,
     bundle_hash,
     canonical_text,
+    find_unresolved_links,
 )
 from cortex_operator.gate.decision import (
     ApprovalEvidence,
@@ -38,8 +39,13 @@ from cortex_operator.gate.decision import (
 )
 from cortex_operator.gate.legacy import Gate, content_hash
 from cortex_operator.gate.repository import GateRepository, MediaUnreadable, load_bundle
+from cortex_operator.gate.signing import ENV_KEY, GateKeyMissing, GateSigner
 
 __all__ = [
+    "ENV_KEY",
+    "GateKeyMissing",
+    "GateSigner",
+    "find_unresolved_links",
     "APPROVER_ROLES",
     "DEFAULT_APPROVAL_TTL",
     "MAX_APPROVAL_TTL",

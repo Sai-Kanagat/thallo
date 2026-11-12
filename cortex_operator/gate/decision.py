@@ -12,7 +12,6 @@ difference (CANONICAL_FORM.md, "Publishing").
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -29,14 +28,15 @@ from cortex_operator.gate.canonical import (
     LinkResolver,
     PublishPayload,
     VariantContent,
-    bundle_hash,
+    build_snapshot,
     claim_slots,
     has_unrendered_slot,
     outgoing_text,
-    publish_payload,
 )
+from cortex_operator.gate.consent import consent_problem
 from cortex_operator.gate.repository import GateRepository, MediaUnreadable, load_bundle
-from cortex_operator.trust.audit import compute_entry_hash
+from cortex_operator.gate.signing import GateKeyMissing, GateSigner, grant_fields
+from cortex_operator.trust.audit import compute_entry_hash, verify_segment
 
 
 class BlockReason(StrEnum):
@@ -59,6 +59,9 @@ class BlockReason(StrEnum):
     MEDIA_UNREADABLE = "media_unreadable"
     CONSENT_MISSING = "consent_missing"
     CONSENT_WITHDRAWN = "consent_withdrawn"
+    CONSENT_SCOPE = "consent_scope"
+    GATE_KEY_MISSING = "gate_key_missing"
+    PAYLOAD_MISMATCH = "payload_mismatch"
     CLAIM_NOT_VERIFIED = "claim_not_verified"
     CLAIM_EXPIRED = "claim_expired"
     CLAIM_NO_EVIDENCE = "claim_no_evidence"
@@ -103,6 +106,8 @@ class ApprovalEvidence:
     approval: Approval
     approver: AppUser | None
     audit_entries: tuple[AuditEntry, ...] = field(default_factory=tuple)
+    chain: tuple[AuditEntry, ...] = field(default_factory=tuple)  # from before the grant through the head
+    anchor: tuple[int, str] | None = None  # recorded outside the database (WP-20)
 
 
 @dataclass(frozen=True)
@@ -176,28 +181,48 @@ def _media_blocks(vc: VariantContent, now: datetime) -> list[Block]:
         if not m.matches_record:
             out.append(Block(BlockReason.MEDIA_BYTES_MISMATCH,
                              f"media {m.media.id}: stored bytes differ from the recorded hash"))
-        if m.media.consent_id is None:
-            continue
-        if m.consent is None or m.consent.id != m.media.consent_id:
-            out.append(Block(BlockReason.CONSENT_MISSING, f"media {m.media.id}: consent record missing"))
-        elif m.consent.withdrawn_at is not None and m.consent.withdrawn_at <= now:
-            out.append(Block(BlockReason.CONSENT_WITHDRAWN, f"media {m.media.id}: consent withdrawn"))
+        if problem := consent_problem(m, now):
+            out.append(Block(BlockReason(problem[0]), problem[1]))
     return out
 
 
-def _grant_recorded(approval: Approval, entries: Sequence[AuditEntry]) -> bool:
-    for e in entries:
-        if (e.action == ACTION_GRANTED and e.tenant_id == approval.tenant_id and e.subject_kind == AUDIT_SUBJECT
-                and e.subject_id == approval.id and e.actor_kind is ActorKind.HUMAN
-                and e.actor_id == approval.approver_id
-                and e.payload.get("content_hash") == approval.content_hash
-                and e.payload.get("bundle_id") == approval.subject_id
-                and compute_entry_hash(e) == e.entry_hash):
-            return True
-    return False
+def _grant_problem(evidence: ApprovalEvidence, signer: GateSigner) -> str | None:
+    """None only if an `approval.granted` entry matches the row field for field, carries a valid
+    MAC made with the gate key, and sits inside an intact run of the chain through the head (and
+    the anchor, when one is recorded)."""
+    approval = evidence.approval
+    expected = grant_fields(approval)
+    candidates = [
+        e for e in evidence.audit_entries
+        if e.action == ACTION_GRANTED and e.tenant_id == approval.tenant_id and e.subject_kind == AUDIT_SUBJECT
+        and e.subject_id == approval.id and e.actor_kind is ActorKind.HUMAN and e.actor_id == approval.approver_id
+        and e.payload.get("content_hash") == approval.content_hash
+        and e.payload.get("bundle_id") == approval.subject_id
+        and e.payload.get("method") == approval.method.value
+        and e.payload.get("approved_at") == expected["approved_at"]
+        and e.payload.get("expires_at") == expected["expires_at"]
+        and e.payload.get("canary") is approval.canary
+        and compute_entry_hash(e) == e.entry_hash
+    ]
+    if not candidates:
+        return "no audited grant matches this approval row"
+    signed = [e for e in candidates if signer.verify(expected, e.payload.get("mac"))]
+    if not signed:
+        return "the grant is not signed with the gate key"
+    chain = evidence.chain
+    report = verify_segment(chain, tenant_id=approval.tenant_id, anchor=evidence.anchor)
+    if not report.ok:
+        return "the audit chain around the grant is broken: " + "; ".join(p.problem for p in report.problems)
+    for e in signed:
+        in_chain = any(c.seq == e.seq and c.entry_hash == e.entry_hash for c in chain)
+        starts_before = chain[0].seq <= max(1, e.seq - 1)
+        if in_chain and starts_before:
+            return None
+    return "the signed grant is not part of the intact chain"
 
 
-def _approval_blocks(evidence: ApprovalEvidence | None, bundle: Bundle, now: datetime) -> list[Block]:
+def _approval_blocks(evidence: ApprovalEvidence | None, bundle: Bundle, now: datetime,
+                     signer: GateSigner | None) -> list[Block]:
     if evidence is None:
         return [Block(BlockReason.NO_APPROVAL, "no approval for this bundle")]
     approval = evidence.approval
@@ -219,14 +244,16 @@ def _approval_blocks(evidence: ApprovalEvidence | None, bundle: Bundle, now: dat
         out.append(Block(BlockReason.APPROVAL_STALE, "the bundle's current root is not the one this approval signed"))
     if problem := approver_problem(evidence.approver, approval.approver_id, bundle.tenant_id):
         out.append(Block(BlockReason.APPROVER_NOT_ALLOWED, problem))
-    if not _grant_recorded(approval, evidence.audit_entries):
-        out.append(Block(BlockReason.NO_GRANT_RECORD, "no matching audited grant by the approver"))
+    if signer is None:
+        out.append(Block(BlockReason.GATE_KEY_MISSING, "no gate signing key: grants cannot be verified"))
+    elif problem := _grant_problem(evidence, signer):
+        out.append(Block(BlockReason.NO_GRANT_RECORD, problem))
     return out
 
 
 def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant: Tenant, variant_id: str,
-           now: datetime, system_paused: bool, resolver: LinkResolver,
-           spend: SpendCheck | None = None) -> GateDecision:
+           now: datetime, system_paused: bool, resolver: LinkResolver, signer: GateSigner | None,
+           non_links: frozenset[str] = frozenset(), spend: SpendCheck | None = None) -> GateDecision:
     """Allow only if nothing blocks. Every block found is returned, canary first. Never raises."""
     bundle = content.bundle
     approval = evidence.approval if evidence is not None else None
@@ -252,7 +279,7 @@ def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant:
     elif target.variant.state not in PUBLISHABLE_VARIANT_STATES:
         blocks.append(Block(BlockReason.VARIANT_NOT_PUBLISHABLE, f"variant is {target.variant.state.value}"))
 
-    blocks += _approval_blocks(evidence, bundle, now)
+    blocks += _approval_blocks(evidence, bundle, now, signer)
 
     for vc in content.variants:
         blocks += _claim_blocks(vc, now)
@@ -262,17 +289,20 @@ def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant:
 
     hashed: BundleHash | None = None
     payload: PublishPayload | None = None
+    unresolved_urls: list[str] = []
     try:
-        hashed = bundle_hash(content, resolver)
+        snapshot = build_snapshot(content, resolver)  # one memoised resolution for hash and payload
+        hashed = snapshot.hash
         if target is not None:
-            payload = publish_payload(target, resolver)
+            payload = snapshot.payload(variant_id)
+            unresolved_urls = snapshot.unresolved(variant_id, frozenset(non_links))
     except Exception as exc:  # a hashing failure blocks; it never passes and never raises
         blocks.append(Block(BlockReason.UNHASHABLE, f"{type(exc).__name__}: {exc}"))
     if hashed is not None and approval is not None and hashed.root != approval.content_hash:
         blocks.append(Block(BlockReason.CONTENT_CHANGED, "content no longer matches the approved hash"))
-    if payload is not None:
-        blocks += [Block(BlockReason.UNRESOLVED_LINK, f"link {url} does not resolve")
-                   for url, dest in payload.links if dest is None]
+    if payload is not None and (hashed is None or payload.variant_hash != hashed.variants.get(variant_id)):
+        blocks.append(Block(BlockReason.PAYLOAD_MISMATCH, "the payload is not the content that was hashed"))
+    blocks += [Block(BlockReason.UNRESOLVED_LINK, f"link {url} does not resolve") for url in unresolved_urls]
 
     blocks += _spend_blocks(spend)
 
@@ -292,12 +322,19 @@ def _blocked(tenant_id: str, bundle_id: str, variant_id: str, approval_id: str |
 
 
 def check_publish(repo: GateRepository, *, tenant_id: str, bundle_id: str, variant_id: str,
-                  approval_id: str | None, clock: Clock, spend: SpendCheck | None = None) -> GateDecision:
+                  approval_id: str | None, clock: Clock, signer: GateSigner | None = None,
+                  spend: SpendCheck | None = None) -> GateDecision:
     """The one call a publisher makes before sending. Never raises; every failure is a block.
-    The global kill switch is read here from the repository and cannot be overridden."""
+    The global kill switch is read here from the repository and cannot be overridden. With no
+    `signer`, the gate key is read from THALLO_GATE_SIGNING_KEY; if it is missing, publish blocks."""
     def blocked(reason: BlockReason, detail: str) -> GateDecision:
         return _blocked(tenant_id, bundle_id, variant_id, approval_id, reason, detail)
 
+    if signer is None:
+        try:
+            signer = GateSigner.from_env()
+        except GateKeyMissing as exc:
+            return blocked(BlockReason.GATE_KEY_MISSING, str(exc))
     try:
         paused = repo.system_paused()
         tenant = repo.get_tenant(tenant_id)
@@ -308,9 +345,15 @@ def check_publish(repo: GateRepository, *, tenant_id: str, bundle_id: str, varia
         evidence: ApprovalEvidence | None = None
         approval = repo.get_approval(tenant_id, approval_id) if approval_id else None
         if approval is not None:
-            evidence = ApprovalEvidence(
-                approval=approval, approver=repo.get_user(tenant_id, approval.approver_id),
-                audit_entries=tuple(repo.get_audit_entries(tenant_id, AUDIT_SUBJECT, approval.id)))
+            entries = tuple(repo.get_audit_entries(tenant_id, AUDIT_SUBJECT, approval.id))
+            anchor = repo.audit_anchor(tenant_id)
+            chain: tuple[AuditEntry, ...] = ()
+            if entries:
+                start = min([e.seq for e in entries] + ([anchor[0]] if anchor else []))
+                chain = tuple(repo.get_audit_chain(tenant_id, max(1, start - 1)))
+            evidence = ApprovalEvidence(approval=approval, approver=repo.get_user(tenant_id, approval.approver_id),
+                                        audit_entries=entries, chain=chain, anchor=anchor)
+        non_links = frozenset(repo.non_link_allowlist(tenant_id))
         now = clock.now()
     except MediaUnreadable as exc:
         return blocked(BlockReason.MEDIA_UNREADABLE, str(exc))
@@ -318,7 +361,8 @@ def check_publish(repo: GateRepository, *, tenant_id: str, bundle_id: str, varia
         return blocked(BlockReason.REPO_ERROR, f"{type(exc).__name__}: {exc}")
     try:
         return decide(content, evidence, tenant=tenant, variant_id=variant_id, now=now, system_paused=paused,
-                      resolver=lambda url: repo.resolve_link(tenant_id, url), spend=spend)
+                      resolver=lambda url: repo.resolve_link(tenant_id, url), signer=signer,
+                      non_links=non_links, spend=spend)
     except Exception as exc:  # belt and braces: decide does not raise, but if it ever does, block
         return blocked(BlockReason.UNHASHABLE, f"{type(exc).__name__}: {exc}")
 

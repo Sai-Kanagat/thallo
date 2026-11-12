@@ -173,6 +173,37 @@ def verify_chain(entries: Sequence[AuditEntry], *, tenant_id: str,
     return ChainReport(ok=not problems, problems=tuple(problems), head_seq=head_seq, head_hash=head_hash)
 
 
+def verify_segment(entries: Sequence[AuditEntry], *, tenant_id: str,
+                   anchor: tuple[int, str] | None = None) -> ChainReport:
+    """Check a run of entries that ends at the head but may start after seq 1: contiguous seqs,
+    each hash intact, each linked to the one before. The first entry's own link is checked only
+    when it is seq 1. With an anchor, the anchored entry must be in the run with that hash."""
+    problems: list[ChainProblem] = []
+    prev: AuditEntry | None = None
+    for e in entries:
+        if e.tenant_id != tenant_id:
+            problems.append(ChainProblem(e.seq, "entry belongs to another tenant"))
+        if compute_entry_hash(e) != e.entry_hash:
+            problems.append(ChainProblem(e.seq, "entry hash does not match its contents: edited"))
+        if prev is None:
+            if e.seq == 1 and e.prev_hash is not None:
+                problems.append(ChainProblem(e.seq, "first entry has a prev_hash"))
+        else:
+            if e.seq != prev.seq + 1:
+                problems.append(ChainProblem(e.seq, f"expected seq {prev.seq + 1}"))
+            if e.prev_hash != prev.entry_hash:
+                problems.append(ChainProblem(e.seq, "prev_hash does not match the entry before it"))
+        prev = e
+    if anchor is not None:
+        match = next((e for e in entries if e.seq == anchor[0]), None)
+        if match is None:
+            problems.append(ChainProblem(anchor[0], "anchored entry is not in the run: truncated or out of range"))
+        elif match.entry_hash != anchor[1]:
+            problems.append(ChainProblem(anchor[0], "anchored entry hash differs: history was rewritten"))
+    return ChainReport(ok=not problems and bool(entries), problems=tuple(problems),
+                       head_seq=prev.seq if prev else 0, head_hash=prev.entry_hash if prev else None)
+
+
 # ---------------------------------------------------------------- the log
 
 @dataclass(frozen=True)
@@ -239,5 +270,5 @@ class AuditLog:
 
 __all__ = [
     "AuditConflict", "AuditDraft", "AuditError", "AuditLog", "AuditStore", "ChainProblem", "ChainReport",
-    "InMemoryAuditStore", "compute_entry_hash", "verify_chain",
+    "InMemoryAuditStore", "compute_entry_hash", "verify_chain", "verify_segment",
 ]
