@@ -5,29 +5,46 @@
 -- Every foreign key between tenant tables is composite (tenant_id, x_id), so no row can
 -- point at another tenant's row. scripts/migrate.py wraps each file in one transaction.
 
+CREATE TABLE operator (
+  id uuid PRIMARY KEY,
+  created_at timestamptz NOT NULL,
+  name text NOT NULL
+);
+
+CREATE TABLE identity (
+  id uuid PRIMARY KEY,
+  created_at timestamptz NOT NULL,
+  email text NOT NULL UNIQUE,
+  display_name text NOT NULL
+);
+
 CREATE TABLE tenant (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
+  operator_id uuid NOT NULL REFERENCES operator(id),
   name text NOT NULL,
   slug text NOT NULL UNIQUE,
   default_language text NOT NULL CHECK (default_language IN ('en', 'it', 'ta')),
   region_code text NOT NULL,
+  currency text NOT NULL,
   timezone text NOT NULL DEFAULT 'UTC',
   paused boolean NOT NULL DEFAULT false
 );
+CREATE INDEX tenant_operator_id_idx ON tenant (operator_id);
 
 CREATE TABLE app_user (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
+  identity_id uuid NOT NULL REFERENCES identity(id),
   display_name text NOT NULL,
-  email text,
   role text NOT NULL CHECK (role IN ('operator', 'founder', 'approver', 'seller', 'staff')),
   language text CHECK (language IN ('en', 'it', 'ta')),
   UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, email)
+  UNIQUE (tenant_id, identity_id)
 );
 CREATE INDEX app_user_tenant_idx ON app_user (tenant_id);
+CREATE INDEX app_user_identity_id_idx ON app_user (identity_id);
 
 CREATE TABLE region_policy (
   id uuid PRIMARY KEY,
@@ -104,7 +121,7 @@ CREATE TABLE growth_model (
   play_id uuid,
   stages jsonb NOT NULL DEFAULT '[]'::jsonb,
   bottleneck text,
-  margin_per_won_eur numeric(14,4),
+  margin_per_won numeric(14,4),
   share_of_margin numeric(14,4) NOT NULL DEFAULT 0.30,
   allowable_cost_eur numeric(14,4),
   active boolean NOT NULL DEFAULT false,
@@ -230,6 +247,8 @@ CREATE TABLE claim (
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
   code text NOT NULL,
+  version bigint NOT NULL DEFAULT 1 CHECK (version >= 1),
+  supersedes_id uuid,
   kind text NOT NULL CHECK (kind IN ('number', 'price', 'date', 'name', 'quote', 'capability', 'offer')),
   state text NOT NULL DEFAULT 'candidate' CHECK (state IN ('candidate', 'verified', 'expired', 'voided', 'rejected')),
   value text NOT NULL,
@@ -243,11 +262,13 @@ CREATE TABLE claim (
   expires_at timestamptz,
   languages jsonb NOT NULL DEFAULT '{}'::jsonb,
   UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, code),
+  UNIQUE (tenant_id, code, version),
+  FOREIGN KEY (tenant_id, supersedes_id) REFERENCES claim (tenant_id, id),
   FOREIGN KEY (tenant_id, source_id) REFERENCES source (tenant_id, id),
   FOREIGN KEY (tenant_id, verified_by) REFERENCES app_user (tenant_id, id)
 );
 CREATE INDEX claim_tenant_idx ON claim (tenant_id);
+CREATE INDEX claim_supersedes_id_idx ON claim (supersedes_id);
 CREATE INDEX claim_source_id_idx ON claim (source_id);
 CREATE INDEX claim_verified_by_idx ON claim (verified_by);
 
@@ -462,6 +483,26 @@ CREATE TABLE check_result (
 CREATE INDEX check_result_tenant_idx ON check_result (tenant_id);
 CREATE INDEX check_result_variant_id_idx ON check_result (variant_id);
 
+CREATE TABLE plan_slot (
+  id uuid PRIMARY KEY,
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES tenant(id),
+  week_start date NOT NULL,
+  channel text NOT NULL CHECK (channel IN ('linkedin_personal', 'linkedin_company', 'facebook', 'instagram', 'google_business_profile', 'whatsapp', 'email', 'newsletter', 'website', 'youtube', 'search_ads', 'social_ads')),
+  pillar_id uuid,
+  stage text NOT NULL CHECK (stage IN ('awareness', 'consideration', 'conversion', 'retention')),
+  starts_at timestamptz NOT NULL,
+  reserved_for_experiment boolean NOT NULL DEFAULT false,
+  variant_id uuid,
+  state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'filled', 'benched', 'published', 'missed', 'killed')),
+  UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, pillar_id) REFERENCES pillar (tenant_id, id),
+  FOREIGN KEY (tenant_id, variant_id) REFERENCES variant (tenant_id, id)
+);
+CREATE INDEX plan_slot_tenant_idx ON plan_slot (tenant_id);
+CREATE INDEX plan_slot_pillar_id_idx ON plan_slot (pillar_id);
+CREATE INDEX plan_slot_variant_id_idx ON plan_slot (variant_id);
+
 CREATE TABLE approval (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
@@ -581,20 +622,36 @@ CREATE TABLE voice_rule (
 CREATE INDEX voice_rule_tenant_idx ON voice_rule (tenant_id);
 CREATE INDEX voice_rule_rule_proposal_id_idx ON voice_rule (rule_proposal_id);
 
+CREATE TABLE campaign (
+  id uuid PRIMARY KEY,
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES tenant(id),
+  platform text NOT NULL,
+  external_id text,
+  name text NOT NULL,
+  role text NOT NULL CHECK (role IN ('brand_search', 'high_intent_search', 'local_social', 'boost', 'retargeting', 'account_list')),
+  state text NOT NULL DEFAULT 'created_paused' CHECK (state IN ('created_paused', 'active', 'paused', 'archived')),
+  daily_budget numeric(14,4),
+  UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, platform, external_id)
+);
+CREATE INDEX campaign_tenant_idx ON campaign (tenant_id);
+
 CREATE TABLE ad (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
+  campaign_id uuid NOT NULL,
   variant_id uuid,
   platform text NOT NULL,
-  campaign text NOT NULL,
   external_id text,
   state text NOT NULL DEFAULT 'created_paused' CHECK (state IN ('created_paused', 'active', 'paused', 'archived')),
-  daily_budget_eur numeric(14,4),
   UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, campaign_id) REFERENCES campaign (tenant_id, id),
   FOREIGN KEY (tenant_id, variant_id) REFERENCES variant (tenant_id, id)
 );
 CREATE INDEX ad_tenant_idx ON ad (tenant_id);
+CREATE INDEX ad_campaign_id_idx ON ad (campaign_id);
 CREATE INDEX ad_variant_id_idx ON ad (variant_id);
 
 CREATE TABLE tracked_link (
@@ -690,7 +747,8 @@ CREATE TABLE message (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
-  lead_id uuid NOT NULL,
+  person_id uuid NOT NULL,
+  lead_id uuid,
   kind text NOT NULL CHECK (kind IN ('acknowledgement', 'qualification', 'nurture', 'reminder', 'reply_draft')),
   channel text NOT NULL CHECK (channel IN ('whatsapp', 'email', 'sms')),
   state text NOT NULL DEFAULT 'drafted' CHECK (state IN ('drafted', 'queued', 'sent', 'delivered', 'failed', 'discarded')),
@@ -701,12 +759,14 @@ CREATE TABLE message (
   sent_by_user_id uuid,
   sent_at timestamptz,
   UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, person_id) REFERENCES person (tenant_id, id),
   FOREIGN KEY (tenant_id, lead_id) REFERENCES lead (tenant_id, id),
   FOREIGN KEY (tenant_id, template_id) REFERENCES message_template (tenant_id, id),
   FOREIGN KEY (tenant_id, template_approval_id) REFERENCES approval (tenant_id, id),
   FOREIGN KEY (tenant_id, sent_by_user_id) REFERENCES app_user (tenant_id, id)
 );
 CREATE INDEX message_tenant_idx ON message (tenant_id);
+CREATE INDEX message_person_id_idx ON message (person_id);
 CREATE INDEX message_lead_id_idx ON message (lead_id);
 CREATE INDEX message_template_id_idx ON message (template_id);
 CREATE INDEX message_template_approval_id_idx ON message (template_approval_id);
@@ -731,9 +791,9 @@ CREATE TABLE deal (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
-  booking_id uuid NOT NULL UNIQUE,
+  booking_id uuid UNIQUE,
   lead_id uuid NOT NULL,
-  value_eur numeric(14,4),
+  value numeric(14,4),
   UNIQUE (tenant_id, id),
   FOREIGN KEY (tenant_id, booking_id) REFERENCES booking (tenant_id, id),
   FOREIGN KEY (tenant_id, lead_id) REFERENCES lead (tenant_id, id)
@@ -748,7 +808,7 @@ CREATE TABLE outcome (
   tenant_id uuid NOT NULL REFERENCES tenant(id),
   deal_id uuid NOT NULL UNIQUE,
   kind text NOT NULL CHECK (kind IN ('won', 'lost')),
-  amount_eur numeric(14,4),
+  amount numeric(14,4),
   loss_reason text CHECK (loss_reason IN ('price', 'finance_refused', 'chose_competitor', 'no_budget', 'timing', 'no_response', 'not_a_fit', 'other')),
   recorded_by uuid NOT NULL,
   occurred_at timestamptz NOT NULL,
@@ -764,17 +824,20 @@ CREATE TABLE spend_snapshot (
   id uuid PRIMARY KEY,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
-  ad_id uuid NOT NULL,
+  campaign_id uuid NOT NULL,
+  ad_id uuid,
   day date NOT NULL,
-  spend_eur numeric(14,4) NOT NULL,
+  spend numeric(14,4) NOT NULL,
   impressions bigint,
   clicks bigint,
   pulled_at timestamptz NOT NULL,
   UNIQUE (tenant_id, id),
-  UNIQUE (ad_id, day),
+  UNIQUE (tenant_id, campaign_id, ad_id, day),
+  FOREIGN KEY (tenant_id, campaign_id) REFERENCES campaign (tenant_id, id),
   FOREIGN KEY (tenant_id, ad_id) REFERENCES ad (tenant_id, id)
 );
 CREATE INDEX spend_snapshot_tenant_idx ON spend_snapshot (tenant_id);
+CREATE INDEX spend_snapshot_campaign_id_idx ON spend_snapshot (campaign_id);
 CREATE INDEX spend_snapshot_ad_id_idx ON spend_snapshot (ad_id);
 
 CREATE TABLE spend_proposal (
@@ -782,9 +845,7 @@ CREATE TABLE spend_proposal (
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
   state text NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed', 'signed', 'declined', 'expired', 'applied', 'verified', 'apply_failed')),
-  platform text NOT NULL,
-  campaign text NOT NULL,
-  campaign_external_id text,
+  campaign_id uuid NOT NULL,
   ad_id uuid,
   from_daily numeric(14,4) NOT NULL,
   to_daily numeric(14,4) NOT NULL,
@@ -792,9 +853,11 @@ CREATE TABLE spend_proposal (
   evidence_window text NOT NULL,
   rule_fired text NOT NULL,
   UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, campaign_id) REFERENCES campaign (tenant_id, id),
   FOREIGN KEY (tenant_id, ad_id) REFERENCES ad (tenant_id, id)
 );
 CREATE INDEX spend_proposal_tenant_idx ON spend_proposal (tenant_id);
+CREATE INDEX spend_proposal_campaign_id_idx ON spend_proposal (campaign_id);
 CREATE INDEX spend_proposal_ad_id_idx ON spend_proposal (ad_id);
 
 CREATE TABLE autonomy_state (
@@ -892,11 +955,26 @@ CREATE TABLE event_log (
   actor_id text NOT NULL,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   occurred_at timestamptz NOT NULL,
-  delivered_at timestamptz,
   UNIQUE (tenant_id, id)
 );
 CREATE INDEX event_log_tenant_idx ON event_log (tenant_id);
 CREATE INDEX event_log_name_idx ON event_log (name);
+
+CREATE TABLE event_delivery (
+  id uuid PRIMARY KEY,
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES tenant(id),
+  event_id uuid NOT NULL,
+  consumer text NOT NULL,
+  attempts bigint NOT NULL DEFAULT 0,
+  delivered_at timestamptz,
+  last_error text,
+  UNIQUE (tenant_id, id),
+  UNIQUE (event_id, consumer),
+  FOREIGN KEY (tenant_id, event_id) REFERENCES event_log (tenant_id, id)
+);
+CREATE INDEX event_delivery_tenant_idx ON event_delivery (tenant_id);
+CREATE INDEX event_delivery_event_id_idx ON event_delivery (event_id);
 
 CREATE TABLE job (
   id uuid PRIMARY KEY,

@@ -1,6 +1,6 @@
 # Contracts (WP-00)
 
-Version 1.0.0, frozen 11 Nov 2026. Code lives in `cortex_operator/contracts/`. Every package builds against these files and none edits them.
+Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex_operator/contracts/`. Every package builds against these files and none edits them.
 
 ## What is frozen
 
@@ -10,14 +10,25 @@ Version 1.0.0, frozen 11 Nov 2026. Code lives in `cortex_operator/contracts/`. E
 | `ids.py` | UUIDv7 row ids (`new_id(clock)`), `Id` type, claim code pattern `C-0001` |
 | `enums.py` | Every closed vocabulary: 16 capabilities, connection modes, channels, languages (en, it, ta), claim kinds, media provenance, check layers, approval subjects and methods, rejection reasons, edit kinds, touch kinds, consent bases, lead routes, outcome and loss reasons, autonomy levels L0 to L4, human-only actions |
 | `actors.py` | `HumanActor`, `SystemActor`, `AgentActor`, `ActorRef`, the `SessionVerifier` protocol, and `require_human(actor, action, verifier=, tenant_id=)` for the nine human-only actions in BUILD_PLAN 2.8 (approve, verify a claim, sign spend, raise a trust level, sign a template, first reply, public reply, new campaign or audience, consent call). A `HumanActor` value proves nothing on its own; only the verifier does |
-| `states.py` | Eleven state machines with legal transitions: variant, bundle, claim, idea, lead, spend proposal, rule proposal, job, message, booking, ad. `LEGACY_STATUS` maps the original engine's `Status` |
-| `models.py` | One Pydantic model per table, 50 tables. Every entity in BUILD_PLAN 2.3 plus the shared ones (tenant, user, region policy, connection, channel account, message template, job, audit log, event log, cost ledger, autonomy state, prompt version, incident) |
+| `states.py` | Twelve state machines with legal transitions: variant, bundle, claim, idea, lead, spend proposal, rule proposal, job, message, booking, ad (also used by campaign), plan slot. `LEGACY_STATUS` maps the original engine's `Status` |
+| `models.py` | One Pydantic model per table, 56 tables. Every entity in BUILD_PLAN 2.3 plus the shared ones: operator and identity above tenants; tenant, user membership, region policy, connection, channel account, message template, campaign, plan slot, job, audit log, event log, event delivery, cost ledger, autonomy state, prompt version, incident |
 | `events.py` | 36 event names, one typed payload each, and the `Event` envelope. Events carry an `ActorRef`, never a session |
 | `connection.py` | The five-call provider contract, request and result types for all 16 capabilities, `check_request`, `check_cap`, `ConnectionChoice` |
 | `ddl.py` | Renders `db/migrations/0001_core.sql` from `models.py` |
 | `testing/` | `MockProvider` for every capability, sample requests, and `assert_provider_contract()` |
 
 ## Rules baked into the types
+
+- Money: every client-money column is in the tenant's `currency` (ISO 4217) and carries no currency suffix. Only our own provider costs (`cost_ledger.cost_eur`, `cost_cap_eur`) are in euros.
+- Identity: an `identity` is a login (one per email); an `app_user` is that identity's membership and role inside one tenant. A `tenant` belongs to an `operator`. The app role has no access to operator or identity; login and the console reach them through owner-run code.
+- Claims are append-only by version. A change writes a new row (version + 1, `supersedes_id`) and the old one goes to VOIDED, which is terminal, so the exact fact a published piece used is never overwritten.
+- `job` is the one table outside tenant row-level security: it is the cross-tenant queue. `job.payload` holds ids only, never client content. The worker sets `app.tenant_id` from `job.tenant_id` before touching tenant data.
+- `event_log` is append-only. Delivery state lives in `event_delivery`, one row per event per consumer.
+- A deal may exist without a booking (walk-in or phone sale). A lead can go CONTACTED to WON or LOST, and HELD back to BOOKED for a second meeting.
+- Spend is tracked per campaign (`campaign` table); `spend_snapshot.ad_id` is optional for campaign-level rows.
+- Messages belong to a person; `lead_id` is optional (newsletter, proof and webinar messages).
+- `plan_slot` is shared core: the planner owns its creation, but the publisher's bench, the review deck, measurement and trust all read and write it through the state machine.
+- Export and re-import (WP-21): import mints fresh ids. Imported approvals are historical records, never live, and must be re-granted.
 
 - A publish request needs an idempotency key, an approval id and the approved content hash.
 - A message send needs exactly one authority: a template approval plus the recipient's consent record, or the verified human sending it.
@@ -65,6 +76,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
 | 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 2.0.0 | 2026-11-12 | Breaking, from a Fable review before the first real database: tenant currency and no `_eur` on client money; operator and identity above tenants; job as a cross-tenant queue (0012); event_delivery replaces event_log.delivered_at; deal without booking plus lead CONTACTED to WON/LOST and HELD to BOOKED; campaign table; message.person_id; claim versioning with terminal VOIDED; plan_slot. Affects WP-01 (merged, updated), WP-02, WP-03 and WP-04 (merge main) |
 | 1.1.0 | 2026-11-11 | Additive, from WP-02 and WP-03 requests: `RunResult.status` and `task` for manual runs, `MediaProvenance.PERSON_RECORDING` and `PERSON_FILE`, `ClaimKind.OFFER`, `claim.rejected` event, `ClaimChangedPayload.voided_variant_ids`, optional foreign keys default to None |
 
 ## Migrations

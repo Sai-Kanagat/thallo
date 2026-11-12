@@ -17,7 +17,7 @@ import pytest
 from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
 from cortex_operator.contracts.enums import Language
 from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Tenant
+from cortex_operator.contracts.models import Operator, Tenant
 
 ROOT = Path(__file__).resolve().parents[2]
 URL = os.environ.get("DATABASE_URL")
@@ -84,7 +84,8 @@ def database(urls, clock):
 def make_tenant(database, name: str) -> Tenant:
     clock = database.clock
     clock.advance(seconds=1)
-    tenant = Tenant(id=new_id(clock), created_at=clock.now(), name=name,
+    op = database.create_operator(Operator(id=new_id(clock), created_at=clock.now(), name=f"op-{name}"))
+    tenant = Tenant(id=new_id(clock), created_at=clock.now(), name=name, operator_id=op.id, currency="EUR",
                     slug=f"{name.lower()}-{secrets.token_hex(3)}", default_language=Language.EN, region_code="IT")
     return database.create_tenant(tenant)
 

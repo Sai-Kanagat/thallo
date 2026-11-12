@@ -163,7 +163,9 @@ def test_privileged_url_is_refused(urls, clock):
 def test_every_table_has_a_full_policy(admin):
     assert audit_rls(admin) == []
     covered = {r[0] for r in admin.execute("SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'")}
-    assert {t.__table__ for t in TABLES} <= covered  # all 50 core tables
+    from cortex_operator.store.rls import NO_ACCESS, QUEUE
+
+    assert {t.__table__ for t in TABLES} - NO_ACCESS - QUEUE <= covered  # every tenant table
     assert {"engine_passport", "engine_taste", "engine_sealed"} <= covered
 
 

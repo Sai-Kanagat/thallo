@@ -14,6 +14,11 @@ If you are a worker, your brief is one file in `docs/packages/`. It carries your
 - Merge only when tests pass and a separate review finds no blocking bug. Gate, vault, publisher, messaging and API also need a security review.
 - After each wave, the fake-clock week must pass end to end.
 
+## Models (Sai, 12 Nov 2026; replaces BUILD_PLAN 4.1 "Models")
+- Opus is the default for every work package, worker and review.
+- Fable at low effort only for: contract changes and `db/migrations/0001`, drafting the Play A and Play B data in WP-15 (Opus writes the validation code), and bugs that cross three or more modules or a cross-package integration bug stuck for 30+ minutes.
+- Never use Fable for HTML generation or simple API wrappers.
+
 ## Contracts and CI
 - The frozen contracts are in `cortex_operator/contracts/`, described in `docs/contracts.md`. Read that file before writing code.
 - Additive schema changes go in your package's own migration. Breaking changes go through the lead (`docs/contracts.md`, "Changing a contract").
