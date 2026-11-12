@@ -160,6 +160,34 @@ def test_claim_fields_change_the_root(field, value):
     assert root(w.content()) != before
 
 
+@pytest.mark.parametrize("update", [{"version": 2}, {"supersedes_id": "019b8d62-7a80-7000-8000-0000000003aa"}])
+def test_claim_version_binds_the_root(update):
+    w = make_world()
+    before = root(w.content())
+    w.edit_claim(next(iter(w.claims)), **update)
+    assert root(w.content()) != before
+
+
+def test_a_new_claim_version_voids_the_approval():
+    """Contracts 2.0.0: a change writes a new claim row (version + 1) and voids the old one."""
+    from cortex_operator.contracts.states import ClaimState
+    from cortex_operator.gate import BlockReason, check_publish
+
+    w = make_world()
+    a = w.approve()
+    old_id = next(iter(w.claims))
+    old = w.claims[old_id]
+    new = old.model_copy(update={"id": "019b8d62-7a80-7000-8000-0000000003ab", "version": 2,
+                                 "supersedes_id": old.id})
+    w.claims[old_id] = old.model_copy(update={"state": ClaimState.VOIDED})
+    w.claims[new.id] = new
+    vid = next(iter(w.variants))
+    w.variant_claims[vid] = [new.id]
+    d = check_publish(w, tenant_id=w.tenant.id, bundle_id=w.bundle.id, variant_id=vid, approval_id=a.id,
+                      clock=w.clock, signer=w.signer)
+    assert not d.allowed and BlockReason.CONTENT_CHANGED in d.reasons
+
+
 def test_fields_outside_the_canonical_form_do_not_change_the_root():
     """Scheduling, state and the canary mark are not content. The canary mark especially must not
     leak through the hash the reviewer sees."""
@@ -231,4 +259,4 @@ def test_golden_root_is_stable():
     assert h.root == GOLDEN_ROOT, h.root
 
 
-GOLDEN_ROOT = "52b98741c988fb76b6433090db9c9525fcaab1915c97a9912ac564c030294e54"
+GOLDEN_ROOT = "a0236206b3659ab11604964c14a07b6b899529dc64184e4bff2767391eb914da"

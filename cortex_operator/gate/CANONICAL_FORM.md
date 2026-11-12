@@ -1,6 +1,6 @@
 # Canonical form for the bundle root hash (version 1)
 
-Code: `cortex_operator/gate/canonical.py`. BUILD_PLAN section 5, revision 4. The approval binds to the root defined here; any change to these rules changes every root, so once approvals are stored it needs a new `CANONICAL_VERSION`, new domain strings, and a lead decision. `tests/wp04_gate/test_canonical.py::test_golden_root_is_stable` pins one root so an accidental change fails CI. (Version 1 was extended with `consent_id` and `tracked_links` before any approval was stored.)
+Code: `cortex_operator/gate/canonical.py`. BUILD_PLAN section 5, revision 4. The approval binds to the root defined here; any change to these rules changes every root, so once approvals are stored it needs a new `CANONICAL_VERSION`, new domain strings, and a lead decision. `tests/wp04_gate/test_canonical.py::test_golden_root_is_stable` pins one root so an accidental change fails CI. (Version 1 was extended with `consent_id`, `tracked_links` and the claim `version` and `supersedes_id` before any approval was stored. A new claim version is a new row with a new id, so it always changes the root and voids the approval.)
 
 ## What the root covers
 
@@ -15,7 +15,7 @@ For every variant in the bundle:
 | `links` | every link in the outgoing text, in order of appearance, as `[url, destination]` |
 | `tracked_links` | every tracked link row whose `variant_id` is this variant, as `[slug, destination, whatsapp_code]`, sorted, duplicates removed |
 | `media` | one entry per file in position order: `position`, `sha256` of the bytes, `kind`, `mime` (lowercase), canonical `alt_text`, `disclosure_label`, `consent_id` |
-| `claims` | one entry per linked claim, sorted by code then id, duplicates removed: `id`, `code`, `value` (NFC), `unit`, `as_of` (ISO date), `evidence_sha256`, `wording` (canonical text per language) |
+| `claims` | one entry per linked claim, sorted by code then id, duplicates removed: `id`, `code`, `version`, `supersedes_id`, `value` (NFC), `unit`, `as_of` (ISO date), `evidence_sha256`, `wording` (canonical text per language) |
 
 Then the bundle: `tenant_id`, `bundle_id`, `rule_version`, and the sorted list of variant leaf hashes.
 

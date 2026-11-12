@@ -238,9 +238,10 @@ def make_world(clock: FakeClock | None = None) -> World:
     clock = clock or FakeClock(FAKE_EPOCH)
     now = clock.now()
     tenant = Tenant(id=ident(clock), created_at=now, name="Demo Bikes", slug=f"demo-{next(_counter)}",
-                    default_language=Language.IT, region_code="IT")
+                    default_language=Language.IT, region_code="IT", operator_id=ident(clock), currency="EUR")
     t = tenant.id
-    user = AppUser(id=ident(clock), created_at=now, tenant_id=t, display_name="Approver", role=UserRole.APPROVER)
+    user = AppUser(id=ident(clock), created_at=now, tenant_id=t, display_name="Approver", role=UserRole.APPROVER,
+                   identity_id=ident(clock))
     user_id = user.id
     bundle = Bundle(id=ident(clock), created_at=now, tenant_id=t, asset_id=ident(clock),
                     state=BundleState.IN_REVIEW, rule_version=3)

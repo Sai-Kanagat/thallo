@@ -346,6 +346,8 @@ def _claim_leaf(c: Claim) -> dict[str, Any]:
     return {
         "id": c.id,
         "code": c.code,
+        "version": c.version,
+        "supersedes_id": c.supersedes_id,
         "value": unicodedata.normalize("NFC", c.value),
         "unit": c.unit,
         "as_of": c.as_of.isoformat() if c.as_of else None,
