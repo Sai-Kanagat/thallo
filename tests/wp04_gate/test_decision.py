@@ -1,18 +1,31 @@
 """BUILD_PLAN Verification, gate tests: each case must block, with a reason."""
 from __future__ import annotations
 
+import dataclasses
 from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 
 from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate import BlockReason, SpendCheck, check_publish, decide, void_approval
+from cortex_operator.gate import ApprovalEvidence, BlockReason, SpendCheck, check_publish, void_bundle_approvals
+from cortex_operator.gate import decide as _decide
 from tests.wp04_gate.conftest import make_world
 
 
 def first_variant(world):
     return next(iter(world.variants))
+
+
+def evidence(world, approval):
+    """What check_publish would load for this approval, from `world`'s repository."""
+    return ApprovalEvidence(approval=approval, approver=world.users.get(approval.approver_id),
+                            audit_entries=tuple(world.get_audit_entries(approval.tenant_id, "approval", approval.id)))
+
+
+def decide(content, approval, *, world, **kw):
+    ev = evidence(world, approval) if approval is not None else None
+    return _decide(content, ev, system_paused=False, resolver=world.links.get, **kw)
 
 
 def publish(world, approval_id, variant_id=None, **kw):
@@ -127,8 +140,8 @@ def test_expired_approval_blocks(world):
 
 def test_voided_approval_blocks(world):
     a = world.approve()
-    world.approvals[a.id] = void_approval(a, reason="claim changed", actor=world.human(), clock=world.clock,
-                                          audit=world.audit)
+    world.apply(void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="claim changed",
+                                      actor=world.human(), clock=world.clock, audit=world.audit))
     assert_blocked(publish(world, a.id), BlockReason.APPROVAL_VOIDED)
 
 
@@ -185,7 +198,7 @@ def test_canary_refused_even_with_every_other_input_wrong_or_right(world):
     for approval in (a, None):
         for paused in (True, False):
             tenant = world.tenant.model_copy(update={"paused": paused})
-            d = decide(content, approval, tenant=tenant, variant_id=vid, now=world.clock.now())
+            d = decide(content, approval, tenant=tenant, variant_id=vid, now=world.clock.now(), world=world)
             assert_blocked(d, BlockReason.CANARY)
 
 
@@ -226,7 +239,8 @@ def test_paused_brand_blocks(world):
 
 def test_system_kill_switch_blocks(world):
     a = world.approve()
-    assert_blocked(publish(world, a.id, system_paused=True), BlockReason.SYSTEM_PAUSED)
+    world.paused_everywhere = True
+    assert_blocked(publish(world, a.id), BlockReason.SYSTEM_PAUSED)
 
 
 def test_approval_cannot_be_reused_for_a_different_bundle(world):
@@ -234,10 +248,10 @@ def test_approval_cannot_be_reused_for_a_different_bundle(world):
     a = world.approve()
     content = world.content()
     clone = content.bundle.model_copy(update={"id": world.tenant.id[:-1] + "0"})  # another valid id
-    variants = tuple(type(vc)(variant=vc.variant.model_copy(update={"bundle_id": clone.id}), media=vc.media,
-                              claims=vc.claims) for vc in content.variants)
+    variants = tuple(dataclasses.replace(vc, variant=vc.variant.model_copy(update={"bundle_id": clone.id}))
+                     for vc in content.variants)
     other = type(content)(bundle=clone, variants=variants)
-    d = decide(other, a, tenant=world.tenant, variant_id=variants[0].variant.id, now=world.clock.now())
+    d = decide(other, a, tenant=world.tenant, variant_id=variants[0].variant.id, now=world.clock.now(), world=world)
     assert_blocked(d, BlockReason.APPROVAL_WRONG_SUBJECT)
     assert BlockReason.CONTENT_CHANGED in d.reasons  # the root binds the bundle id as well
 
@@ -253,7 +267,7 @@ def test_approval_cannot_be_reused_for_a_different_tenant(world):
     assert_blocked(d, BlockReason.NO_APPROVAL)
     # And if a faulty repository did return it, the decision itself refuses it.
     d = decide(other.content(), a, tenant=other.tenant, variant_id=next(iter(other.variants)),
-               now=other.clock.now())
+               now=other.clock.now(), world=world)
     assert_blocked(d, BlockReason.APPROVAL_WRONG_TENANT)
     assert BlockReason.APPROVAL_WRONG_SUBJECT in d.reasons and BlockReason.CONTENT_CHANGED in d.reasons
 

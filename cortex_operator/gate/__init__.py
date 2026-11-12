@@ -1,54 +1,66 @@
 """The gate. Every outbound action passes here. Nothing else may call a publisher.
 
 `legacy` keeps the original engine's Gate and content_hash working until WP-08 ports the
-publisher. The bundle gate (WP-04): `canonical` (root hash, see CANONICAL_FORM.md),
-`approvals` (human-only, hash-bound, expiring) and `decision` (the publish-time check).
+publisher. The bundle gate (WP-04): `canonical` (root hash and payload, see CANONICAL_FORM.md),
+`repository` (what the gate reads, one loader for approval and publish), `approvals`
+(human-only, hash-bound, expiring, returned as one transaction, see AUDIT.md) and `decision`
+(the publish-time check).
 """
 from cortex_operator.gate.approvals import (
+    APPROVER_ROLES,
     DEFAULT_APPROVAL_TTL,
     MAX_APPROVAL_TTL,
     ApprovalRefused,
-    Granted,
+    GateChange,
     approve_bundle,
+    approve_bundle_from_repo,
     is_expired,
-    void_approval,
+    void_bundle_approvals,
 )
 from cortex_operator.gate.canonical import (
     BundleContent,
     BundleHash,
     MediaItem,
+    PayloadMedia,
+    PublishPayload,
     VariantContent,
     bundle_hash,
     canonical_text,
 )
 from cortex_operator.gate.decision import (
+    ApprovalEvidence,
     Block,
     BlockReason,
     GateDecision,
-    GateRepository,
     SpendCheck,
     check_publish,
     decide,
-    load_bundle,
 )
 from cortex_operator.gate.legacy import Gate, content_hash
+from cortex_operator.gate.repository import GateRepository, MediaUnreadable, load_bundle
 
 __all__ = [
+    "APPROVER_ROLES",
     "DEFAULT_APPROVAL_TTL",
     "MAX_APPROVAL_TTL",
+    "ApprovalEvidence",
     "ApprovalRefused",
     "Block",
     "BlockReason",
     "BundleContent",
     "BundleHash",
     "Gate",
+    "GateChange",
     "GateDecision",
     "GateRepository",
-    "Granted",
     "MediaItem",
+    "MediaUnreadable",
+    "PayloadMedia",
+    "PublishPayload",
     "SpendCheck",
     "VariantContent",
     "approve_bundle",
+    "approve_bundle_from_repo",
     "bundle_hash",
     "canonical_text",
     "check_publish",
@@ -56,5 +68,5 @@ __all__ = [
     "decide",
     "is_expired",
     "load_bundle",
-    "void_approval",
+    "void_bundle_approvals",
 ]
