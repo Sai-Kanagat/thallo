@@ -44,10 +44,10 @@ Detection works on a copy of the text after NFKC, with the ideographic and half-
 These are not links:
 
 - numbers, such as `1.200`, `12,5` or `1.200,50` (three dots or more is IPv4 and counts);
-- email addresses;
+- plain email addresses: nothing but a host after `@` (no `/`, `?` or `#`), and no dot-label run ending in a real TLD before it;
 - a run whose final label is a single character (`e.g.`, `a.m.`, `S.p.A.`);
-- a run whose final label is a common file extension that is not a real TLD: `pdf`, `md`, `js`, `ts`, `py`, `png`, `jpg`, `jpeg`, `gif`, `docx`, `xlsx`, `pptx`, `csv`, `txt`, in any case (`zip`, `mov` and other real TLDs still count);
-- prose with no space after a full stop: exactly two alphabetic words, the second capitalised (`ciao.Grazie`, `Dr.Rossi`), unless the second word is a common TLD (`com`, `net`, `org`, `info`, `biz`, `io`, `co`, `it`, `eu`, `uk`, `de`, `fr`, `es`, `app`, `dev`, `shop`, `me`).
+- a run whose final label is a common file extension that is not a real IANA TLD: `pdf`, `js`, `ts`, `png`, `jpg`, `jpeg`, `gif`, `docx`, `xlsx`, `pptx`, `csv`, `txt`, in any case. Real TLDs such as `md` (Moldova), `py` (Paraguay), `zip` and `mov` still count, so `README.md` blocks until the tenant vouches for it;
+- prose with no space after a full stop: exactly two alphabetic words, the second capitalised (`ciao.Grazie`, `Dr.Rossi`), unless the second word is a real TLD. Real here means any two-letter label, any `xn--` label, or a word on the embedded `GENERIC_TLDS` set in `canonical.py` (a working subset of the IANA list, not all of it).
 
 Each link is normalised: scheme and host lowercased, `:80` on http and `:443` on https dropped, an empty path becomes `/`. User info, path, query and fragment are kept byte for byte, with no percent decoding.
 
