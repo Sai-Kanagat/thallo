@@ -28,14 +28,24 @@ LinkResolver = Callable[[str], "str | None"]
 # Line breaks other than LF that some editors and platforms emit.
 _LINE_BREAKS = re.compile("\r\n|\r|\u0085| | ")
 _HSPACE_RUN = re.compile("[ \t]+")
-_URL = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
-# A host-like token with no scheme: labels joined by dots, ending in an alphabetic label of 2 to
-# 63 letters, optional port and path. Not preceded by a word character, @, dot, slash or colon,
-# so email domains and parts of longer tokens do not count.
-_HOSTLIKE = re.compile(
-    r"(?<![\w@./:-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:/[^\s<>\"]*)?(?![\w@-])",
-    re.IGNORECASE)
-_URL_TRAILING = ".,;:!?)]}'\""
+# ---- link detection (see CANONICAL_FORM.md, "Links"). Broad on purpose: fail closed.
+_DOTS = str.maketrans({"。": ".", "｡": ".", "．": "."})  # NFKC already maps U+FF0E
+_INVISIBLE = re.compile("[­\u200b‌‍⁠﻿]")
+_TOKEN_SPLIT = re.compile(r"[\s<>\"]+")
+_LEAD = "([{'\"*_«‘“¿¡"
+_TRAIL = ".,;:!?)]}'\"*_%»’”€$£"
+_SCHEME_IN = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_IPV4 = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
+_LABEL_RUN = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+_NUMBER = re.compile(r"[+-]?\d+(?:[.,]\d+)*")
+_EMAIL = re.compile(r"[^@/:]+@[^@/:]+")
+# Final labels that are common file extensions and are not real top-level domains. zip, mov and
+# others ARE real TLDs and stay links.
+FILE_EXTENSIONS = frozenset({"pdf", "md", "js", "ts", "py", "png", "jpg", "jpeg", "gif", "docx", "xlsx", "pptx",
+                             "csv", "txt"})
+# "word.Word" with no space is prose, unless the second word is one of these common TLDs.
+_PROSE_GUARD = frozenset({"com", "net", "org", "info", "biz", "io", "co", "it", "eu", "uk", "de", "fr", "es",
+                          "app", "dev", "shop", "me"})
 _SLOT = re.compile(r"\{\{\s*(C-\d{4,})\s*\}\}")
 _DEFAULT_PORTS = {"http": ":80", "https": ":443"}
 
@@ -101,24 +111,81 @@ def normalise_url(url: str) -> str:
     return f"{scheme}://{authority}{rest}"
 
 
+def link_key(token: str) -> str:
+    """How a token is compared with a tenant's non-link allowlist: NFKC, dots unified, no invisible
+    characters, case-folded."""
+    return _INVISIBLE.sub("", unicodedata.normalize("NFKC", token).translate(_DOTS)).casefold()
+
+
+def _strip(token: str) -> str:
+    prev = None
+    while token and token != prev:
+        prev = token
+        token = token.lstrip(_LEAD).rstrip(_TRAIL)
+    return token
+
+
+def _token_link(t: str) -> str | None:
+    """The normalised URL a token stands for, or None when it is plainly not a link."""
+    m = _SCHEME_IN.search(t)
+    if m:
+        return normalise_url(t[m.start():])
+    if t.startswith("//"):
+        return normalise_url("https:" + t)
+    if _EMAIL.fullmatch(t):
+        return None
+    if _IPV4.search(t) or t.lower().startswith("www."):
+        return normalise_url("https://" + t.lstrip("/:.-"))
+    run = _LABEL_RUN.search(t)
+    if run is None or (_NUMBER.fullmatch(t) and t.count(".") < 3):
+        return None
+    labels = run.group(0).split(".")
+    tld = labels[-1]
+    if len(tld) < 2 or tld.lower() in FILE_EXTENSIONS:
+        return None
+    prose = (len(labels) == 2 and run.group(0) == t and labels[0].isalpha() and tld.isalpha()
+             and tld[0].isupper() and tld[1:].islower() and tld.lower() not in _PROSE_GUARD)
+    if prose:
+        return None
+    return normalise_url("https://" + t[run.start():])
+
+
+def find_link_tokens(text: str) -> list[tuple[str, str]]:
+    """(token, normalised url) for every link in the text, in order of appearance."""
+    prepared = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text).translate(_DOTS))
+    out: list[tuple[str, str]] = []
+    for raw in _TOKEN_SPLIT.split(prepared):
+        t = _strip(raw)
+        if t and (url := _token_link(t)) is not None:
+            out.append((t, url))
+    return out
+
+
 def find_links(text: str) -> list[str]:
-    """Every link in the text, normalised, in order of appearance: http and https URLs, and
-    host-like tokens with no scheme (www.example.com/x, example.com/x), read as https.
-    Trailing sentence punctuation is removed."""
-    found: list[tuple[int, str]] = []
-    spans: list[tuple[int, int]] = []
-    for m in _URL.finditer(text):
-        raw = m.group(0).rstrip(_URL_TRAILING)
-        spans.append((m.start(), m.start() + len(raw)))
-        found.append((m.start(), normalise_url(raw)))
-    for m in _HOSTLIKE.finditer(text):
-        if any(a <= m.start() < b for a, b in spans):
-            continue
-        raw = m.group(0).rstrip(_URL_TRAILING)
-        if "." not in raw.split("/", 1)[0]:
-            continue
-        found.append((m.start(), normalise_url("https://" + raw)))
-    return [url for _, url in sorted(found)]
+    """Every link in the text, normalised, in order of appearance. Matches broadly: any scheme,
+    `//`, `www.`, IPv4, and any dot-separated label run (Unicode, full-width and ideographic dots
+    included), except numbers, email addresses, a final label shorter than two characters, a
+    final label that is a common file extension and not a real TLD, and "word.Word" prose."""
+    return [url for _, url in find_link_tokens(text)]
+
+
+class MemoResolver:
+    """Resolves each URL once and remembers the answer, so the hash and the payload can never see
+    two different destinations for the same link."""
+
+    def __init__(self, resolver: LinkResolver) -> None:
+        if resolver is None:
+            raise CanonicalFormError("a link resolver is required")
+        self._resolver = resolver
+        self._seen: dict[str, str | None] = {}
+
+    def __call__(self, url: str) -> str | None:
+        if url not in self._seen:
+            dest = self._resolver(url)
+            if dest is not None and not isinstance(dest, str):
+                raise CanonicalFormError(f"resolver returned {type(dest).__name__} for {url}")
+            self._seen[url] = dest
+        return self._seen[url]
 
 
 def resolved_links(text: str, resolver: LinkResolver) -> list[list[str | None]]:
@@ -130,6 +197,22 @@ def resolved_links(text: str, resolver: LinkResolver) -> list[list[str | None]]:
             raise CanonicalFormError(f"resolver returned {type(dest).__name__} for {url}")
         out.append([url, normalise_url(dest) if dest is not None else None])
     return out
+
+
+def _vouched(text: str, non_links: frozenset[str]) -> set[str]:
+    keys = {link_key(x) for x in non_links}
+    return {url for tok, url in find_link_tokens(text) if link_key(tok) in keys or link_key(url) in keys}
+
+
+def unresolved(text: str, links: list[list[str | None]], non_links: frozenset[str]) -> list[str]:
+    """Links that neither resolve nor are on the tenant's non-link allowlist."""
+    allowed = _vouched(text, non_links)
+    return [u for u, d in links if d is None and u not in allowed]  # type: ignore[misc]
+
+
+def find_unresolved_links(text: str, resolver: LinkResolver, non_links: frozenset[str] = frozenset()) -> list[str]:
+    """For early copy checks (WP-07): every link in `text` that would block approval and publish."""
+    return unresolved(text, resolved_links(text, MemoResolver(resolver)), non_links)
 
 
 # ---------------------------------------------------------------- content snapshot
@@ -311,32 +394,61 @@ def variant_hash(vc: VariantContent, resolver: LinkResolver) -> str:
     return _digest(VARIANT_DOMAIN, variant_leaf(vc, resolver))
 
 
-def bundle_hash(content: BundleContent, resolver: LinkResolver) -> BundleHash:
-    """The root the approval binds to. Variant order carries no meaning; media order does.
-    `resolver` is required: approval and publish must resolve links the same way, so both load
+@dataclass(frozen=True)
+class Snapshot:
+    """One resolution of a bundle: every leaf built once, with one memoised resolver. The root
+    hash and every publish payload derive from these same leaves."""
+
+    content: BundleContent
+    leaves: Mapping[str, Mapping[str, Any]]
+    hash: BundleHash
+
+    def payload(self, variant_id: str) -> PublishPayload:
+        vc = self.content.variant(variant_id)
+        if vc is None:
+            raise CanonicalFormError("variant is not in this snapshot")
+        return _payload_from_leaf(vc, self.leaves[variant_id])
+
+    def unresolved(self, variant_id: str, non_links: frozenset[str]) -> list[str]:
+        vc = self.content.variant(variant_id)
+        if vc is None:
+            return []
+        return unresolved(outgoing_text(vc.variant), list(self.leaves[variant_id]["links"]), non_links)
+
+
+def build_snapshot(content: BundleContent, resolver: LinkResolver) -> Snapshot:
+    """`resolver` is required: approval and publish must resolve links the same way, so both load
     through the repository (`load_bundle`) and pass `repo.resolve_link`."""
-    if resolver is None:
-        raise CanonicalFormError("a link resolver is required")
+    memo = resolver if isinstance(resolver, MemoResolver) else MemoResolver(resolver)
     if not content.variants:
         raise CanonicalFormError("a bundle with no variants has no root hash")
     ids = [vc.variant.id for vc in content.variants]
     if len(set(ids)) != len(ids):
         raise CanonicalFormError("a variant appears twice in the bundle")
-    leaves = {vc.variant.id: variant_hash(vc, resolver) for vc in content.variants}
+    leaves = {vc.variant.id: variant_leaf(vc, memo) for vc in content.variants}
+    hashes = {vid: _digest(VARIANT_DOMAIN, leaf) for vid, leaf in leaves.items()}
     b = content.bundle
     root = _digest(ROOT_DOMAIN, {
         "v": CANONICAL_VERSION,
         "tenant_id": b.tenant_id,
         "bundle_id": b.id,
         "rule_version": b.rule_version,
-        "variants": sorted(leaves.values()),
+        "variants": sorted(hashes.values()),
     })
-    return BundleHash(root=root, variants=leaves)
+    return Snapshot(content=content, leaves=leaves, hash=BundleHash(root=root, variants=hashes))
+
+
+def bundle_hash(content: BundleContent, resolver: LinkResolver) -> BundleHash:
+    """The root the approval binds to. Variant order carries no meaning; media order does."""
+    return build_snapshot(content, resolver).hash
 
 
 def publish_payload(vc: VariantContent, resolver: LinkResolver) -> PublishPayload:
     """The frozen payload for one variant, built from the same leaf that is hashed."""
-    leaf = variant_leaf(vc, resolver)
+    return _payload_from_leaf(vc, variant_leaf(vc, MemoResolver(resolver)))
+
+
+def _payload_from_leaf(vc: VariantContent, leaf: Mapping[str, Any]) -> PublishPayload:
     return PublishPayload(
         variant_id=leaf["variant_id"],
         variant_hash=_digest(VARIANT_DOMAIN, leaf),
@@ -355,8 +467,9 @@ def media_hashes(vc: VariantContent) -> tuple[str, ...]:
 
 
 __all__ = [
-    "CANONICAL_VERSION", "BundleContent", "BundleHash", "CanonicalFormError", "LinkResolver", "MediaItem",
-    "PayloadMedia", "PublishPayload", "VariantContent", "bundle_hash", "canonical_json", "canonical_text",
-    "claim_slots", "find_links", "has_unrendered_slot", "media_hashes", "normalise_url", "outgoing_text",
-    "publish_payload", "resolved_links", "sha256_bytes", "variant_hash", "variant_leaf",
+    "CANONICAL_VERSION", "FILE_EXTENSIONS", "BundleContent", "BundleHash", "CanonicalFormError", "LinkResolver",
+    "MediaItem", "MemoResolver", "PayloadMedia", "PublishPayload", "Snapshot", "VariantContent", "build_snapshot",
+    "bundle_hash", "canonical_json", "canonical_text", "claim_slots", "find_link_tokens", "find_links",
+    "find_unresolved_links", "has_unrendered_slot", "link_key", "media_hashes", "normalise_url", "outgoing_text",
+    "publish_payload", "resolved_links", "sha256_bytes", "unresolved", "variant_hash", "variant_leaf",
 ]
