@@ -19,6 +19,8 @@ from pydantic.fields import FieldInfo
 
 from cortex_operator.contracts.models import TABLES, Row
 
+TENANT_TABLES = frozenset(t.__table__ for t in TABLES if "tenant_id" in t.model_fields)
+
 HEADER = """-- 0001_core.sql: the frozen core schema (WP-00).
 -- GENERATED from cortex_operator/contracts/models.py. Do not edit by hand.
 -- Regenerate: python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql
@@ -131,7 +133,7 @@ def table_ddl(model: type[Row]) -> str:
         extra = _extra(field)
         if "fk" in extra:
             target = extra["fk"]
-            if col == "tenant_id" or target == "tenant" or not tenant_scoped:
+            if col == "tenant_id" or target not in TENANT_TABLES or not tenant_scoped:
                 parts.append(f"REFERENCES {target}(id)")
             else:
                 # Composite key: a row can only point at a row of its own tenant.

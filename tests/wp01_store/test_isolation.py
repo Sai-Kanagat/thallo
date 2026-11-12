@@ -163,7 +163,9 @@ def test_privileged_url_is_refused(urls, clock):
 def test_every_table_has_a_full_policy(admin):
     assert audit_rls(admin) == []
     covered = {r[0] for r in admin.execute("SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'")}
-    assert {t.__table__ for t in TABLES} <= covered  # all 50 core tables
+    from cortex_operator.store.rls import NO_ACCESS
+
+    assert {t.__table__ for t in TABLES} - NO_ACCESS <= covered  # every tenant table, job included
     assert {"engine_passport", "engine_taste", "engine_sealed"} <= covered
 
 
@@ -173,7 +175,7 @@ def test_audit_fails_for_a_table_without_a_policy(admin):
         admin.execute("CREATE TABLE zz_future (id uuid PRIMARY KEY, tenant_id uuid NOT NULL)")
         assert audit_rls(admin) == ["zz_future: row-level security not enabled",
                                     "zz_future: row-level security not forced (owner would bypass it)",
-                                    "zz_future: no policy for all commands"]
+                                    "zz_future: no tenant_isolation policy for all commands"]
         admin.execute("SELECT app_enable_tenant_rls('zz_future')")
         assert audit_rls(admin) == []
     assert audit_rls(admin) == []
@@ -183,4 +185,12 @@ def test_audit_fails_for_a_weak_policy(admin):
     with admin.transaction(force_rollback=True):
         admin.execute("DROP POLICY tenant_isolation ON person")
         admin.execute("CREATE POLICY tenant_isolation ON person USING (true) WITH CHECK (true)")
-        assert audit_rls(admin) == ["person: policy does not filter and check on app_current_tenant()"]
+        assert audit_rls(admin) == ["person: policy tenant_isolation for public does not filter and check on "
+                                    "app_current_tenant()"]
+
+
+def test_audit_fails_if_the_worker_policy_is_widened_to_the_app_role(admin):
+    with admin.transaction(force_rollback=True):
+        admin.execute("CREATE POLICY worker_queue_leak ON job FOR ALL TO cortex_app USING (true) WITH CHECK (true)")
+        assert audit_rls(admin) == ["job: policy worker_queue_leak for cortex_app does not filter and check on "
+                                    "app_current_tenant()"]

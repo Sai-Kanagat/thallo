@@ -24,9 +24,10 @@ def test_every_er_entity_has_a_table():
     assert len(names) == len(TABLES)
 
 
-def test_every_row_is_tenant_scoped_except_tenant():
+def test_every_row_is_tenant_scoped_except_the_layer_above():
+    above = {"tenant", "operator", "identity"}
     for t in TABLES:
-        if t is Tenant:
+        if t.__table__ in above:
             assert "tenant_id" not in t.model_fields
         else:
             assert issubclass(t, TenantRow), t.__table__
@@ -50,9 +51,13 @@ def test_model_written_rows_carry_model_and_prompt(table):
 def test_rows_refuse_naive_time_and_unknown_fields():
     with pytest.raises(ValidationError):
         Tenant(id=T, created_at=datetime(2026, 1, 1), name="x", slug="x", default_language="en",  # noqa: DTZ001
-               region_code="IT")
+               region_code="IT", currency="EUR", operator_id=ID)
     with pytest.raises(ValidationError):
-        Tenant(id=T, created_at=FAKE_EPOCH, name="x", slug="x", default_language="en", region_code="IT", ip="1")
+        Tenant(id=T, created_at=FAKE_EPOCH, name="x", slug="x", default_language="en", region_code="IT",
+               currency="EUR", operator_id=ID, ip="1")
+    with pytest.raises(ValidationError):  # currency must be ISO 4217
+        Tenant(id=T, created_at=FAKE_EPOCH, name="x", slug="x", default_language="en", region_code="IT",
+               currency="eur", operator_id=ID)
 
 
 def test_lead_fit_is_bounded():

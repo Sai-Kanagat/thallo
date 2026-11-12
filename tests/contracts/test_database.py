@@ -19,6 +19,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="DATABASE_URL unset: run scripts
 T = "0190f3a0-0000-7000-8000-000000000001"
 U = "0190f3a0-0000-7000-8000-000000000002"
 P = "0190f3a0-0000-7000-8000-000000000003"
+OP = "0190f3a0-0000-7000-8000-0000000000f0"
 
 
 @pytest.fixture(scope="module")
@@ -65,8 +66,9 @@ def test_model_columns_match_database(db):
 def test_constraints_hold(db):
     import psycopg
 
-    db.execute("INSERT INTO tenant (id, created_at, name, slug, default_language, region_code) "
-               "VALUES (%s, now(), 'Demo', 'demo', 'en', 'IT')", (T,))
+    db.execute("INSERT INTO operator (id, created_at, name) VALUES (%s, now(), 'Sai') ON CONFLICT DO NOTHING", (OP,))
+    db.execute("INSERT INTO tenant (id, created_at, operator_id, name, slug, default_language, region_code, currency) "
+               "VALUES (%s, now(), %s, 'Demo', 'demo', 'en', 'IT', 'EUR')", (T, OP))
     db.execute("INSERT INTO person (id, created_at, tenant_id) VALUES (%s, now(), %s)", (P, T))
     with pytest.raises(psycopg.errors.CheckViolation):
         db.execute("INSERT INTO lead (id, created_at, tenant_id, person_id, fit) VALUES (%s, now(), %s, %s, 101)",
@@ -96,8 +98,9 @@ def test_rows_cannot_point_at_another_tenant(db):
 
     t2, p2, lead = ("0190f3a0-0000-7000-8000-0000000000a1", "0190f3a0-0000-7000-8000-0000000000a2",
                     "0190f3a0-0000-7000-8000-0000000000a3")
-    db.execute("INSERT INTO tenant (id, created_at, name, slug, default_language, region_code) "
-               "VALUES (%s, now(), 'Other', 'other', 'it', 'IT') ON CONFLICT DO NOTHING", (t2,))
+    db.execute("INSERT INTO operator (id, created_at, name) VALUES (%s, now(), 'Sai') ON CONFLICT DO NOTHING", (OP,))
+    db.execute("INSERT INTO tenant (id, created_at, operator_id, name, slug, default_language, region_code, currency) "
+               "VALUES (%s, now(), %s, 'Other', 'other', 'it', 'IT', 'INR') ON CONFLICT DO NOTHING", (t2, OP))
     db.execute("INSERT INTO person (id, created_at, tenant_id) VALUES (%s, now(), %s) ON CONFLICT DO NOTHING",
                (p2, t2))
     with pytest.raises(psycopg.errors.ForeignKeyViolation):  # tenant A lead on tenant B's person

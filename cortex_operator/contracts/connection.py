@@ -93,7 +93,13 @@ class Result(_Frozen):
 
 
 class RunResult(_Frozen):
+    """status "pending_person": a manual connection prepared a task (copy pack, checklist,
+    click-to-chat link) and a person must act; `task` says what. The output is a placeholder until
+    the person confirms, and nothing downstream may treat it as done."""
+
     output: Result
+    status: Literal["done", "pending_person"] = "done"
+    task: str | None = None
     provenance: Provenance
     cost_eur: Decimal
     seconds: float = 0.0
@@ -344,7 +350,7 @@ def _money_keys(value: Any, path: str = "") -> list[str]:
 class AdsRequest(Request):
     """Money moves only through APPLY_SIGNED, carrying the exact signed numbers.
 
-    The provider applies `to_daily_eur` to `campaign_external_id` and nothing else. Free-form
+    The provider applies `to_daily` (in `currency`) to `campaign_external_id` and nothing else. Free-form
     `payload` may never carry a status, budget, bid, spend or schedule key at any depth, and every
     provider must itself force the paused status on create rather than trust the payload.
     """
@@ -357,7 +363,8 @@ class AdsRequest(Request):
     spend_proposal_id: Id | None = None
     approval_id: Id | None = None
     approved_content_hash: Sha256 | None = None
-    to_daily_eur: Decimal | None = Field(default=None, ge=0)
+    to_daily: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")  # the tenant's currency
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -367,11 +374,11 @@ class AdsRequest(Request):
             raise ValueError(f"payload may not set {bad}; spend moves only via APPLY_SIGNED")
         if self.action is AdsAction.APPLY_SIGNED:
             if not (self.spend_proposal_id and self.approval_id and self.approved_content_hash
-                    and self.to_daily_eur is not None and self.campaign_external_id):
+                    and self.to_daily is not None and self.currency and self.campaign_external_id):
                 raise ValueError("a spend change needs the signed proposal, its approval and hash, "
                                  "the campaign and the signed daily amount")
-        elif self.to_daily_eur is not None:
-            raise ValueError("to_daily_eur is only allowed with APPLY_SIGNED")
+        elif self.to_daily is not None:
+            raise ValueError("to_daily is only allowed with APPLY_SIGNED")
         return self
 
 
