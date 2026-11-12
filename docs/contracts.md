@@ -22,7 +22,7 @@ Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex
 - Money: every client-money column is in the tenant's `currency` (ISO 4217) and carries no currency suffix. Only our own provider costs (`cost_ledger.cost_eur`, `cost_cap_eur`) are in euros.
 - Identity: an `identity` is a login (one per email); an `app_user` is that identity's membership and role inside one tenant. A `tenant` belongs to an `operator`. The app role has no access to operator or identity; login and the console reach them through owner-run code.
 - Claims are append-only by version. A change writes a new row (version + 1, `supersedes_id`) and the old one goes to VOIDED, which is terminal, so the exact fact a published piece used is never overwritten.
-- `job` is the one table outside tenant row-level security: it is the cross-tenant queue. `job.payload` holds ids only, never client content. The worker sets `app.tenant_id` from `job.tenant_id` before touching tenant data.
+- `job` keeps tenant isolation for the app role. The single worker claims due jobs across tenants through its own role, `cortex_worker`, which can only read and update `job` (policy `worker_queue`, migration 0012). It then does the work as the app role with `app.tenant_id` set from `job.tenant_id`. `job.payload` holds ids only, never client content.
 - `event_log` is append-only. Delivery state lives in `event_delivery`, one row per event per consumer.
 - A deal may exist without a booking (walk-in or phone sale). A lead can go CONTACTED to WON or LOST, and HELD back to BOOKED for a second meeting.
 - Spend is tracked per campaign (`campaign` table); `spend_snapshot.ad_id` is optional for campaign-level rows.
@@ -76,6 +76,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
 | 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 2.1.0 | 2026-11-12 | From WP-03 and WP-04 reviews: `ConsentScope` closed enum on `consent.scope`, `Media.has_voice_track`, `Claim.expiry_reason` |
 | 2.0.0 | 2026-11-12 | Breaking, from a Fable review before the first real database: tenant currency and no `_eur` on client money; operator and identity above tenants; job as a cross-tenant queue (0012); event_delivery replaces event_log.delivered_at; deal without booking plus lead CONTACTED to WON/LOST and HELD to BOOKED; campaign table; message.person_id; claim versioning with terminal VOIDED; plan_slot. Affects WP-01 (merged, updated), WP-02, WP-03 and WP-04 (merge main) |
 | 1.1.0 | 2026-11-11 | Additive, from WP-02 and WP-03 requests: `RunResult.status` and `task` for manual runs, `MediaProvenance.PERSON_RECORDING` and `PERSON_FILE`, `ClaimKind.OFFER`, `claim.rejected` event, `ClaimChangedPayload.voided_variant_ids`, optional foreign keys default to None |
 
