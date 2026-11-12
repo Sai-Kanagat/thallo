@@ -89,11 +89,15 @@ class Secret:
 # "mysecretvalue", "accesstoken" and "dbpassword" are caught. Short, ambiguous stems would hit
 # "keywords" or "author", so they match whole tokens only.
 _STRONG_STEMS = ("secret", "token", "password", "passwd", "credential", "apikey", "privatekey", "accesskey",
-                 "signingkey", "bearer", "authorization", "webhook")
+                 "signingkey", "bearer", "authorization", "webhook", "passphrase", "cookie", "signature")
 _TOKEN_STEMS = frozenset({"key", "auth", "pwd", "dsn"})
-# Counting words that merely contain "token": removed before the stem check.
-_BENIGN = ("maxtokens", "maxoutputtokens", "outputtokens", "inputtokens", "numtokens", "tokensper", "tokencount",
-           "tokenlimit", "tokenbudget", "contexttokens")
+# Counting settings that merely contain "token". A name is exempt only when its whole token list
+# equals one of these phrases, so a benign word can never hide part of a secret stem.
+_BENIGN_NAMES = frozenset({
+    ("max", "tokens"), ("max", "tokens", "per", "day"), ("max", "tokens", "per", "request"),
+    ("max", "output", "tokens"), ("max", "input", "tokens"), ("input", "tokens"), ("output", "tokens"),
+    ("num", "tokens"), ("context", "tokens"), ("token", "count"), ("token", "limit"), ("token", "budget"),
+})
 VAULT_REF = re.compile(r"^sec_[0-9a-f]{32}$")  # the shape Vault.put issues
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _VALUE_PATTERNS = (
@@ -118,9 +122,9 @@ def _entropy(text: str) -> float:
 
 def looks_secret_key(name: str) -> bool:
     tokens = [t for t in re.split(r"[^A-Za-z0-9]+", _CAMEL.sub("_", name).lower()) if t]
+    if tuple(tokens) in _BENIGN_NAMES:
+        return False
     flat = "".join(tokens)
-    for word in _BENIGN:
-        flat = flat.replace(word, "")
     return any(stem in flat for stem in _STRONG_STEMS) or any(t in _TOKEN_STEMS for t in tokens)
 
 

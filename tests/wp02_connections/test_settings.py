@@ -47,6 +47,31 @@ def test_ordinary_settings_pass(registry, providers, settings):
     registry.add(T1, TEXT, "a", settings=settings)
 
 
+# Every name any earlier version of the detector caught. This list may only grow.
+EVER_CAUGHT = [
+    "secret", "secrets", "token", "tokens", "password", "passwd", "pwd", "key", "apikey", "accesskey", "privatekey",
+    "signingkey", "credential", "credentials", "authorization", "auth", "bearer", "dsn", "webhook", "webhooks",
+    "signature", "cookie", "passphrase", "api_key", "private_key", "access_key", "signing_key", "client_secret",
+    "auth_token", "db_password", "x-api-key", "Authorization", "session_cookie", "gpg_passphrase",
+    "request_signature", "webhook_url",
+]
+
+
+@pytest.mark.parametrize("name", EVER_CAUGHT)
+def test_no_name_ever_caught_is_dropped(registry, providers, name):
+    register(providers, "a")
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "a", settings={name: "x"})
+
+
+@pytest.mark.parametrize("name", ["max_tokens_secret", "tokensecret", "maxtokenspassword", "max_tokens_per_day_key",
+                                  "tokenlimitsecret", "outputtokensapikey"])
+def test_a_benign_word_cannot_hide_part_of_a_secret_stem(registry, providers, name):
+    register(providers, "a")
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "a", settings={name: "x"})
+
+
 VAULT_REF = "sec_" + "0123456789abcdef" * 2
 
 
