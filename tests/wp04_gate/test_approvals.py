@@ -15,7 +15,7 @@ from cortex_operator.gate import (
     approve_bundle,
     bundle_hash,
     is_expired,
-    void_approval,
+    void_bundle_approvals,
 )
 from tests.wp04_gate.conftest import make_world
 
@@ -24,14 +24,14 @@ def call(world, **over):
     content = over.pop("content", None) or world.content()
     kw = dict(actor=world.human(), verifier=world.verifier(), shown_hash=bundle_hash(content, world.links.get).root,
               method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=37.5, clock=world.clock, audit=world.audit,
-              resolver=world.links.get)
+              resolver=world.links.get, approver=world.users[world.user_id])
     kw.update(over)
     return approve_bundle(content, **kw)
 
 
 def test_grant_is_bound_to_the_root_and_expires(world):
     g = call(world)
-    a = g.approval
+    a = g.new_approval
     assert a.content_hash == g.bundle_hash.root and a.subject_kind is ApprovalSubject.BUNDLE
     assert a.subject_id == world.bundle.id and a.tenant_id == world.tenant.id and a.approver_id == world.user_id
     assert a.method is ApprovalMethod.PER_BUNDLE and a.seconds_on_screen == 37.5
@@ -110,15 +110,21 @@ def test_approver_must_be_a_user_id(world):
 
 def test_canary_bundle_can_be_approved_and_is_marked(world):
     world.edit_variant(next(iter(world.variants)), is_canary=True)
-    assert call(world).approval.canary is True
+    assert call(world).new_approval.canary is True
 
 
 def test_grant_and_void_are_audited_without_a_session(world):
-    a = call(world).approval
-    voided = void_approval(a, reason="claim C-0012 changed", actor=world.human(), clock=world.clock,
-                           audit=world.audit)
+    g = call(world)
+    world.apply(g)
+    a = g.new_approval
+    change = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="claim C-0012 changed",
+                                   actor=world.human(), clock=world.clock, audit=world.audit)
+    world.apply(change)
+    voided = world.approvals[a.id]
     assert voided.voided_at == world.clock.now() and voided.void_reason == "claim C-0012 changed"
-    assert void_approval(voided, reason="again", actor=world.human(), clock=world.clock, audit=world.audit) is voided
+    again = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (voided,), reason="again",
+                                  actor=world.human(), clock=world.clock, audit=world.audit)
+    assert again.voided_approvals == () and again.audit_entries == ()  # already void: nothing to do
     entries = world.audit_store.entries(world.tenant.id)
     assert [e.action for e in entries] == ["approval.granted", "approval.voided"]
     assert entries[0].actor_kind is ActorKind.HUMAN and entries[0].actor_id == world.user_id
@@ -128,6 +134,7 @@ def test_grant_and_void_are_audited_without_a_session(world):
 
 
 def test_void_needs_a_reason(world):
-    a = call(world).approval
+    a = call(world).new_approval
     with pytest.raises(ApprovalRefused):
-        void_approval(a, reason="", actor=world.human(), clock=world.clock, audit=world.audit)
+        void_bundle_approvals(world.bundle, (), (a,), reason="  ", actor=world.human(), clock=world.clock,
+                              audit=world.audit)
