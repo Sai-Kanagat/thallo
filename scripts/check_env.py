@@ -14,8 +14,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 NEEDED: list[tuple[str, str, str]] = [
     ("DATABASE_ADMIN_URL", "1", "Supabase owner connection string, for migrations"),
-    ("DATABASE_URL", "1", "Supabase connection as the cortex_app role, for the app"),
+    ("DATABASE_URL", "1", "Supabase connection as thallo_app (written by provision_db.py)"),
+    ("DATABASE_WORKER_URL", "1", "Supabase connection as thallo_worker, for the job queue"),
     ("THALLO_VAULT_KEY", "1", "32 random bytes, base64; encrypts stored tokens"),
+    ("THALLO_GATE_SIGNING_KEY", "1", "32 random bytes, hex; signs approvals"),
     ("ANTHROPIC_API_KEY", "2", "Claude: drafts, briefs, plans"),
     ("GEMINI_API_KEY", "2", "Gemini: second reader and background images"),
     ("POSTIZ_API_KEY", "2", "Postiz hosted: publishing"),

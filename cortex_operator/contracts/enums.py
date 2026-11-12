@@ -194,6 +194,15 @@ class ConsentBasis(StrEnum):
     NONE = "none"
 
 
+class ConsentScope(StrEnum):
+    """What a consent record covers. Closed set: free text such as "no likeness" must never parse as a yes."""
+
+    CONTACT = "contact"  # may be messaged
+    LIKENESS = "likeness"  # face or body may appear in images or video
+    VOICE = "voice"  # voice may be used in audio or video
+    QUOTE = "quote"  # their words may be quoted
+
+
 class LeadRoute(StrEnum):
     HOT = "hot"  # high fit, hot: brief and drafted reply to the seller, clock starts
     WARM = "warm"  # high fit, warm: approved nurture sequence
