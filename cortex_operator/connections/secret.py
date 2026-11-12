@@ -85,11 +85,16 @@ class Secret:
         )
 
 
-_SECRET_TOKENS = frozenset({
-    "secret", "secrets", "token", "password", "passwd", "pwd", "key", "apikey", "accesskey",
-    "privatekey", "signingkey", "credential", "credentials", "authorization", "auth", "bearer", "dsn",
-    "webhook", "webhooks", "signature", "cookie", "passphrase",
-})
+# Strong stems are matched anywhere in the name once separators are stripped and case is folded, so
+# "mysecretvalue", "accesstoken" and "dbpassword" are caught. Short, ambiguous stems would hit
+# "keywords" or "author", so they match whole tokens only.
+_STRONG_STEMS = ("secret", "token", "password", "passwd", "credential", "apikey", "privatekey", "accesskey",
+                 "signingkey", "bearer", "authorization", "webhook")
+_TOKEN_STEMS = frozenset({"key", "auth", "pwd", "dsn"})
+# Counting words that merely contain "token": removed before the stem check.
+_BENIGN = ("maxtokens", "maxoutputtokens", "outputtokens", "inputtokens", "numtokens", "tokensper", "tokencount",
+           "tokenlimit", "tokenbudget", "contexttokens")
+VAULT_REF = re.compile(r"^sec_[0-9a-f]{32}$")  # the shape Vault.put issues
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _VALUE_PATTERNS = (
     re.compile(r"\bBearer\s+\S{8,}", re.I),
@@ -112,11 +117,11 @@ def _entropy(text: str) -> float:
 
 
 def looks_secret_key(name: str) -> bool:
-    spaced = _CAMEL.sub("_", name)
-    tokens = [t for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if t]
-    if not tokens or tokens[-1] in ("ref", "hint"):
-        return False  # secret_ref and friends point at a secret, they are not one
-    return any(t in _SECRET_TOKENS for t in tokens) or "".join(tokens) in _SECRET_TOKENS
+    tokens = [t for t in re.split(r"[^A-Za-z0-9]+", _CAMEL.sub("_", name).lower()) if t]
+    flat = "".join(tokens)
+    for word in _BENIGN:
+        flat = flat.replace(word, "")
+    return any(stem in flat for stem in _STRONG_STEMS) or any(t in _TOKEN_STEMS for t in tokens)
 
 
 def looks_secret_value(value: str) -> bool:
@@ -132,6 +137,9 @@ def find_secret_keys(settings: Any, _path: str = "") -> list[str]:
     if isinstance(settings, dict):
         for k, v in settings.items():
             p = f"{_path}.{k}" if _path else str(k)
+            is_ref = k == "secret_ref" and isinstance(v, str) and bool(VAULT_REF.match(v))
+            if is_ref:
+                continue  # a vault ref points at a secret; it is not one
             if isinstance(k, str) and looks_secret_key(k):
                 found.append(p)
             else:

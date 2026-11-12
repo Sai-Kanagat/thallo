@@ -47,6 +47,50 @@ def test_ordinary_settings_pass(registry, providers, settings):
     registry.add(T1, TEXT, "a", settings=settings)
 
 
+VAULT_REF = "sec_" + "0123456789abcdef" * 2
+
+
+@pytest.mark.parametrize("settings", [
+    {"api_key_ref": "sk_" + "live_abcdefghijkl"}, {"anything_hint": "Bearer abcdefghijklmnop"},
+    {"token_ref": VAULT_REF}, {"api_key_ref": VAULT_REF}, {"secret_ref": "sk_" + "live_abcdefghijkl"},
+    {"secret_ref": "not-a-vault-ref"}, {"secret_ref": {"nested": "Bearer abcdefghijklmnop"}},
+    {"label_ref": "AKIA" + "ABCDEFGHIJKLMNOP"},
+])
+def test_ref_and_hint_names_are_not_an_exemption(registry, providers, settings):
+    register(providers, "a")
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "a", settings=settings)
+
+
+def test_only_a_vault_shaped_secret_ref_is_exempt(registry, providers):
+    register(providers, "a")
+    registry.add(T1, TEXT, "a", settings={"secret_ref": VAULT_REF})
+
+
+@pytest.mark.parametrize("name", [
+    "mysecretvalue", "accesstoken", "dbpassword", "MySecretValue", "clientcredentials", "xapikeyx", "myprivatekey",
+    "dbpasswd", "bearerheader", "authorizationheader", "slackwebhookurl", "accesstokens", "signingkey",
+])
+def test_strong_stems_match_inside_a_name(registry, providers, name):
+    register(providers, "a")
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "a", settings={name: "x"})
+
+
+@pytest.mark.parametrize("name", ["author", "authority", "keywords", "monkey", "keyboard", "dsnfoo", "pwdx",
+                                  "max_tokens_per_day", "max_output_tokens", "token_limit", "turkey"])
+def test_short_ambiguous_stems_match_whole_tokens_only(registry, providers, name):
+    register(providers, "a")
+    registry.add(T1, TEXT, "a", settings={name: 1})
+
+
+@pytest.mark.parametrize("name", ["key", "auth", "pwd", "dsn", "db_dsn", "my_key", "authKey", "pwd_x"])
+def test_short_ambiguous_stems_match_as_a_token(registry, providers, name):
+    register(providers, "a")
+    with pytest.raises(InvalidConnection):
+        registry.add(T1, TEXT, "a", settings={name: "x"})
+
+
 def test_declared_settings_schema_refuses_unknown_keys(registry, providers):
     class Schema(BaseModel):
         model_config = ConfigDict(extra="forbid")
