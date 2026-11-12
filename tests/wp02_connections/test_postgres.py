@@ -74,14 +74,16 @@ def database(urls, clock):
 def tenants(database):
     from cortex_operator.contracts.enums import Language
     from cortex_operator.contracts.ids import new_id
-    from cortex_operator.contracts.models import Tenant
+    from cortex_operator.contracts.models import Operator, Tenant
 
     made = []
+    op = database.create_operator(Operator(id=new_id(database.clock), created_at=database.clock.now(), name="op"))
     for name in ("Alpha", "Beta"):
         database.clock.advance(seconds=1)
         made.append(database.create_tenant(Tenant(
-            id=new_id(database.clock), created_at=database.clock.now(), name=name,
-            slug=f"{name.lower()}-{secrets.token_hex(3)}", default_language=Language.EN, region_code="IT")).id)
+            id=new_id(database.clock), created_at=database.clock.now(), name=name, operator_id=op.id,
+            currency="EUR", slug=f"{name.lower()}-{secrets.token_hex(3)}", default_language=Language.EN,
+            region_code="IT")).id)
     return made
 
 

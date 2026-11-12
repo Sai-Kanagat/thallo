@@ -104,7 +104,7 @@ def test_manual_ads_is_a_checklist_that_moves_no_money(providers):
     assert res.output.status == "manual_checklist" and res.output.rows
     signed = c.AdsRequest(tenant_id=T1, action=c.AdsAction.APPLY_SIGNED, platform="meta",
                           campaign_external_id="cmp-1", spend_proposal_id=_id(1), approval_id=_id(2),
-                          approved_content_hash="0" * 64, to_daily_eur=Decimal("12.50"))
+                          approved_content_hash="0" * 64, to_daily=Decimal("12.50"), currency="EUR")
     out = _run(providers, Capability.ADS, signed)
     assert any("12.50" in r["do"] for r in out.output.rows)
     assert out.status == "pending_person"

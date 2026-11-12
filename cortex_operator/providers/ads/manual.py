@@ -20,7 +20,7 @@ class ManualAds(ManualProvider):
                 steps = (f"Pause campaign {request.campaign_external_id} on {request.platform}.",)
             case c.AdsAction.APPLY_SIGNED:
                 steps = (f"Set the daily budget of {request.campaign_external_id} on {request.platform} to "
-                         f"EUR {request.to_daily_eur}, exactly the signed amount.",
+                         f"{request.currency} {request.to_daily}, exactly the signed amount.",
                          "Change nothing else.", "Report the live value back.")
             case c.AdsAction.PULL_SPEND:
                 steps = (f"Export the spend report from {request.platform} as CSV.", "Upload it.")
