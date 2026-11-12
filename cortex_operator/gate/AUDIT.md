@@ -22,7 +22,17 @@ If any step fails, all of them roll back. The audit entries are prepared with th
 
 ## What publish checks against the log
 
-`check_publish` refuses an approval row unless the log holds a matching `approval.granted` entry: same tenant, subject `("approval", approval.id)`, a human actor whose id is the approval's `approver_id`, the same `content_hash` and bundle id, and an entry hash that matches its contents. It also refuses an approver who is not a user of the tenant with role founder, approver or operator, a lifetime over `MAX_APPROVAL_TTL`, and an approval whose `content_hash` is not the bundle's current `root_hash`. A row written straight to storage therefore does not publish.
+`check_publish` refuses an approval row unless the log holds a matching `approval.granted` entry: same tenant, subject `("approval", approval.id)`, a human actor whose id is the approval's `approver_id`, and the same content hash, bundle id, method, `approved_at`, `expires_at` and canary flag as the row. The entry's own hash must match its contents, and the entry must sit inside an intact run of the chain from the entry before it through the head (and through the anchor, when WP-20 has recorded one). It also refuses an approver who is not a user of the tenant with role founder, approver or operator, a lifetime over `MAX_APPROVAL_TTL`, and an approval whose `content_hash` is not the bundle's current `root_hash`.
+
+### What the chain does not prove, and the MAC that does
+
+The chain hash is public: anyone who can insert into `audit_log` can compute a valid next entry. So a forged approval row plus a forged `approval.granted` entry appended at the head would pass every chain check above. The chain alone does not stop that.
+
+What stops it is a keyed MAC. Every grant's payload carries `mac`, an HMAC-SHA256 (`cortex_operator/gate/signing.py`) over the approval's fields, made with the key in `THALLO_GATE_SIGNING_KEY` (32 bytes or more, hex). `check_publish` refuses a grant whose MAC does not verify, and blocks every publish when no key is configured.
+
+- Only the gate processes hold the key: the approval path (WP-09 calling `approve_bundle_from_repo`) and the publish check (WP-08 calling `check_publish`). It is never stored in the database, never readable by the app database role, and never given to an agent, a prompt, a log or a commit. Sai adds it to the environment of those processes.
+- With HMAC the verifier holds the same key as the signer, so the publish worker could in principle sign. Moving to an asymmetric signature (the publisher holds only a public key) needs an Ed25519 library that is not a dependency today; that is a follow-up for the lead.
+- Rotating the key makes every outstanding approval fail verification, so they must be re-approved. Rotation needs a key id in the payload; there is none yet.
 
 ## The chain anchor (WP-20)
 

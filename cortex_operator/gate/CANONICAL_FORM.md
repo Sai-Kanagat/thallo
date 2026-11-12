@@ -34,22 +34,34 @@ Everything else counts. Case, punctuation, no-break spaces, zero-width character
 
 ## Links
 
-A link is either:
+Detection works on a copy of the text after NFKC, with the ideographic and half-width full stops (U+3002, U+FF61) turned into dots and invisible characters (soft hyphen, zero-width space, joiners, word joiner, BOM) removed. The text is split on whitespace, `<`, `>` and `"`, and leading and trailing punctuation (brackets, quotes, `*`, `_`, and at the end also `.,;:!?%` and currency signs) is stripped from each token. A token is a link, matched broadly so that the check fails closed, when it:
 
-- an `http` or `https` URL, ending at whitespace, `<`, `>` or `"`; or
-- a host-like token with no scheme (`www.example.com/x`, `example.com/x`): dot-separated labels ending in an alphabetic label of 2 to 63 letters, with an optional port and path, not preceded by a word character, `@`, `.`, `/` or `:` (so email domains do not count). It is read as `https://` plus the token.
+- contains a scheme (`https://`, `ftp://`, any `x://`), read from the scheme on;
+- starts with `//`, read as https;
+- contains an IPv4 address, or starts with `www.`;
+- contains a dot-separated run of labels (letters of any script, digits, `-`, `_`), read as https from the start of that run.
 
-Trailing `.,;:!?)]}'"` is removed. Each link is normalised: scheme and host lowercased, `:80` on http and `:443` on https dropped, an empty path becomes `/`. User info, path, query and fragment are kept byte for byte, with no percent decoding.
+These are not links:
+
+- numbers, such as `1.200`, `12,5` or `1.200,50` (three dots or more is IPv4 and counts);
+- email addresses;
+- a run whose final label is a single character (`e.g.`, `a.m.`, `S.p.A.`);
+- a run whose final label is a common file extension that is not a real TLD: `pdf`, `md`, `js`, `ts`, `py`, `png`, `jpg`, `jpeg`, `gif`, `docx`, `xlsx`, `pptx`, `csv`, `txt`, in any case (`zip`, `mov` and other real TLDs still count);
+- prose with no space after a full stop: exactly two alphabetic words, the second capitalised (`ciao.Grazie`, `Dr.Rossi`), unless the second word is a common TLD (`com`, `net`, `org`, `info`, `biz`, `io`, `co`, `it`, `eu`, `uk`, `de`, `fr`, `es`, `app`, `dev`, `shop`, `me`).
+
+Each link is normalised: scheme and host lowercased, `:80` on http and `:443` on https dropped, an empty path becomes `/`. User info, path, query and fragment are kept byte for byte, with no percent decoding.
 
 Each link is resolved by `GateRepository.resolve_link` (the tracked link table, known redirects, or the URL itself for a direct link the tenant vouches for; never the network) and the destination is normalised the same way. A resolver is required: approval (`approve_bundle_from_repo`) and publish (`check_publish`) both load through `load_bundle` and resolve through the same repository, so they cannot disagree.
 
-A link that does not resolve is hashed as `null`, and it blocks: approval is refused (the reviewer cannot see where it goes) and publish is blocked with `unresolved_link`. This fails closed on purpose. A token that only looks like a host (a file name such as `report.pdf`, a missing space after a full stop) blocks until the tenant's resolver vouches for it.
+Each link is resolved once per bundle check: the resolver is memoised (`MemoResolver`), every variant leaf is built once, and both the root hash and the publish payload are derived from those same leaves. Publish blocks with `payload_mismatch` unless the payload's `variant_hash` equals the hashed leaf.
+
+A link that does not resolve is hashed as `null`, and it blocks, unless the token or its URL is on the tenant's non-link allowlist (`GateRepository.non_link_allowlist`, compared case-insensitively after the same NFKC preparation): approval is refused (the reviewer cannot see where it goes) and publish is blocked with `unresolved_link`. The allowlist is not hashed, so removing an entry after approval makes publish block. `find_unresolved_links(text, resolver, non_links)` lets the copy checks (WP-07) find these early.
 
 ## Media
 
 Each file is hashed as sha256 over its bytes, read fresh from storage at the moment of hashing (`MediaItem.from_bytes`). The path is never hashed, so a file moved to another bucket keeps its hash, and a file overwritten at the same path changes it. The media row's own `sha256` is compared separately and a mismatch is its own block reason. Media order carries meaning (carousels), so position order is kept; ties break on hash then media id.
 
-A media row with a `consent_id` needs consent (an identifiable person). Publish blocks if that consent row is missing (`consent_missing`) or withdrawn (`consent_withdrawn`), and approval is refused for the same reasons.
+A media row with a `consent_id` needs consent (an identifiable person), checked by `gate/consent.py` at approval and at publish. The consent row must exist and have `given_at` at or before now (`consent_missing`), must not be withdrawn (`consent_withdrawn`), and its scope must cover the use (`consent_scope`): likeness for images and PDFs, voice for audio, and likeness plus voice for video, since the media row has no field saying a video is silent. A scope may list several uses, such as `likeness+voice`.
 
 ## Ordering
 
