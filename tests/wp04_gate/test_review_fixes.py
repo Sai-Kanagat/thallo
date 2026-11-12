@@ -29,7 +29,7 @@ def vid0(w):
 
 def publish(w, approval_id, variant_id=None, **kw):
     return check_publish(w, tenant_id=w.tenant.id, bundle_id=w.bundle.id, variant_id=variant_id or vid0(w),
-                         approval_id=approval_id, clock=w.clock, **kw)
+                         approval_id=approval_id, clock=w.clock, signer=w.signer, **kw)
 
 
 def blocked(d, reason):
@@ -201,7 +201,7 @@ def test_approval_and_publish_resolve_through_the_same_repository(world):
     change = approve_bundle_from_repo(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id,
                                       actor=world.human(), verifier=world.verifier(), shown_hash=shown,
                                       method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=5.0, clock=world.clock,
-                                      audit=world.audit)
+                                      audit=world.audit, signer=world.signer)
     world.apply(change)
     assert publish(world, change.new_approval.id).allowed
 
@@ -219,7 +219,7 @@ def test_grant_returns_the_rows_and_audit_entries_without_writing_them(world):
     change = approve_bundle_from_repo(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id,
                                       actor=world.human(), verifier=world.verifier(), shown_hash=shown,
                                       method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=5.0, clock=world.clock,
-                                      audit=world.audit)
+                                      audit=world.audit, signer=world.signer)
     assert world.audit_store.entries(world.tenant.id) == ()  # nothing written by the gate itself
     assert change.bundle.state is BundleState.APPROVED and change.bundle.root_hash == change.new_approval.content_hash
     assert all(v.state is VariantState.APPROVED for v in change.variants)
@@ -305,7 +305,8 @@ def test_withdrawn_consent_cannot_be_approved(world):
 
 @pytest.mark.parametrize("method", ["get_tenant", "get_bundle", "get_variants", "get_variant_media",
                                     "get_variant_claims", "get_tracked_links", "get_consent", "get_approval",
-                                    "get_user", "get_audit_entries", "resolve_link"])
+                                    "get_user", "get_audit_entries", "resolve_link", "get_audit_chain",
+                                    "audit_anchor", "non_link_allowlist"])
 def test_any_repository_failure_blocks_instead_of_raising(world, method):
     mid = next(iter(world.media))
     world.media[mid] = world.media[mid].model_copy(update={"consent_id": world.add_consent()})

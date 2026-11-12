@@ -24,7 +24,7 @@ def call(world, **over):
     content = over.pop("content", None) or world.content()
     kw = dict(actor=world.human(), verifier=world.verifier(), shown_hash=bundle_hash(content, world.links.get).root,
               method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=37.5, clock=world.clock, audit=world.audit,
-              resolver=world.links.get, approver=world.users[world.user_id])
+              resolver=world.links.get, approver=world.users[world.user_id], signer=world.signer)
     kw.update(over)
     return approve_bundle(content, **kw)
 

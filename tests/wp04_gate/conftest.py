@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import secrets
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -43,6 +44,7 @@ from cortex_operator.gate import (
     load_bundle,
     void_bundle_approvals,
 )
+from cortex_operator.gate.signing import GateSigner
 from cortex_operator.trust.audit import AuditLog, InMemoryAuditStore
 
 _counter = itertools.count(1)
@@ -85,6 +87,9 @@ class World:
     session: str = "live-1"
     paused_everywhere: bool = False
     fail_on: str | None = None
+    non_links: set[str] = field(default_factory=set)
+    anchor: tuple[int, str] | None = None
+    signer: GateSigner = field(default_factory=lambda: GateSigner(secrets.token_bytes(32)))
 
     def _ok(self, name: str) -> None:
         if self.fail_on == name:
@@ -148,6 +153,18 @@ class World:
         return [e for e in self.audit_store.entries(tenant_id)
                 if e.subject_kind == subject_kind and e.subject_id == subject_id]
 
+    def get_audit_chain(self, tenant_id, from_seq):
+        self._ok("get_audit_chain")
+        return [e for e in self.audit_store.entries(tenant_id) if e.seq >= from_seq]
+
+    def audit_anchor(self, tenant_id):
+        self._ok("audit_anchor")
+        return self.anchor
+
+    def non_link_allowlist(self, tenant_id):
+        self._ok("non_link_allowlist")
+        return frozenset(self.non_links)
+
     def resolve_link(self, tenant_id, url):
         self._ok("resolve_link")
         return self.links.get(url)
@@ -184,7 +201,8 @@ class World:
         change = approve_bundle_from_repo(
             self, tenant_id=self.tenant.id, bundle_id=self.bundle.id, actor=self.human(), verifier=self.verifier(),
             shown_hash=shown, method=kw.pop("method", ApprovalMethod.PER_BUNDLE),
-            seconds_on_screen=kw.pop("seconds_on_screen", 42.0), clock=self.clock, audit=self.audit, **kw)
+            seconds_on_screen=kw.pop("seconds_on_screen", 42.0), clock=self.clock, audit=self.audit,
+            signer=self.signer, **kw)
         self.apply(change)
         return change if return_change else change.new_approval
 

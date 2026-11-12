@@ -20,18 +20,20 @@ def first_variant(world):
 def evidence(world, approval):
     """What check_publish would load for this approval, from `world`'s repository."""
     return ApprovalEvidence(approval=approval, approver=world.users.get(approval.approver_id),
-                            audit_entries=tuple(world.get_audit_entries(approval.tenant_id, "approval", approval.id)))
+                            audit_entries=tuple(world.get_audit_entries(approval.tenant_id, "approval", approval.id)),
+                            chain=tuple(world.get_audit_chain(approval.tenant_id, 1)), anchor=None)
 
 
 def decide(content, approval, *, world, **kw):
     ev = evidence(world, approval) if approval is not None else None
-    return _decide(content, ev, system_paused=False, resolver=world.links.get, **kw)
+    return _decide(content, ev, system_paused=False, resolver=world.links.get, non_links=frozenset(),
+                   signer=world.signer, **kw)
 
 
 def publish(world, approval_id, variant_id=None, **kw):
     return check_publish(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id,
                          variant_id=variant_id or first_variant(world), approval_id=approval_id,
-                         clock=world.clock, **kw)
+                         clock=world.clock, signer=world.signer, **kw)
 
 
 def assert_blocked(decision, reason: BlockReason):
@@ -263,7 +265,7 @@ def test_approval_cannot_be_reused_for_a_different_tenant(world):
     # Hand tenant B's publisher tenant A's approval id: the repository is tenant-scoped, so it is not found.
     other.approvals[a.id] = a
     d = check_publish(other, tenant_id=other.tenant.id, bundle_id=other.bundle.id,
-                      variant_id=next(iter(other.variants)), approval_id=a.id, clock=other.clock)
+                      variant_id=next(iter(other.variants)), approval_id=a.id, clock=other.clock, signer=other.signer)
     assert_blocked(d, BlockReason.NO_APPROVAL)
     # And if a faulty repository did return it, the decision itself refuses it.
     d = decide(other.content(), a, tenant=other.tenant, variant_id=next(iter(other.variants)),
@@ -299,7 +301,7 @@ def test_variant_outside_the_bundle_blocks(world):
 def test_missing_bundle_blocks(world):
     a = world.approve()
     d = check_publish(world, tenant_id=world.tenant.id, bundle_id=a.id, variant_id=first_variant(world),
-                      approval_id=a.id, clock=world.clock)
+                      approval_id=a.id, clock=world.clock, signer=world.signer)
     assert_blocked(d, BlockReason.NO_BUNDLE)
 
 
