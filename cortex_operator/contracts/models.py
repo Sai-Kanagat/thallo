@@ -30,6 +30,7 @@ from cortex_operator.contracts.enums import (
     ClaimKind,
     ConnectionMode,
     ConsentBasis,
+    ConsentScope,
     EditKind,
     FunnelStage,
     IncidentSeverity,
@@ -213,7 +214,7 @@ class Consent(TenantRow):
     subject_label: str | None = None  # for staff or customers filmed but not in the lead tables
     basis: ConsentBasis
     channel: MessageChannel | None = None
-    scope: str  # contact | likeness | voice | quote
+    scope: ConsentScope
     evidence: str
     given_at: AwareDatetime
     withdrawn_at: AwareDatetime | None = None
@@ -236,6 +237,7 @@ class Media(TenantRow, ModelMade):
     width: int | None = None
     height: int | None = None
     duration_ms: int | None = None
+    has_voice_track: bool = False  # video or audio with a person's voice: needs VOICE consent
 
 
 class Source(TenantRow):
@@ -271,6 +273,7 @@ class Claim(TenantRow, ModelMade):
     verified_by: Id | None = fk("app_user", default=None)
     verified_at: AwareDatetime | None = None
     expires_at: AwareDatetime | None = None
+    expiry_reason: str | None = None  # required by WP-03 when a human sets a price or offer expiry past 90 days
     languages: dict[str, str] = Field(default_factory=dict, description="Approved wording per language code")
 
 
