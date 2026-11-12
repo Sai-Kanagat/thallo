@@ -310,7 +310,7 @@ class ConnectionRegistry:
         skipped: list[tuple[str, str]] = []
         for cid in choice.ordered_connection_ids:
             row = self._get(tenant_id, cid)
-            down = self.health is not None and self.health.last_connected(cid) is False
+            down = self.health is not None and self.health.last_connected(tenant_id, cid) is False
             if down and row.mode is not ConnectionMode.MANUAL:
                 skipped.append((cid, "unhealthy"))
                 continue

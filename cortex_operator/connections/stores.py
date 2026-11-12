@@ -114,37 +114,39 @@ class InMemoryChannelAccountStore:
 
 
 class HealthState(Protocol):
-    def last_connected(self, connection_id: str) -> bool | None: ...
-    def set_connected(self, connection_id: str, connected: bool) -> None: ...
-    def warned_expiry(self, account_id: str) -> datetime | None: ...
-    def set_warned_expiry(self, account_id: str, expires_at: datetime) -> None: ...
-    def last_run(self) -> datetime | None: ...
-    def set_last_run(self, at: datetime) -> None: ...
+    """What the daily check remembers, per tenant."""
+
+    def last_connected(self, tenant_id: str, connection_id: str) -> bool | None: ...
+    def set_connected(self, tenant_id: str, connection_id: str, connected: bool) -> None: ...
+    def warned_expiry(self, tenant_id: str, account_id: str) -> datetime | None: ...
+    def set_warned_expiry(self, tenant_id: str, account_id: str, expires_at: datetime) -> None: ...
+    def last_run(self, tenant_id: str) -> datetime | None: ...
+    def set_last_run(self, tenant_id: str, at: datetime) -> None: ...
 
 
 class InMemoryHealthState:
     def __init__(self) -> None:
-        self._connected: dict[str, bool] = {}
-        self._warned: dict[str, datetime] = {}
-        self._last_run: datetime | None = None
+        self._connected: dict[tuple[str, str], bool] = {}
+        self._warned: dict[tuple[str, str], datetime] = {}
+        self._last_run: dict[str, datetime] = {}
 
-    def last_connected(self, connection_id: str) -> bool | None:
-        return self._connected.get(connection_id)
+    def last_connected(self, tenant_id: str, connection_id: str) -> bool | None:
+        return self._connected.get((tenant_id, connection_id))
 
-    def set_connected(self, connection_id: str, connected: bool) -> None:
-        self._connected[connection_id] = connected
+    def set_connected(self, tenant_id: str, connection_id: str, connected: bool) -> None:
+        self._connected[(tenant_id, connection_id)] = connected
 
-    def warned_expiry(self, account_id: str) -> datetime | None:
-        return self._warned.get(account_id)
+    def warned_expiry(self, tenant_id: str, account_id: str) -> datetime | None:
+        return self._warned.get((tenant_id, account_id))
 
-    def set_warned_expiry(self, account_id: str, expires_at: datetime) -> None:
-        self._warned[account_id] = expires_at
+    def set_warned_expiry(self, tenant_id: str, account_id: str, expires_at: datetime) -> None:
+        self._warned[(tenant_id, account_id)] = expires_at
 
-    def last_run(self) -> datetime | None:
-        return self._last_run
+    def last_run(self, tenant_id: str) -> datetime | None:
+        return self._last_run.get(tenant_id)
 
-    def set_last_run(self, at: datetime) -> None:
-        self._last_run = at
+    def set_last_run(self, tenant_id: str, at: datetime) -> None:
+        self._last_run[tenant_id] = at
 
 
 class EventSink(Protocol):

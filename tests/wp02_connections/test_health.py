@@ -11,6 +11,7 @@ from cortex_operator.connections import (
     ListEventSink,
 )
 from cortex_operator.contracts import connection as c
+from cortex_operator.contracts.clock import FAKE_EPOCH
 from cortex_operator.contracts.enums import Capability, Channel, ConnectionMode
 from cortex_operator.contracts.events import EventName
 from cortex_operator.contracts.ids import new_id
@@ -107,7 +108,7 @@ def test_disabled_connections_are_not_checked(rig, flaky):
     row = reg.add(T1, TEXT, "flaky", enabled=False)
     flaky.up = False
     assert mon.run_once().checked == 1  # only the manual floor
-    assert row.id not in mon.state._connected
+    assert mon.state.last_connected(T1, row.id) is None
 
 
 def test_token_warning_seven_days_before_not_earlier(rig, clock):
@@ -185,10 +186,22 @@ def test_events_stay_in_their_own_tenant(rig, clock, flaky):
 
 
 def test_runs_daily_only(rig, clock):
-    mon, _, _, _ = rig
+    mon, _, _, reg = rig
+    reg.add(T1, TEXT, "flaky")
     assert mon.run_if_due() is not None
     assert mon.run_if_due() is None
     clock.advance(hours=23)
     assert mon.run_if_due() is None
     clock.advance(hours=1)
     assert mon.run_if_due() is not None
+
+
+def test_each_tenant_has_its_own_daily_clock(rig, clock, flaky):
+    mon, _, _, reg = rig
+    reg.add(T1, TEXT, "flaky")
+    assert mon.run_if_due() is not None
+    clock.advance(hours=12)
+    reg.add(T2, TEXT, "flaky")
+    rep = mon.run_if_due()  # only T2 is due: T1 ran 12 hours ago
+    assert rep is not None and rep.checked == 2  # T2's flaky row and its manual floor; T1 is not rechecked
+    assert mon.state.last_run(T1) == FAKE_EPOCH

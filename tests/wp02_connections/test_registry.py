@@ -312,11 +312,11 @@ def test_run_skips_connections_seen_unhealthy_but_never_manual(clock, providers,
                              vault=vault, health=state)
     register(providers, "a")
     row = reg.add(T1, TEXT, "a")
-    state.set_connected(row.id, False)
+    state.set_connected(T1, row.id, False)
     served = reg.run(T1, req())
     assert served.provider == "manual" and served.skipped == ((row.id, "unhealthy"),)
     man = next(r for r in reg.connections.list_all() if r.provider == "manual")
-    state.set_connected(man.id, False)
+    state.set_connected(T1, man.id, False)
     assert reg.run(T1, req()).provider == "manual"
 
 
