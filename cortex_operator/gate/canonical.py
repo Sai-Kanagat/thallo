@@ -1,10 +1,10 @@
 """The canonical form and the bundle root hash. Written down in CANONICAL_FORM.md; keep both in step.
 
 A bundle root hash covers, for every variant: its canonical text, every media file's bytes
-(sha256 of the content, never the path), every used claim with its evidence hash, its
-links resolved to their destinations, its channel and language, plus the bundle's rule
-version, tenant and id. Any change to any of these changes the root, which voids the
-approval bound to it.
+(sha256 of the content, never the path) with its consent id, every used claim with its
+evidence hash, every link in the outgoing text resolved to its destination, every tracked
+link the variant references, its channel and language, plus the bundle's rule version, tenant
+and id. Any change to any of these changes the root, which voids the approval bound to it.
 """
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from cortex_operator.contracts.models import Bundle, Claim, Media, Variant
+from cortex_operator.contracts.models import Bundle, Claim, Consent, Media, TrackedLink, Variant
 
 CANONICAL_VERSION = 1
 
@@ -29,6 +29,12 @@ LinkResolver = Callable[[str], "str | None"]
 _LINE_BREAKS = re.compile("\r\n|\r|\u0085| | ")
 _HSPACE_RUN = re.compile("[ \t]+")
 _URL = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+# A host-like token with no scheme: labels joined by dots, ending in an alphabetic label of 2 to
+# 63 letters, optional port and path. Not preceded by a word character, @, dot, slash or colon,
+# so email domains and parts of longer tokens do not count.
+_HOSTLIKE = re.compile(
+    r"(?<![\w@./:-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:/[^\s<>\"]*)?(?![\w@-])",
+    re.IGNORECASE)
 _URL_TRAILING = ".,;:!?)]}'\""
 _SLOT = re.compile(r"\{\{\s*(C-\d{4,})\s*\}\}")
 _DEFAULT_PORTS = {"http": ":80", "https": ":443"}
@@ -96,15 +102,32 @@ def normalise_url(url: str) -> str:
 
 
 def find_links(text: str) -> list[str]:
-    """http and https URLs in order of appearance, trailing sentence punctuation removed."""
-    return [m.group(0).rstrip(_URL_TRAILING) for m in _URL.finditer(text)]
+    """Every link in the text, normalised, in order of appearance: http and https URLs, and
+    host-like tokens with no scheme (www.example.com/x, example.com/x), read as https.
+    Trailing sentence punctuation is removed."""
+    found: list[tuple[int, str]] = []
+    spans: list[tuple[int, int]] = []
+    for m in _URL.finditer(text):
+        raw = m.group(0).rstrip(_URL_TRAILING)
+        spans.append((m.start(), m.start() + len(raw)))
+        found.append((m.start(), normalise_url(raw)))
+    for m in _HOSTLIKE.finditer(text):
+        if any(a <= m.start() < b for a, b in spans):
+            continue
+        raw = m.group(0).rstrip(_URL_TRAILING)
+        if "." not in raw.split("/", 1)[0]:
+            continue
+        found.append((m.start(), normalise_url("https://" + raw)))
+    return [url for _, url in sorted(found)]
 
 
-def resolved_links(text: str, resolver: LinkResolver | None) -> list[list[str | None]]:
+def resolved_links(text: str, resolver: LinkResolver) -> list[list[str | None]]:
+    """[url, destination] per link. The destination is None when the resolver does not know it."""
     out: list[list[str | None]] = []
-    for raw in find_links(text):
-        url = normalise_url(raw)
-        dest = resolver(url) if resolver is not None else None
+    for url in find_links(text):
+        dest = resolver(url)
+        if dest is not None and not isinstance(dest, str):
+            raise CanonicalFormError(f"resolver returned {type(dest).__name__} for {url}")
         out.append([url, normalise_url(dest) if dest is not None else None])
     return out
 
@@ -124,15 +147,18 @@ def sha256_bytes(data: bytes | Iterable[bytes]) -> str:
 @dataclass(frozen=True)
 class MediaItem:
     """One media file in a variant. `bytes_sha256` is computed from the bytes read from
-    storage at the moment of hashing, never copied from the media row."""
+    storage at the moment of hashing, never copied from the media row. `consent` is the row
+    named by media.consent_id, loaded for the publish-time check (it is not hashed; the id is)."""
 
     media: Media
     position: int
     bytes_sha256: str
+    consent: Consent | None = None
 
     @classmethod
-    def from_bytes(cls, media: Media, position: int, data: bytes | Iterable[bytes]) -> MediaItem:
-        return cls(media=media, position=position, bytes_sha256=sha256_bytes(data))
+    def from_bytes(cls, media: Media, position: int, data: bytes | Iterable[bytes],
+                   consent: Consent | None = None) -> MediaItem:
+        return cls(media=media, position=position, bytes_sha256=sha256_bytes(data), consent=consent)
 
     @property
     def matches_record(self) -> bool:
@@ -144,6 +170,7 @@ class VariantContent:
     variant: Variant
     media: tuple[MediaItem, ...] = ()
     claims: tuple[Claim, ...] = ()
+    tracked_links: tuple[TrackedLink, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,7 +190,11 @@ class BundleContent:
             if v.tenant_id != t or v.bundle_id != b:
                 out.append(f"variant {v.id} belongs to another tenant or bundle")
             out += [f"media {m.media.id} belongs to another tenant" for m in vc.media if m.media.tenant_id != t]
+            out += [f"consent {m.consent.id} belongs to another tenant" for m in vc.media
+                    if m.consent is not None and m.consent.tenant_id != t]
             out += [f"claim {c.code} belongs to another tenant" for c in vc.claims if c.tenant_id != t]
+            out += [f"tracked link {tl.slug} belongs to another tenant or variant" for tl in vc.tracked_links
+                    if tl.tenant_id != t or tl.variant_id != v.id]
         return out
 
 
@@ -171,6 +202,35 @@ class BundleContent:
 class BundleHash:
     root: str
     variants: Mapping[str, str] = field(default_factory=dict)  # variant id to leaf hash
+
+
+@dataclass(frozen=True)
+class PayloadMedia:
+    position: int
+    sha256: str
+    kind: str
+    mime: str
+    alt_text: str | None
+    disclosure_label: str | None
+    consent_id: str | None
+
+
+@dataclass(frozen=True)
+class PublishPayload:
+    """Exactly what was hashed for one variant, and so exactly what may be sent. Frozen."""
+
+    variant_id: str
+    variant_hash: str
+    channel: str
+    language: str
+    text: str
+    media: tuple[PayloadMedia, ...]
+    links: tuple[tuple[str, str | None], ...]
+    tracked_links: tuple[tuple[str, str, str | None], ...]
+
+    @property
+    def media_sha256(self) -> tuple[str, ...]:
+        return tuple(m.sha256 for m in self.media)
 
 
 # ---------------------------------------------------------------- encoding
@@ -219,14 +279,20 @@ def _media_leaf(m: MediaItem) -> dict[str, Any]:
         "mime": m.media.mime.lower(),
         "alt_text": canonical_text(m.media.alt_text) if m.media.alt_text is not None else None,
         "disclosure_label": m.media.disclosure_label,
+        "consent_id": m.media.consent_id,
     }
 
 
-def variant_leaf(vc: VariantContent, resolver: LinkResolver | None = None) -> dict[str, Any]:
+def _sorted_media(vc: VariantContent) -> list[MediaItem]:
+    return sorted(vc.media, key=lambda m: (m.position, m.bytes_sha256, m.media.id))
+
+
+def variant_leaf(vc: VariantContent, resolver: LinkResolver) -> dict[str, Any]:
     v = vc.variant
     claims = {c.id: c for c in vc.claims}  # a claim linked twice counts once
-    media = sorted(vc.media, key=lambda m: (m.position, m.bytes_sha256, m.media.id))
     rendered = canonical_text(v.rendered_text) if v.rendered_text is not None else None
+    tracked = sorted({(tl.slug, normalise_url(tl.destination), tl.whatsapp_code) for tl in vc.tracked_links},
+                     key=lambda t: (t[0], t[1], t[2] or ""))
     return {
         "v": CANONICAL_VERSION,
         "variant_id": v.id,
@@ -235,17 +301,22 @@ def variant_leaf(vc: VariantContent, resolver: LinkResolver | None = None) -> di
         "text": canonical_text(v.text),
         "rendered_text": rendered,
         "links": resolved_links(outgoing_text(v), resolver),
-        "media": [_media_leaf(m) for m in media],
+        "tracked_links": [list(t) for t in tracked],
+        "media": [_media_leaf(m) for m in _sorted_media(vc)],
         "claims": [_claim_leaf(c) for c in sorted(claims.values(), key=lambda c: (c.code, c.id))],
     }
 
 
-def variant_hash(vc: VariantContent, resolver: LinkResolver | None = None) -> str:
+def variant_hash(vc: VariantContent, resolver: LinkResolver) -> str:
     return _digest(VARIANT_DOMAIN, variant_leaf(vc, resolver))
 
 
-def bundle_hash(content: BundleContent, resolver: LinkResolver | None = None) -> BundleHash:
-    """The root the approval binds to. Variant order carries no meaning; media order does."""
+def bundle_hash(content: BundleContent, resolver: LinkResolver) -> BundleHash:
+    """The root the approval binds to. Variant order carries no meaning; media order does.
+    `resolver` is required: approval and publish must resolve links the same way, so both load
+    through the repository (`load_bundle`) and pass `repo.resolve_link`."""
+    if resolver is None:
+        raise CanonicalFormError("a link resolver is required")
     if not content.variants:
         raise CanonicalFormError("a bundle with no variants has no root hash")
     ids = [vc.variant.id for vc in content.variants]
@@ -263,14 +334,29 @@ def bundle_hash(content: BundleContent, resolver: LinkResolver | None = None) ->
     return BundleHash(root=root, variants=leaves)
 
 
+def publish_payload(vc: VariantContent, resolver: LinkResolver) -> PublishPayload:
+    """The frozen payload for one variant, built from the same leaf that is hashed."""
+    leaf = variant_leaf(vc, resolver)
+    return PublishPayload(
+        variant_id=leaf["variant_id"],
+        variant_hash=_digest(VARIANT_DOMAIN, leaf),
+        channel=leaf["channel"],
+        language=leaf["language"],
+        text=outgoing_text(vc.variant),
+        media=tuple(PayloadMedia(**m) for m in leaf["media"]),
+        links=tuple((u, d) for u, d in leaf["links"]),
+        tracked_links=tuple((s, d, w) for s, d, w in leaf["tracked_links"]),
+    )
+
+
 def media_hashes(vc: VariantContent) -> tuple[str, ...]:
     """The media bytes hashes in position order, as a PublishRequest carries them."""
-    return tuple(m.bytes_sha256 for m in sorted(vc.media, key=lambda m: (m.position, m.bytes_sha256, m.media.id)))
+    return tuple(m.bytes_sha256 for m in _sorted_media(vc))
 
 
-__all__: Sequence[str] = (
+__all__ = [
     "CANONICAL_VERSION", "BundleContent", "BundleHash", "CanonicalFormError", "LinkResolver", "MediaItem",
-    "VariantContent", "bundle_hash", "canonical_json", "canonical_text", "claim_slots", "find_links",
-    "has_unrendered_slot", "media_hashes", "normalise_url", "outgoing_text", "resolved_links", "sha256_bytes",
-    "variant_hash", "variant_leaf",
-)
+    "PayloadMedia", "PublishPayload", "VariantContent", "bundle_hash", "canonical_json", "canonical_text",
+    "claim_slots", "find_links", "has_unrendered_slot", "media_hashes", "normalise_url", "outgoing_text",
+    "publish_payload", "resolved_links", "sha256_bytes", "variant_hash", "variant_leaf",
+]

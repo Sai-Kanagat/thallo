@@ -1,6 +1,7 @@
 """The canonical form: what counts as the same content, and what does not."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 
 import pytest
@@ -10,7 +11,6 @@ from cortex_operator.gate.canonical import (
     BundleContent,
     CanonicalFormError,
     MediaItem,
-    VariantContent,
     bundle_hash,
     canonical_json,
     canonical_text,
@@ -23,7 +23,7 @@ from tests.wp04_gate.conftest import make_world
 
 
 def root(content, resolver=None):
-    return bundle_hash(content, resolver).root
+    return bundle_hash(content, resolver or {}.get).root
 
 
 # ---------------------------------------------------------------- text
@@ -93,7 +93,7 @@ def test_media_hash_is_of_bytes_not_path():
 
 def _with_media(content, vid, items):
     return BundleContent(bundle=content.bundle, variants=tuple(
-        VariantContent(variant=vc.variant, media=items, claims=vc.claims) if vc.variant.id == vid else vc
+        dataclasses.replace(vc, media=items) if vc.variant.id == vid else vc
         for vc in content.variants))
 
 
@@ -130,7 +130,7 @@ def test_variant_and_claim_order_carry_no_meaning():
     reordered = BundleContent(bundle=c.bundle, variants=tuple(reversed(c.variants)))
     assert root(reordered) == root(c)
     vc = c.variants[0]
-    doubled = VariantContent(variant=vc.variant, media=vc.media, claims=vc.claims + vc.claims)
+    doubled = dataclasses.replace(vc, claims=vc.claims + vc.claims)
     assert root(BundleContent(bundle=c.bundle, variants=(doubled,) + c.variants[1:])) == root(c)
 
 
@@ -186,16 +186,16 @@ def test_link_resolution_binds_the_destination():
     b = root(c, {"https://thallo.test/r/abc": "https://DEMO.example:443/offer"}.get)
     other = root(c, {"https://thallo.test/r/abc": "https://evil.example/"}.get)
     assert a == b != other
-    assert root(c, None) != a
+    assert root(c, {}.get) != a
 
 
 def test_empty_or_duplicated_bundle_has_no_root():
     w = make_world()
     c = w.content()
     with pytest.raises(CanonicalFormError):
-        bundle_hash(BundleContent(bundle=c.bundle, variants=()))
+        bundle_hash(BundleContent(bundle=c.bundle, variants=()), {}.get)
     with pytest.raises(CanonicalFormError):
-        bundle_hash(BundleContent(bundle=c.bundle, variants=(c.variants[0], c.variants[0])))
+        bundle_hash(BundleContent(bundle=c.bundle, variants=(c.variants[0], c.variants[0])), {}.get)
 
 
 def test_canonical_json_refuses_floats_and_is_stable():
@@ -231,4 +231,4 @@ def test_golden_root_is_stable():
     assert h.root == GOLDEN_ROOT, h.root
 
 
-GOLDEN_ROOT = "025d834c04b445f0c5b8af685c7722d651b9cac395a36d7a12dfc2bf06ab34ab"
+GOLDEN_ROOT = "52b98741c988fb76b6433090db9c9525fcaab1915c97a9912ac564c030294e54"
