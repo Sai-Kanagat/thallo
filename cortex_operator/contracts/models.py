@@ -22,6 +22,7 @@ from cortex_operator.contracts.enums import (
     ApprovalMethod,
     ApprovalSubject,
     AutonomyLevel,
+    CampaignRole,
     Capability,
     Channel,
     CheckLayer,
@@ -87,23 +88,44 @@ class ModelMade(BaseModel):
     prompt_version: str | None = None
 
 
-# ====================================================================== tenancy, people, policy
+# ====================================================================== operators, identities, tenancy
+# operator and identity sit ABOVE tenants and are not tenant-scoped. The app role has no
+# grants on them; login and the operator console reach them only through owner-run code.
+
+class Operator(Row):
+    """Whoever runs clients: Sai today, an agency later (operator edition, WP-41)."""
+
+    __table__ = "operator"
+    name: str
+
+
+class Identity(Row):
+    """A login. One person, one identity, any number of tenant memberships (app_user rows)."""
+
+    __table__ = "identity"
+    email: str = unique()
+    display_name: str
+
 
 class Tenant(Row):
     __table__ = "tenant"
+    operator_id: Id = fk("operator")
     name: str
     slug: str = unique()
     default_language: Language
     region_code: str
+    currency: str = Field(pattern=r"^[A-Z]{3}$", description="ISO 4217; every client-money column is in this")
     timezone: str = "UTC"
     paused: bool = False  # brand kill switch
 
 
 class AppUser(TenantRow):
+    """A membership: this identity's role inside this tenant. Approvals and audit point here."""
+
     __table__ = "app_user"
-    __unique__ = (("tenant_id", "email"),)
+    __unique__ = (("tenant_id", "identity_id"),)
+    identity_id: Id = fk("identity")
     display_name: str
-    email: str | None = None
     role: UserRole
     language: Language | None = None
 
@@ -168,7 +190,7 @@ class GrowthModel(TenantRow, ModelMade):
     play_id: Id | None = fk("play", default=None)
     stages: list[dict[str, Any]] = Field(default_factory=list, description="Each stage: name, rate, low, high, tag")
     bottleneck: str | None = None
-    margin_per_won_eur: Money | None = None
+    margin_per_won: Money | None = None  # tenant currency
     share_of_margin: Decimal = Decimal("0.30")
     allowable_cost_eur: Money | None = None
     active: bool = False
@@ -230,9 +252,14 @@ class Source(TenantRow):
 
 
 class Claim(TenantRow, ModelMade):
+    """Append-only by version: a change writes a new row (version + 1, supersedes_id set) and
+    voids the old one, so the exact fact a published piece used stays on record."""
+
     __table__ = "claim"
-    __unique__ = (("tenant_id", "code"),)
+    __unique__ = (("tenant_id", "code", "version"),)
     code: str = Field(pattern=r"^C-\d{4,}$")
+    version: int = Field(default=1, ge=1)
+    supersedes_id: Id | None = fk("claim", default=None)
     kind: ClaimKind
     state: st.ClaimState = st.ClaimState.CANDIDATE
     value: str
@@ -472,14 +499,26 @@ class Person(TenantRow):
     language: Language | None = None
 
 
+class Campaign(TenantRow):
+    """Budgets, the stopping rule and channel-role targets all work per campaign."""
+
+    __table__ = "campaign"
+    __unique__ = (("tenant_id", "platform", "external_id"),)
+    platform: str
+    external_id: str | None = None
+    name: str
+    role: CampaignRole
+    state: st.AdState = st.AdState.CREATED_PAUSED
+    daily_budget: Money | None = None  # tenant currency
+
+
 class Ad(TenantRow):
     __table__ = "ad"
+    campaign_id: Id = fk("campaign")
     variant_id: Id | None = fk("variant", default=None)
     platform: str
-    campaign: str
     external_id: str | None = None
     state: st.AdState = st.AdState.CREATED_PAUSED
-    daily_budget_eur: Money | None = None
 
 
 class TrackedLink(TenantRow):
@@ -542,7 +581,8 @@ class MessageTemplate(TenantRow):
 
 class Message(TenantRow, ModelMade):
     __table__ = "message"
-    lead_id: Id = fk("lead")
+    person_id: Id = fk("person")
+    lead_id: Id | None = fk("lead", default=None)  # newsletter, proof and webinar messages have no lead
     kind: MessageKind
     channel: MessageChannel
     state: st.MessageState = st.MessageState.DRAFTED
@@ -565,16 +605,16 @@ class Booking(TenantRow):
 
 class Deal(TenantRow):
     __table__ = "deal"
-    booking_id: Id = fk("booking", unique=True)
+    booking_id: Id | None = fk("booking", unique=True, default=None)  # None: walk-in or phone sale
     lead_id: Id = fk("lead")
-    value_eur: Money | None = None
+    value: Money | None = None  # tenant currency
 
 
 class Outcome(TenantRow):
     __table__ = "outcome"
     deal_id: Id = fk("deal", unique=True)
     kind: OutcomeKind
-    amount_eur: Money | None = None
+    amount: Money | None = None  # tenant currency
     loss_reason: LossReason | None = None
     recorded_by: Id = fk("app_user")
     occurred_at: AwareDatetime
@@ -584,10 +624,11 @@ class Outcome(TenantRow):
 
 class SpendSnapshot(TenantRow):
     __table__ = "spend_snapshot"
-    __unique__ = (("ad_id", "day"),)
-    ad_id: Id = fk("ad")
+    __unique__ = (("tenant_id", "campaign_id", "ad_id", "day"),)
+    campaign_id: Id = fk("campaign")
+    ad_id: Id | None = fk("ad", default=None)  # None: a campaign-level row (search, CSV import)
     day: date
-    spend_eur: Money
+    spend: Money  # tenant currency
     impressions: int | None = None
     clicks: int | None = None
     pulled_at: AwareDatetime
@@ -596,9 +637,7 @@ class SpendSnapshot(TenantRow):
 class SpendProposal(TenantRow):
     __table__ = "spend_proposal"
     state: st.SpendProposalState = st.SpendProposalState.PROPOSED
-    platform: str
-    campaign: str
-    campaign_external_id: str | None = None
+    campaign_id: Id = fk("campaign")
     ad_id: Id | None = fk("ad", default=None)
     from_daily: Money
     to_daily: Money
@@ -686,7 +725,33 @@ class EventRecord(TenantRow):
     actor_id: str
     payload: dict[str, Any] = Field(default_factory=dict)
     occurred_at: AwareDatetime
+
+
+class EventDelivery(TenantRow):
+    """One row per event per consumer (each hook, the dispatcher). event_log stays append-only."""
+
+    __table__ = "event_delivery"
+    __unique__ = (("event_id", "consumer"),)
+    event_id: Id = fk("event_log")
+    consumer: str
+    attempts: int = 0
     delivered_at: AwareDatetime | None = None
+    last_error: str | None = None
+
+
+class PlanSlot(TenantRow):
+    """A week-plan slot. Shared by the publisher (bench fills a miss), the review deck, the planner,
+    measurement and trust, so it lives in core."""
+
+    __table__ = "plan_slot"
+    week_start: date
+    channel: Channel
+    pillar_id: Id | None = fk("pillar", default=None)
+    stage: FunnelStage
+    starts_at: AwareDatetime
+    reserved_for_experiment: bool = False
+    variant_id: Id | None = fk("variant", default=None)
+    state: st.PlanSlotState = st.PlanSlotState.OPEN
 
 
 class Job(TenantRow):
@@ -708,15 +773,15 @@ class Job(TenantRow):
 
 # Creation order respects foreign keys. Every table in BUILD_PLAN 2.3 is here, plus shared ones.
 TABLES: tuple[type[Row], ...] = (
-    Tenant, AppUser, RegionPolicy, Connection, ChannelAccount,
+    Operator, Identity, Tenant, AppUser, RegionPolicy, Connection, ChannelAccount,
     Play, GrowthModel, Pillar,
     Account, Person, Consent, Media, Source, Claim,
     Signal, Idea, IdeaSignal, Brief, Forecast, ForecastScore,
-    Asset, Bundle, Variant, VariantClaim, VariantMedia, CheckResult,
+    Asset, Bundle, Variant, VariantClaim, VariantMedia, CheckResult, PlanSlot,
     Approval, Publication, MetricSnapshot, Edit, RuleProposal, VoiceRule,
-    Ad, TrackedLink, Touch, Lead, MessageTemplate, Message, Booking, Deal, Outcome,
+    Campaign, Ad, TrackedLink, Touch, Lead, MessageTemplate, Message, Booking, Deal, Outcome,
     SpendSnapshot, SpendProposal,
-    AutonomyState, PromptVersion, Incident, CostEntry, AuditEntry, EventRecord, Job,
+    AutonomyState, PromptVersion, Incident, CostEntry, AuditEntry, EventRecord, EventDelivery, Job,
 )
 
 # Entities named in the 2.3 diagram, mapped to their table. Tested for completeness.

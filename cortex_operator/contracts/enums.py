@@ -274,6 +274,17 @@ class UserRole(StrEnum):
     STAFF = "staff"
 
 
+class CampaignRole(StrEnum):
+    """Channel roles from BUILD_PLAN 2.6, each with its own target multiple of A."""
+
+    BRAND_SEARCH = "brand_search"
+    HIGH_INTENT_SEARCH = "high_intent_search"
+    LOCAL_SOCIAL = "local_social"
+    BOOST = "boost"
+    RETARGETING = "retargeting"
+    ACCOUNT_LIST = "account_list"  # LinkedIn to a named account list (B2B)
+
+
 class BreakerScope(StrEnum):
     RUN = "run"
     DAY = "day"

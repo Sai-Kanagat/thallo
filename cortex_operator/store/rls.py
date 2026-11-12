@@ -10,6 +10,10 @@ from __future__ import annotations
 import psycopg
 
 EXEMPT = frozenset({"schema_migrations"})  # migration bookkeeping, no grants to the app role
+# Above tenants: RLS enabled with no policy, and no grants to the app role (0012).
+NO_ACCESS = frozenset({"operator", "identity"})
+# The cross-tenant job queue: deliberately not under tenant RLS (0012). Payload holds ids only.
+QUEUE = frozenset({"job"})
 
 _QUERY = """
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
@@ -29,7 +33,16 @@ ORDER BY c.relname
 def audit_rls(conn: psycopg.Connection) -> list[str]:
     problems: list[str] = []
     for name, enabled, forced, policies in conn.execute(_QUERY).fetchall():
-        if name in EXEMPT:
+        if name in EXEMPT or name in QUEUE:
+            continue
+        if name in NO_ACCESS:
+            if not enabled or policies:
+                problems.append(f"{name}: must have RLS enabled with no policy")
+            granted = conn.execute(
+                "SELECT count(*) FROM information_schema.role_table_grants "
+                "WHERE table_name = %s AND grantee LIKE 'cortex_app%%'", (name,)).fetchone()[0]
+            if granted:
+                problems.append(f"{name}: the app role must have no grants")
             continue
         if not enabled:
             problems.append(f"{name}: row-level security not enabled")

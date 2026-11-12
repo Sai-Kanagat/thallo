@@ -28,7 +28,7 @@ from psycopg.types.json import Jsonb
 
 from cortex_operator.contracts.clock import Clock
 from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Row, Tenant
+from cortex_operator.contracts.models import Operator, Row, Tenant
 
 R = TypeVar("R", bound=Row)
 
@@ -173,6 +173,15 @@ class Database:
                 raise InvalidTenant("the application URL must connect as a role without BYPASSRLS")
             _scope(conn, tenant_id)
             yield TenantRepo(conn, tenant_id, self.clock)
+
+    def create_operator(self, operator: Operator) -> Operator:
+        """Provision an operator (the layer above tenants). Needs admin_url."""
+        if self.admin_url is None:
+            raise InvalidTenant("create_operator needs admin_url (the owner role)")
+        with psycopg.connect(self.admin_url) as conn:
+            conn.execute("INSERT INTO operator (id, created_at, name) VALUES (%s, %s, %s)",
+                         (operator.id, operator.created_at, operator.name))
+        return operator
 
     def create_tenant(self, tenant: Tenant) -> Tenant:
         """Provision a tenant row. Needs admin_url: the app role cannot create tenants."""

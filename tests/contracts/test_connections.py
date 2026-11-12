@@ -74,13 +74,14 @@ def test_message_send_needs_exactly_one_authority():
 
 def _apply(**kw):
     base = dict(tenant_id=T, action=c.AdsAction.APPLY_SIGNED, platform="meta", spend_proposal_id=A,
-                approval_id=B, approved_content_hash=SHA, to_daily_eur=Decimal("20"), campaign_external_id="c1")
+                approval_id=B, approved_content_hash=SHA, to_daily=Decimal("20"), currency="EUR",
+                campaign_external_id="c1")
     return c.AdsRequest(**(base | kw))
 
 
 def test_spend_change_carries_the_exact_signed_amount():
     _apply()
-    for missing in ("spend_proposal_id", "approval_id", "approved_content_hash", "to_daily_eur",
+    for missing in ("spend_proposal_id", "approval_id", "approved_content_hash", "to_daily", "currency",
                     "campaign_external_id"):
         with pytest.raises(ValidationError):
             _apply(**{missing: None})
@@ -91,7 +92,7 @@ def test_no_side_door_for_spend():
         c.AdsRequest(tenant_id=T, action=c.AdsAction.CREATE_PAUSED, platform="meta",
                      payload={"status": "ACTIVE", "daily_budget": 500})
     with pytest.raises(ValidationError):
-        c.AdsRequest(tenant_id=T, action=c.AdsAction.PAUSE, platform="meta", to_daily_eur=Decimal(5))
+        c.AdsRequest(tenant_id=T, action=c.AdsAction.PAUSE, platform="meta", to_daily=Decimal(5))
     for nested in ({"campaign": {"daily_budget_micros": 5_000_000}}, {"ad_sets": [{"Status": "ACTIVE"}]},
                    {"campaign_budget": 1}, {"x": {"y": {"bid_strategy": "max"}}}):
         with pytest.raises(ValidationError):
@@ -105,7 +106,7 @@ def test_model_construct_cannot_skip_validation_at_the_provider():
     forged = c.AdsRequest.model_construct(tenant_id=T, action=c.AdsAction.APPLY_SIGNED, platform="meta",
                                           payload={}, cost_cap_eur=None, idempotency_key=None,
                                           campaign_external_id=None, ad_id=None, spend_proposal_id=None,
-                                          approval_id=None, approved_content_hash=None, to_daily_eur=None)
+                                          approval_id=None, approved_content_hash=None, to_daily=None, currency=None)
     with pytest.raises(ValidationError):
         MockProvider(Capability.ADS, clk).run(forged)
 

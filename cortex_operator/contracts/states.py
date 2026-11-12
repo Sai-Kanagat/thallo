@@ -130,7 +130,7 @@ CLAIM = _m("claim", C, C.CANDIDATE, {
     C.CANDIDATE: {C.VERIFIED, C.REJECTED},  # VERIFIED only by a HumanActor
     C.VERIFIED: {C.EXPIRED, C.VOIDED},
     C.EXPIRED: {C.VERIFIED, C.REJECTED},
-    C.VOIDED: {C.CANDIDATE},
+    C.VOIDED: set(),  # terminal: a change writes a NEW claim version, so what was published stays on record
     C.REJECTED: set(),
 })
 
@@ -177,9 +177,9 @@ LEAD = _m("lead", L, L.NEW, {
     L.QUALIFYING: {L.ROUTED, L.CONTACTED, L.PARKED, L.LOST},
     L.ROUTED: {L.CONTACTED, L.NURTURING, L.PARKED},
     L.NURTURING: {L.CONTACTED, L.BOOKED, L.PARKED, L.LOST},
-    L.CONTACTED: {L.BOOKED, L.NURTURING, L.LOST},
+    L.CONTACTED: {L.BOOKED, L.NURTURING, L.WON, L.LOST},  # WON/LOST direct: walk-in or phone sale
     L.BOOKED: {L.HELD, L.NO_SHOW, L.NURTURING, L.LOST},  # NURTURING/LOST = booking cancelled
-    L.HELD: {L.WON, L.LOST},
+    L.HELD: {L.WON, L.LOST, L.BOOKED},  # BOOKED: a second meeting (visit, then test drive)
     L.NO_SHOW: {L.NURTURING, L.BOOKED, L.LOST},
     L.PARKED: {L.CONTACTED},
     L.WON: set(),
@@ -305,6 +305,26 @@ AD = _m("ad", A, A.CREATED_PAUSED, {
 })
 
 
+class PlanSlotState(StrEnum):
+    OPEN = "open"
+    FILLED = "filled"
+    BENCHED = "benched"  # filled from the evergreen bench after a miss
+    PUBLISHED = "published"
+    MISSED = "missed"
+    KILLED = "killed"
+
+
+PS = PlanSlotState
+PLAN_SLOT = _m("plan_slot", PS, PS.OPEN, {
+    PS.OPEN: {PS.FILLED, PS.KILLED, PS.MISSED},
+    PS.FILLED: {PS.PUBLISHED, PS.MISSED, PS.OPEN},  # OPEN: the variant was pulled
+    PS.MISSED: {PS.BENCHED, PS.KILLED},
+    PS.BENCHED: {PS.PUBLISHED, PS.MISSED},
+    PS.PUBLISHED: set(),
+    PS.KILLED: set(),
+})
+
+
 MACHINES: dict[str, Machine] = {m.name: m for m in (
-    VARIANT, BUNDLE, CLAIM, IDEA, LEAD, SPEND_PROPOSAL, RULE_PROPOSAL, JOB, MESSAGE, BOOKING, AD,
+    VARIANT, BUNDLE, CLAIM, IDEA, LEAD, SPEND_PROPOSAL, RULE_PROPOSAL, JOB, MESSAGE, BOOKING, AD, PLAN_SLOT,
 )}
