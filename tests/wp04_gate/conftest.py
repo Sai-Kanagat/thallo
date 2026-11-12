@@ -1,5 +1,6 @@
 """A small in-memory world for the gate tests: one tenant, one bundle in review, two variants,
-media in a fake blob store addressed by path, and verified claims."""
+media in a fake blob store addressed by path, verified claims, users, consents and tracked links.
+`World` implements GateRepository; `fail_on` makes one repository method raise."""
 from __future__ import annotations
 
 import hashlib
@@ -15,14 +16,33 @@ from cortex_operator.contracts.enums import (
     ApprovalMethod,
     Channel,
     ClaimKind,
+    ConsentBasis,
     Language,
     MediaKind,
     MediaProvenance,
+    UserRole,
 )
 from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Approval, Bundle, Claim, Media, Tenant, Variant, VariantMedia
+from cortex_operator.contracts.models import (
+    Approval,
+    AppUser,
+    Bundle,
+    Claim,
+    Consent,
+    Media,
+    Tenant,
+    TrackedLink,
+    Variant,
+    VariantMedia,
+)
 from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate import approve_bundle, load_bundle
+from cortex_operator.gate import (
+    GateChange,
+    approve_bundle_from_repo,
+    bundle_hash,
+    load_bundle,
+    void_bundle_approvals,
+)
 from cortex_operator.trust.audit import AuditLog, InMemoryAuditStore
 
 _counter = itertools.count(1)
@@ -40,6 +60,10 @@ class FakeVerifier:
         return actor.session_id in self.live
 
 
+class RepoDown(RuntimeError):
+    pass
+
+
 @dataclass
 class World:
     clock: FakeClock
@@ -51,38 +75,81 @@ class World:
     claims: dict[str, Claim]
     variant_claims: dict[str, list[str]]
     blobs: dict[str, bytes]  # storage_uri to bytes
+    users: dict[str, AppUser]
+    tracked: dict[str, list[TrackedLink]]
     approvals: dict[str, Approval] = field(default_factory=dict)
+    consents: dict[str, Consent] = field(default_factory=dict)
     links: dict[str, str] = field(default_factory=dict)
     audit_store: InMemoryAuditStore = field(default_factory=InMemoryAuditStore)
     user_id: str = ""
-    session: str = "live-session"
+    session: str = "live-1"
+    paused_everywhere: bool = False
+    fail_on: str | None = None
+
+    def _ok(self, name: str) -> None:
+        if self.fail_on == name:
+            raise RepoDown(name)
 
     # ----- GateRepository
+    def system_paused(self):
+        self._ok("system_paused")
+        return self.paused_everywhere
+
     def get_tenant(self, tenant_id):
+        self._ok("get_tenant")
         return self.tenant if self.tenant.id == tenant_id else None
 
     def get_bundle(self, tenant_id, bundle_id):
+        self._ok("get_bundle")
         b = self.bundle
         return b if b.id == bundle_id and b.tenant_id == tenant_id else None
 
     def get_variants(self, tenant_id, bundle_id):
+        self._ok("get_variants")
         return [v for v in self.variants.values() if v.bundle_id == bundle_id and v.tenant_id == tenant_id]
 
     def get_variant_media(self, tenant_id, variant_id):
+        self._ok("get_variant_media")
         return [(vm, self.media[vm.media_id]) for vm in self.variant_media.get(variant_id, [])
                 if vm.tenant_id == tenant_id]
 
     def read_media_bytes(self, tenant_id, media):
+        self._ok("read_media_bytes")
         return self.blobs[media.storage_uri]
 
     def get_variant_claims(self, tenant_id, variant_id):
+        self._ok("get_variant_claims")
         return [self.claims[c] for c in self.variant_claims.get(variant_id, [])]
 
+    def get_tracked_links(self, tenant_id, variant_id):
+        self._ok("get_tracked_links")
+        return list(self.tracked.get(variant_id, []))
+
+    def get_consent(self, tenant_id, consent_id):
+        self._ok("get_consent")
+        c = self.consents.get(consent_id)
+        return c if c is not None and c.tenant_id == tenant_id else None
+
     def get_approval(self, tenant_id, approval_id):
+        self._ok("get_approval")
         a = self.approvals.get(approval_id)
         return a if a is not None and a.tenant_id == tenant_id else None
 
+    def get_approvals(self, tenant_id, bundle_id):
+        self._ok("get_approvals")
+        return [a for a in self.approvals.values() if a.tenant_id == tenant_id and a.subject_id == bundle_id]
+
+    def get_user(self, tenant_id, user_id):
+        self._ok("get_user")
+        return self.users.get(user_id)  # deliberately not tenant-filtered: the gate must check
+
+    def get_audit_entries(self, tenant_id, subject_kind, subject_id):
+        self._ok("get_audit_entries")
+        return [e for e in self.audit_store.entries(tenant_id)
+                if e.subject_kind == subject_kind and e.subject_id == subject_id]
+
     def resolve_link(self, tenant_id, url):
+        self._ok("resolve_link")
         return self.links.get(url)
 
     # ----- helpers
@@ -99,30 +166,54 @@ class World:
     def content(self):
         return load_bundle(self, self.tenant.id, self.bundle)
 
-    def approve(self, **kw) -> Approval:
-        """Approve as the verified human, store the approval and move the rows to approved."""
-        from cortex_operator.gate import bundle_hash
+    def apply(self, change: GateChange) -> None:
+        """What WP-01 does in one transaction."""
+        for e in change.audit_entries:
+            self.audit_store.insert(e)
+        for a in change.voided_approvals:
+            self.approvals[a.id] = a
+        if change.new_approval is not None:
+            self.approvals[change.new_approval.id] = change.new_approval
+        self.bundle = change.bundle
+        for v in change.variants:
+            self.variants[v.id] = v
 
-        content = self.content()
-        shown = bundle_hash(content, self.links.get).root
-        granted = approve_bundle(content, actor=self.human(), verifier=self.verifier(), shown_hash=shown,
-                                 method=kw.pop("method", ApprovalMethod.PER_BUNDLE),
-                                 seconds_on_screen=kw.pop("seconds_on_screen", 42.0), clock=self.clock,
-                                 audit=self.audit, resolver=self.links.get, **kw)
-        a = granted.approval
-        self.approvals[a.id] = a
-        self.bundle = self.bundle.model_copy(update={"state": BundleState.APPROVED,
-                                                     "root_hash": granted.bundle_hash.root})
-        for vid, v in list(self.variants.items()):
-            self.variants[vid] = v.model_copy(update={"state": VariantState.SCHEDULED,
-                                                      "content_sha256": granted.bundle_hash.variants[vid]})
-        return a
+    def approve(self, *, return_change: bool = False, **kw):
+        """Approve as the verified human through the repository path, then commit the change."""
+        shown = bundle_hash(self.content(), self.links.get).root
+        change = approve_bundle_from_repo(
+            self, tenant_id=self.tenant.id, bundle_id=self.bundle.id, actor=self.human(), verifier=self.verifier(),
+            shown_hash=shown, method=kw.pop("method", ApprovalMethod.PER_BUNDLE),
+            seconds_on_screen=kw.pop("seconds_on_screen", 42.0), clock=self.clock, audit=self.audit, **kw)
+        self.apply(change)
+        return change if return_change else change.new_approval
 
     def edit_variant(self, vid: str, **update) -> None:
+        """A raw storage write, with no gate involvement."""
         self.variants[vid] = self.variants[vid].model_copy(update=update)
+
+    def edit_after_grant(self, vid: str, **update) -> None:
+        """The documented edit path: the edit and the voiding commit together."""
+        change = void_bundle_approvals(self.bundle, tuple(self.variants.values()),
+                                       tuple(self.approvals.values()), reason="text edited after approval",
+                                       actor=self.human(), clock=self.clock, audit=self.audit)
+        self.apply(change)
+        self.edit_variant(vid, **update)
+
+    def back_to_review(self) -> None:
+        self.bundle = self.bundle.model_copy(update={"state": BundleState.IN_REVIEW})
+        for vid in self.variants:
+            self.edit_variant(vid, state=VariantState.REVIEW)
 
     def edit_claim(self, cid: str, **update) -> None:
         self.claims[cid] = self.claims[cid].model_copy(update=update)
+
+    def add_consent(self) -> str:
+        c = Consent(id=ident(self.clock), created_at=self.clock.now(), tenant_id=self.tenant.id, person_id=None,
+                    subject_label="Rider in hero photo", basis=ConsentBasis.OPT_IN, scope="likeness",
+                    evidence="signed release, scan 14", given_at=self.clock.now())
+        self.consents[c.id] = c
+        return c.id
 
 
 def make_world(clock: FakeClock | None = None) -> World:
@@ -131,7 +222,8 @@ def make_world(clock: FakeClock | None = None) -> World:
     tenant = Tenant(id=ident(clock), created_at=now, name="Demo Bikes", slug=f"demo-{next(_counter)}",
                     default_language=Language.IT, region_code="IT")
     t = tenant.id
-    user_id = ident(clock)
+    user = AppUser(id=ident(clock), created_at=now, tenant_id=t, display_name="Approver", role=UserRole.APPROVER)
+    user_id = user.id
     bundle = Bundle(id=ident(clock), created_at=now, tenant_id=t, asset_id=ident(clock),
                     state=BundleState.IN_REVIEW, rule_version=3)
     blobs = {"s3://bucket/hero.png": b"\x89PNG hero image bytes", "s3://bucket/detail.png": b"\x89PNG detail"}
@@ -157,8 +249,11 @@ def make_world(clock: FakeClock | None = None) -> World:
                                position=0),
                   VariantMedia(id=ident(clock), created_at=now, tenant_id=t, variant_id=v1.id, media_id=mids[1],
                                position=1)]}
+    tracked = {v1.id: [TrackedLink(id=ident(clock), created_at=now, tenant_id=t, variant_id=v1.id, ad_id=None,
+                                   slug="abc", destination="https://demo-bikes.example/offer?utm=ig")]}
     return World(clock=clock, tenant=tenant, bundle=bundle, variants={v1.id: v1, v2.id: v2}, media=media,
                  variant_media=vm, claims={claim.id: claim}, variant_claims={v1.id: [claim.id]}, blobs=blobs,
+                 users={user_id: user}, tracked=tracked,
                  links={"https://thallo.test/r/abc": "https://demo-bikes.example/offer?utm=ig"}, user_id=user_id)
 
 
