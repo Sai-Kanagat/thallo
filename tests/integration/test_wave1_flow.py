@@ -69,7 +69,7 @@ from cortex_operator.truth import build, change_claim, library, new_candidate, t
 
 from .backends import REDIRECT, MemoryBackend, PgBackend
 
-TEXT = "Fino a {{C-0001}} con una carica. Scopri di più: " + REDIRECT + "SLUG"
+TEXT = "Fino a {{C-0001}} con una carica, il top. Scopri di più: " + REDIRECT + "SLUG"
 DESTINATION = "https://bici-demo.example/offerta"
 IMAGE = b"\x89PNG wave one hero image"
 
@@ -144,14 +144,14 @@ def seed(b, name: str) -> Shop:
                                      evidence="spec sheet page 2: range 120 km",
                                      languages={"it": "120 km di autonomia"})
         s.claims.save(candidate)
-        claim, _ = verify_claim(candidate, human, verifier=verifier, clock=clock)
+        claim, _ = verify_claim(candidate, human, verifier=verifier, clock=clock, repo=s.claims)
         s.claims.save(claim)
         assert s.claims.latest(t, "C-0001").state is ClaimState.VERIFIED
 
         slug = "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
         built = build(TEXT.replace("SLUG", slug), tenant_id=t, language=Language.IT, claims=library(s.claims, t),
                       clock=clock, default_language=Language.IT)
-        assert len(built.flags) == 1  # "una": an ambiguous number word, for the approver
+        assert len(built.flags) == 1  # "il top": a flag word, for the approver ("una" counts nothing now)
 
         idea = s.insert(Idea(id=_id(b), created_at=now, tenant_id=t, stage=FunnelStage.CONSIDERATION,
                              title="Range", rationale="Riders ask about range"))
@@ -260,7 +260,8 @@ def test_new_claim_version_blocks_and_never_rewrites_the_old_one(backend, shop, 
     t = shop.tenant.id
     with backend.session(t) as s:
         current = s.claims.latest(t, "C-0001")
-        change = change_claim(current, actor=shop.human, clock=backend.clock, usage=s.claims, value="130",
+        change = change_claim(current, actor=shop.human, verifier=shop.verifier, clock=backend.clock,
+                              repo=s.claims, value="130",
                               languages={"it": "130 km di autonomia"})
         assert change.voided_variant_ids == (shop.variant.id,)
         assert change.voided_approval_ids == (shop.approval.id,)
