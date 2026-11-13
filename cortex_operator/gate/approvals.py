@@ -17,9 +17,9 @@ from datetime import datetime, timedelta
 
 from cortex_operator.contracts.actors import Actor, ActorRef, SessionVerifier, require_human
 from cortex_operator.contracts.clock import Clock
-from cortex_operator.contracts.enums import ApprovalMethod, ApprovalSubject, HumanOnlyAction, UserRole
+from cortex_operator.contracts.enums import ApprovalMethod, ApprovalSubject, CheckVerdict, HumanOnlyAction, UserRole
 from cortex_operator.contracts.ids import is_id, new_id
-from cortex_operator.contracts.models import Approval, AppUser, AuditEntry, Bundle, Variant
+from cortex_operator.contracts.models import Approval, AppUser, AuditEntry, Bundle, CheckResult, Variant
 from cortex_operator.contracts.states import (
     BUNDLE,
     VARIANT,
@@ -65,6 +65,17 @@ class GateChange:
     audit_entries: tuple[AuditEntry, ...]
     new_approval: Approval | None = None
     bundle_hash: BundleHash | None = None
+
+
+def open_flag_ids(results: Sequence[CheckResult]) -> frozenset[str]:
+    """FLAG verdicts still open: for each (variant, layer, check), the latest attempt is a FLAG."""
+    latest: dict[tuple[str, str, str], CheckResult] = {}
+    for r in results:
+        key = (r.variant_id, r.layer.value, r.check_name)
+        if key not in latest or (r.attempt, r.created_at, r.id) > (latest[key].attempt, latest[key].created_at,
+                                                                   latest[key].id):
+            latest[key] = r
+    return frozenset(r.id for r in latest.values() if r.verdict is CheckVerdict.FLAG)
 
 
 def approver_problem(user: AppUser | None, approver_id: str, tenant_id: str) -> str | None:
@@ -115,7 +126,9 @@ def _void_drafts(approvals: Sequence[Approval], *, reason: str, actor: Actor | A
 def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | None, verifier: SessionVerifier,
                    shown_hash: str, method: ApprovalMethod, seconds_on_screen: float, clock: Clock, audit: AuditLog,
                    resolver: LinkResolver, signer: GateSigner, non_links: frozenset[str] = frozenset(),
-                   prior_approvals: Sequence[Approval] = (), ttl: timedelta = DEFAULT_APPROVAL_TTL) -> GateChange:
+                   prior_approvals: Sequence[Approval] = (), ttl: timedelta = DEFAULT_APPROVAL_TTL,
+                   check_results: Sequence[CheckResult] = (),
+                   acknowledged_flag_ids: Sequence[str] = ()) -> GateChange:
     """A human approves exactly what they saw. Raises HumanOnlyViolation or ApprovalRefused.
     Any earlier live approval of the same bundle is voided in the same change."""
     bundle = content.bundle
@@ -140,7 +153,15 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
     if not isinstance(signer, GateSigner):
         raise ApprovalRefused("no gate signing key: approvals cannot be signed")
     now = clock.now()
-    snapshot = build_snapshot(content, resolver)  # one resolution for checks and hash
+    current = {vc.variant.id for vc in content.variants}
+    flags = open_flag_ids([r for r in check_results if r.variant_id in current
+                           and r.tenant_id == bundle.tenant_id])
+    acked = frozenset(acknowledged_flag_ids)
+    if unknown := acked - flags:
+        raise ApprovalRefused(f"acknowledged ids are not open flags on this bundle: {sorted(unknown)}")
+    if missing := flags - acked:
+        raise ApprovalRefused(f"{len(missing)} open flag(s) not acknowledged: {sorted(missing)}")
+    snapshot = build_snapshot(content, resolver, frozenset(non_links))  # one resolution for checks and hash
     if problems := _content_problems(content, now, snapshot, frozenset(non_links)):
         raise ApprovalRefused("; ".join(problems))
     hashed = snapshot.hash
@@ -151,6 +172,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
         id=new_id(clock), created_at=now, tenant_id=bundle.tenant_id, subject_kind=ApprovalSubject.BUNDLE,
         subject_id=bundle.id, content_hash=hashed.root, approver_id=person.id, method=method,
         seconds_on_screen=float(seconds_on_screen), approved_at=now, expires_at=now + ttl, canary=canary,
+        acknowledged_flag_ids=sorted(acked),
     )
     earlier = [a for a in prior_approvals if a.subject_id == bundle.id and a.tenant_id == bundle.tenant_id]
     voided, drafts = _void_drafts(earlier, reason="superseded by a new approval", actor=ActorRef.of(person),
@@ -163,6 +185,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
         "approved_at": approval.approved_at.isoformat(),
         "expires_at": approval.expires_at.isoformat(),
         "canary": canary,
+        "acknowledged_flag_ids": sorted(acked),
         "mac": signer.sign(grant_fields(approval)),
     }))
     return GateChange(
@@ -181,6 +204,7 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
 def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id: str, actor: Actor,
                              verifier: SessionVerifier, shown_hash: str, method: ApprovalMethod,
                              seconds_on_screen: float, clock: Clock, audit: AuditLog, signer: GateSigner,
+                             acknowledged_flag_ids: Sequence[str] = (),
                              ttl: timedelta = DEFAULT_APPROVAL_TTL) -> GateChange:
     """The approval entry point for WP-09. Loads through the same path as `check_publish`."""
     bundle = repo.get_bundle(tenant_id, bundle_id)
@@ -192,7 +216,10 @@ def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id:
                           method=method, seconds_on_screen=seconds_on_screen, clock=clock, audit=audit,
                           resolver=lambda url: repo.resolve_link(tenant_id, url), signer=signer,
                           non_links=frozenset(repo.non_link_allowlist(tenant_id)),
-                          prior_approvals=tuple(repo.get_approvals(tenant_id, bundle_id)), ttl=ttl)
+                          prior_approvals=tuple(repo.get_approvals(tenant_id, bundle_id)), ttl=ttl,
+                          check_results=[r for vc in content.variants
+                                         for r in repo.get_check_results(tenant_id, vc.variant.id)],
+                          acknowledged_flag_ids=acknowledged_flag_ids)
 
 
 def void_bundle_approvals(bundle: Bundle, variants: Sequence[Variant], approvals: Sequence[Approval], *,

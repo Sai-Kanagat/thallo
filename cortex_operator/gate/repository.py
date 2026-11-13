@@ -13,6 +13,7 @@ from cortex_operator.contracts.models import (
     AppUser,
     AuditEntry,
     Bundle,
+    CheckResult,
     Claim,
     Consent,
     Media,
@@ -59,6 +60,10 @@ class GateRepository(Protocol):
 
     def get_audit_entries(self, tenant_id: str, subject_kind: str, subject_id: str) -> Sequence[AuditEntry]:
         """Audit entries about one subject, for example ("approval", approval_id)."""
+        ...
+
+    def get_check_results(self, tenant_id: str, variant_id: str) -> Sequence[CheckResult]:
+        """Every check_result row for this variant, all attempts."""
         ...
 
     def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:

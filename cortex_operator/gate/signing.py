@@ -45,6 +45,7 @@ def grant_fields(approval: Approval) -> dict[str, Any]:
         "approved_at": approval.approved_at.isoformat(),
         "expires_at": approval.expires_at.isoformat(),
         "canary": approval.canary,
+        "acknowledged_flag_ids": sorted(approval.acknowledged_flag_ids),
     }
 
 

@@ -208,6 +208,7 @@ def _grant_problem(evidence: ApprovalEvidence, signer: GateSigner) -> str | None
         and e.payload.get("approved_at") == expected["approved_at"]
         and e.payload.get("expires_at") == expected["expires_at"]
         and e.payload.get("canary") is approval.canary
+        and e.payload.get("acknowledged_flag_ids") == expected["acknowledged_flag_ids"]
         and compute_entry_hash(e) == e.entry_hash
     ]
     if not candidates:
@@ -303,11 +304,11 @@ def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant:
     payload: PublishPayload | None = None
     unresolved_urls: list[str] = []
     try:
-        snapshot = build_snapshot(content, resolver)  # one memoised resolution for hash and payload
+        snapshot = build_snapshot(content, resolver, frozenset(non_links))  # one memoised resolution
         hashed = snapshot.hash
         if target is not None:
             payload = snapshot.payload(variant_id)
-            unresolved_urls = snapshot.unresolved(variant_id, frozenset(non_links))
+            unresolved_urls = snapshot.unresolved(variant_id, frozenset(non_links))  # same allowlist as hashed
     except Exception as exc:  # a hashing failure blocks; it never passes and never raises
         blocks.append(Block(BlockReason.UNHASHABLE, f"{type(exc).__name__}: {exc}"))
     if hashed is not None and approval is not None and hashed.root != approval.content_hash:
