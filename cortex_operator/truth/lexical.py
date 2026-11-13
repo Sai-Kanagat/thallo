@@ -336,7 +336,7 @@ class _Scan:
 
     def _compares(self, k: int) -> bool:
         nxt = self._next_word(k)
-        return bool(nxt) and nxt not in FUNCTION_WORDS and self._prev_word(k) not in ("di", "al", "in")
+        return bool(nxt) and nxt not in FUNCTION_WORDS and self._prev_word(k) not in ("di", "al", "dal", "in")
 
     def second_tier(self, comparatives: list[int], universals: list[int]) -> None:
         t = self.t
@@ -358,7 +358,8 @@ class _Scan:
         t, lang = self.t, self.language
 
         def strong(word: str) -> bool:
-            return block_word(word, lang) is not None
+            return block_word(word, lang) is not None or (
+                len(word) >= 3 and roman_numeral(word) and word not in ROMAN_WORDS)
 
         def try_join(first: int, last: int) -> bool:
             toks = range(first, last + 1)

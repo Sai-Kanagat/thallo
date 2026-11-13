@@ -243,7 +243,7 @@ BLOCK_PATTERNS: dict[Language, dict[Category, tuple[str, ...]]] = {
             r"meta\s+prezzo",
         ),
     },
-    Language.TA: {},
+    Language.TA: {Category.SUPERLATIVE: ("நம்பர்\\s+ஒன்",)},
 }
 
 # Tamil number roots matched anywhere inside a word (Tamil writes numbers as one word with
