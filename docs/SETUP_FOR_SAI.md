@@ -1,6 +1,6 @@
 # What Thallo needs from Sai
 
-Everything in one place, in build order. The rule for every secret: it goes into `~/cortex-operator/.env` (or a file outside the repo) by you, and never into chat. After each step, run this and tell Claude "done":
+Everything in one place, in build order. Links checked on 12 Nov 2026; pages behind a sign-in could not be checked and are marked. The rule for every secret: it goes into `~/cortex-operator/.env` (or a file outside the repo) by you, and never into chat. After each step, run this and tell Claude "done":
 
 ```
 cd ~/cortex-operator && .venv/bin/python scripts/check_env.py
@@ -32,8 +32,8 @@ cd ~/cortex-operator && .venv/bin/python scripts/gen_keys.py
 Then open `.env`, copy the `THALLO_VAULT_KEY` and `THALLO_GATE_SIGNING_KEY` lines into your password manager, and keep that backup. Losing the vault key makes every stored token unreadable.
 
 ### A4. Anthropic API key (5 min)
-1. Go to https://console.anthropic.com/settings/keys (sign in, create an organisation if asked).
-2. Under **Billing**, add a card and **set a monthly spend limit** (USD 20 is plenty for build and pilot).
+1. Go to https://platform.claude.com/settings/keys (sign in, create an organisation if asked).
+2. Add a card in billing, then **set a monthly spend limit** at https://platform.claude.com/settings/spend-limits (USD 20 is plenty for build and pilot).
 3. **Create key**, name it `thallo-dev`, and paste it into `.env` as `ANTHROPIC_API_KEY=...`.
 
 ### A5. Gemini API key (3 min)
@@ -64,11 +64,11 @@ Send these today, because approval time is the longest wait in the whole plan. M
    - Add the **WhatsApp** product. Meta gives you a free test number right away; that is enough for wave 3 testing.
 2. **Google Ads API**
    - Create a Google Ads **manager account**: https://ads.google.com/home/tools/manager-accounts/
-   - In it, open **Admin, then API Center** and apply for a developer token (Basic access). Docs: https://developers.google.com/google-ads/api/docs/get-started/dev-token
+   - The old API Center developer-token flow was retired in September 2026. Now: in the `thallo` Cloud project (step 3 below creates it), enable the **Google Ads API**, then request access from the **Google Ads API Overview** page in the Cloud Console. Basic access needs brand verification. Current rules: https://developers.google.com/google-ads/api/docs/api-policy/developer-token
 3. **Google Business Profile API**
    - Create a Google Cloud project named `thallo`: https://console.cloud.google.com/projectcreate
-   - Submit the access request form linked from: https://developers.google.com/my-business/content/prereqs
-   - Use the Cloud project number from the project dashboard.
+   - Open https://developers.google.com/my-business/content/prereqs, go to the section **Request access to the APIs**, and submit the form it links to. The form may only appear when you are signed in to Google; if the link lands on the Help Center home page, sign in and click it again from the prereqs page.
+   - It asks for the **Project Number**, shown on the project Dashboard's "Project info" card.
 
 Put nothing from these in `.env` yet. Tell Claude what was approved, and when.
 
@@ -79,7 +79,7 @@ Put nothing from these in `.env` yet. Tell Claude what was approved, and when.
 ### B1. Postiz, publishing (10 min, costs money: your call)
 1. Sign up at https://postiz.com. The plan says the Standard tier (about USD 29 a month) is enough. Buying it is your decision.
 2. Connect **one** channel first (a page you control, ideally the first pilot's).
-3. In Postiz settings, find the **Public API** key and paste it into `.env` as `POSTIZ_API_KEY=...`.
+3. In Postiz settings, find the **Public API** key (Postiz documents the API at https://docs.postiz.com/public-api/introduction; the exact menu name was not verifiable without signing in) and paste it into `.env` as `POSTIZ_API_KEY=...`.
 
 ### B2. Brand files for the first pilot (15 min)
 Put these in `~/thallo-brands/<pilot-name>/`, outside the repo, since client data stays out of git: logo (SVG or large PNG), font files or font names, brand colours, 20 past posts (screenshots are fine), 10 liked and 10 disliked reference posts, and about 30 real photos.
@@ -89,13 +89,13 @@ Put these in `~/thallo-brands/<pilot-name>/`, outside the repo, since client dat
 ## Part C. Before wave 3 (leads and messaging)
 
 ### C1. WhatsApp Cloud API token (after A7 step 1)
-In your Meta app, go to WhatsApp, then **API Setup**. Copy the **Phone number ID** and the **WhatsApp Business Account ID** into `.env` as `WHATSAPP_PHONE_NUMBER_ID=` and `WHATSAPP_WABA_ID=`. For the token, create a **System user** in Business settings, give it the app and the WhatsApp account, and generate a permanent token with `whatsapp_business_messaging` and `whatsapp_business_management`. Put it in `.env` as `WHATSAPP_TOKEN=`. Do not use the 24-hour temporary token. Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/get-started
+In your Meta app, go to WhatsApp, then **API Setup**. Copy the **Phone number ID** and the **Messaging account ID** (the WhatsApp Business Account) into `.env` as `WHATSAPP_PHONE_NUMBER_ID=` and `WHATSAPP_WABA_ID=`. For the token, create a **System user** in Business settings, give it the app and the WhatsApp account, and generate a permanent token with `whatsapp_business_messaging` and `whatsapp_business_management`. Put it in `.env` as `WHATSAPP_TOKEN=`. Do not use the temporary token from API Setup; it expires quickly. Docs: https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started
 
 ### C2. Email sending: Brevo (free tier)
-Sign up at https://www.brevo.com, verify a sender domain (DNS records on the sending domain), then go to **SMTP & API, API keys**, and put the key in `.env` as `BREVO_API_KEY=`.
+Sign up at https://www.brevo.com, verify a sender domain (DNS records on the sending domain), then find **API keys** in your account settings (the menu name was not verifiable without signing in) and put the key in `.env` as `BREVO_API_KEY=`.
 
 ### C3. Booking: Cal.com
-Sign up at https://cal.com, create one event type per pilot ("Demo" or "Showroom visit"), go to **Settings, Developer, API keys**, and put the key in `.env` as `CALCOM_API_KEY=`.
+Sign up at https://cal.com, create one event type per pilot ("Demo" or "Showroom visit"), go to **Settings, then Security**, create an API key, and put it in `.env` as `CALCOM_API_KEY=`.
 
 ### C4. Each pilot business (Claude prepares the questions; you run the conversations)
 - The 45-minute kickoff interview with each owner.
@@ -112,12 +112,12 @@ Sign up at https://cal.com, create one event type per pilot ("Demo" or "Showroom
 3. Add the service account's email as **Viewer** on each pilot's GA4 property (Admin, then Property access management), and as a **user** in each Search Console property (Settings, then Users and permissions).
 
 ### D2. Notion mirror (optional)
-Create an internal integration at https://www.notion.so/profile/integrations, share the calendar database with it, and put the token in `.env` as `NOTION_TOKEN=`.
+Create an internal integration at https://app.notion.com/profile/integrations, share the calendar database with it, and put the token in `.env` as `NOTION_TOKEN=`.
 
 ---
 
 ## Part E. Before wave 5 (money)
-- **Google Ads**: once the developer token is approved, create an OAuth client (Desktop app) in the `thallo` Cloud project (APIs and services, then Credentials). Claude will then give you a one-time local command that produces the refresh token.
+- **Google Ads**: once Google Ads API access is approved, create an OAuth client (Desktop app) in the `thallo` Cloud project (APIs and services, then Credentials). Claude will then give you a one-time local command that produces the refresh token.
 - **Meta Marketing API**: in the same Meta app, add **Marketing API**, give the system user the pilot's ad account, and add `ads_management` and `ads_read` to its token. Put the ad account id in `.env` as `META_AD_ACCOUNT_ID=`.
 - **Spend caps per pilot**: a monthly cap and a daily cap, in each business's currency.
 - **Growth model numbers per pilot**: average margin per sale, rough close rate, show rate, and where enquiries come from today.

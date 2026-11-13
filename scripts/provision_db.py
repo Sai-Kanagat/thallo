@@ -54,7 +54,9 @@ def main() -> int:
             password = secrets.token_urlsafe(32)
             exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
             verb = "ALTER" if exists else "CREATE"
-            conn.execute(sql.SQL(verb + " ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS INHERIT PASSWORD {}").format(
+            # No SUPERUSER or BYPASSRLS clause: managed Postgres forbids naming them. Both default
+            # to off for a new role, and the login test below fails if either is ever on.
+            conn.execute(sql.SQL(verb + " ROLE {} LOGIN INHERIT PASSWORD {}").format(
                 sql.Identifier(role), sql.Literal(password)))
             conn.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(group), sql.Identifier(role)))
             updates[env_key] = login_url(admin_url, role, password)

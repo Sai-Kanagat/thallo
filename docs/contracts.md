@@ -19,6 +19,8 @@ Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex
 
 ## Rules baked into the types
 
+- Three verdicts, three behaviours. FAIL blocks the build. FLAG (ambiguous number words, universal claims, grader and second-reader doubts) never blocks the build but must be acknowledged one by one by the approver: the gate refuses a grant unless `acknowledged_flag_ids` covers every open FLAG `check_result` on the bundle's current variants, and the acknowledged ids are inside the signed grant. PASS collapses on the review card. A flag is therefore never a silent pass.
+
 - Money: every client-money column is in the tenant's `currency` (ISO 4217) and carries no currency suffix. Only our own provider costs (`cost_ledger.cost_eur`, `cost_cap_eur`) are in euros.
 - Identity: an `identity` is a login (one per email); an `app_user` is that identity's membership and role inside one tenant. A `tenant` belongs to an `operator`. The app role has no access to operator or identity; login and the console reach them through owner-run code.
 - Claims are append-only by version. A change writes a new row (version + 1, `supersedes_id`) and the old one goes to VOIDED, which is terminal, so the exact fact a published piece used is never overwritten.
@@ -76,13 +78,14 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
 | 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 2.2.0 | 2026-11-13 | Review flags need acknowledgement: `approval.acknowledged_flag_ids` (migration 0002, first post-freeze change). Post-freeze columns use `added("000N")` in models.py |
 | 2.1.0 | 2026-11-12 | From WP-03 and WP-04 reviews: `ConsentScope` closed enum on `consent.scope`, `Media.has_voice_track`, `Claim.expiry_reason` |
 | 2.0.0 | 2026-11-12 | Breaking, from a Fable review before the first real database: tenant currency and no `_eur` on client money; operator and identity above tenants; job as a cross-tenant queue (0012); event_delivery replaces event_log.delivered_at; deal without booking plus lead CONTACTED to WON/LOST and HELD to BOOKED; campaign table; message.person_id; claim versioning with terminal VOIDED; plan_slot. Affects WP-01 (merged, updated), WP-02, WP-03 and WP-04 (merge main) |
 | 1.1.0 | 2026-11-11 | Additive, from WP-02 and WP-03 requests: `RunResult.status` and `task` for manual runs, `MediaProvenance.PERSON_RECORDING` and `PERSON_FILE`, `ClaimKind.OFFER`, `claim.rejected` event, `ClaimChangedPayload.voided_variant_ids`, optional foreign keys default to None |
 
 ## Migrations
 
-- `0001_core.sql` is generated, and it may still be regenerated until the first real database is deployed (Sai's Supabase step). After that, every schema change is a new numbered migration. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
+- `0001_core.sql` is generated and is now FROZEN: it was applied to the real Supabase database on 12 Nov 2026 at contracts 2.1.0. Every schema change from here is a new numbered migration (`0002` to `0009` are reserved for lead-owned core changes), and `models.py` changes with it in the same commit. Migrations must run without a true superuser: never name the SUPERUSER or BYPASSRLS attributes; check them instead. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
 - `scripts/migrate.py` applies files in order, once each, and refuses a file that changed after it was applied.
 - Row-level security per tenant arrives in WP-01's migration, not here.
 
