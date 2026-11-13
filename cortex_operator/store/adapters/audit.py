@@ -50,12 +50,12 @@ class PgAuditStore:
         own(self.repo, tenant_id)
         if not isinstance(from_seq, int) or isinstance(from_seq, bool):
             raise AuditError("from_seq must be an int")
-        return tuple(self.repo.query(AuditEntry, "SELECT * FROM audit_log WHERE seq >= %s ORDER BY seq",
-                                     (from_seq,)))
+        return tuple(self.repo.query_all(AuditEntry, "SELECT * FROM audit_log WHERE seq >= %s ORDER BY seq",
+                                         (from_seq,)))
 
     def about(self, tenant_id: str, subject_kind: str, subject_id: str) -> Sequence[AuditEntry]:
         own(self.repo, tenant_id)
-        return tuple(self.repo.query(
+        return tuple(self.repo.query_all(
             AuditEntry, "SELECT * FROM audit_log WHERE subject_kind = %s AND subject_id = %s ORDER BY seq",
             (subject_kind, subject_id)))
 

@@ -35,11 +35,11 @@ class PgClaimRepository:
 
     def history(self, tenant_id: str, code: str) -> Sequence[Claim]:
         own(self.repo, tenant_id)
-        return self.repo.query(Claim, "SELECT * FROM claim WHERE code = %s ORDER BY version", (code,))
+        return self.repo.query_all(Claim, "SELECT * FROM claim WHERE code = %s ORDER BY version", (code,))
 
     def latest_for_tenant(self, tenant_id: str) -> Sequence[Claim]:
         own(self.repo, tenant_id)
-        return self.repo.query(Claim, "SELECT DISTINCT ON (code) * FROM claim ORDER BY code, version DESC")
+        return self.repo.query_all(Claim, "SELECT DISTINCT ON (code) * FROM claim ORDER BY code, version DESC")
 
     def get(self, tenant_id: str, claim_id: str) -> Claim | None:
         own(self.repo, tenant_id)
@@ -73,19 +73,19 @@ class PgClaimRepository:
     # ClaimUsage
     def variants_using_claim(self, tenant_id: str, claim_id: str) -> Sequence[str]:
         own(self.repo, tenant_id)
-        rows = self.repo.execute("SELECT variant_id FROM variant_claim WHERE claim_id = %s ORDER BY variant_id",
-                                 (claim_id,)).fetchall()
+        rows = self.repo.fetch_all("SELECT variant_id FROM variant_claim WHERE claim_id = %s ORDER BY variant_id",
+                                   (claim_id,))
         return [str(r[0]) for r in rows]
 
     def live_approvals_for_variants(self, tenant_id: str, variant_ids: Sequence[str]) -> Sequence[str]:
         own(self.repo, tenant_id)
         if not variant_ids:
             return []
-        rows = self.repo.execute(
+        rows = self.repo.fetch_all(
             "SELECT DISTINCT a.id FROM approval a "
             "JOIN variant v ON v.tenant_id = a.tenant_id AND v.bundle_id = a.subject_id "
             "WHERE a.subject_kind = 'bundle' AND a.voided_at IS NULL AND v.id = ANY(%s::uuid[]) ORDER BY a.id",
-            (list(variant_ids),)).fetchall()
+            (list(variant_ids),))
         return [str(r[0]) for r in rows]
 
 
