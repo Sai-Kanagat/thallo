@@ -33,13 +33,15 @@ from cortex_operator.truth.compiler import (
     Detector,
     Finding,
     FindingKind,
+    Severity,
     build,
     compile_text,
     scan,
+    to_check_results,
 )
 from cortex_operator.truth.fill import Filled, FillError, LibraryError, render_claim
 from cortex_operator.truth.legacy import REF, Claim, ClaimLedger, render
-from cortex_operator.truth.repository import ClaimRepository, ClaimUsage, InMemoryClaimRepository
+from cortex_operator.truth.repository import ClaimRepository, ClaimUsage, InMemoryClaimRepository, library
 from cortex_operator.truth.segment import Sentence, segment
 
 __all__ = [
@@ -56,11 +58,13 @@ __all__ = [
     "CompileResult",
     "Detector",
     "ExpiryPolicy",
+    "Severity",
     "FillError",
     "Filled",
     "Finding",
     "FindingKind",
     "InMemoryClaimRepository",
+    "library",
     "LibraryError",
     "Sentence",
     "build",
@@ -74,5 +78,6 @@ __all__ = [
     "render_claim",
     "scan",
     "segment",
+    "to_check_results",
     "verify_claim",
 ]

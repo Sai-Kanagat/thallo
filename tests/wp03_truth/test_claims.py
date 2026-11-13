@@ -2,14 +2,11 @@ import pytest
 
 from cortex_operator.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor
 from cortex_operator.contracts.enums import ClaimKind
-from cortex_operator.contracts.events import ClaimChangedPayload, EventName
+from cortex_operator.contracts.events import EventName
 from cortex_operator.contracts.ids import new_id
 from cortex_operator.contracts.states import ClaimState, IllegalTransition
 from cortex_operator.truth import (
     ClaimError,
-    ClaimRepository,
-    InMemoryClaimRepository,
-    change_claim,
     expire_due,
     new_candidate,
     next_code,
@@ -124,3 +121,9 @@ def test_expiry_and_reverification(clock, tenant, human, verifier):
     assert again.state is ClaimState.VERIFIED
 
 
+def test_reject_emits_event_and_is_terminal(clock, tenant):
+    claim, _ = candidate(clock, tenant)
+    rejected, event = reject_claim(claim, SYSTEM, clock=clock)
+    assert rejected.state is ClaimState.REJECTED and event.name is EventName.CLAIM_REJECTED
+    with pytest.raises(IllegalTransition):
+        reject_claim(rejected, SYSTEM, clock=clock)

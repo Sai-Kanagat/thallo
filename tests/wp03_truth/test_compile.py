@@ -83,7 +83,7 @@ def test_ordinary_copy_passes(run, language, text):
 
 def test_ambiguous_italian_words_flag_instead_of_block(run):
     """Lead decision: prima, sei, una flag for the reviewer instead of failing the build."""
-    for text in ("Prima di partire, chiamaci. Sei pronto?", "Una nuova sede."):
+    for text in ("Prima di partire, chiamaci. Sei pronto?", "Una bella giornata."):
         result = run(text, IT)
         assert result.ok and result.flags, text
 

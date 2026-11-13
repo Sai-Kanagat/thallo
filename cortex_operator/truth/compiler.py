@@ -46,8 +46,9 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from cortex_operator.contracts.clock import Clock
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.contracts.models import Claim
+from cortex_operator.contracts.enums import CheckLayer, CheckVerdict, ClaimKind, Language
+from cortex_operator.contracts.ids import new_id
+from cortex_operator.contracts.models import CheckResult, Claim
 from cortex_operator.truth.claims import problem
 from cortex_operator.truth.fill import SLOT, Filled, FillError, _fill, check_library
 from cortex_operator.truth.lexicon import (
@@ -206,25 +207,53 @@ def _name_pattern(names: Sequence[str]) -> re.Pattern[str] | None:
     return re.compile("|".join(sorted(parts, key=len, reverse=True))) if parts else None
 
 
-def _neighbours_count(raw: str, folded: str, origin: list[int], a: int, b: int,
-                      marker_spans: Sequence[tuple[int, int]]) -> bool:
-    """True when the folded word folded[a:b] sits next to a digit, a slot, a unit, a currency
-    sign or a quantity noun (only whitespace or a hyphen in between)."""
-    ra, rb = origin[a], origin[b - 1] + 1
-    i = ra - 1
-    while i >= 0 and raw[i] in " \t-":
-        i -= 1
-    j = rb
-    while j < len(raw) and raw[j] in " \t-":
-        j += 1
-    for k in (i, j):
-        if 0 <= k < len(raw) and (is_digit_char(raw[k]) or is_money_or_percent(raw[k])
-                                  or any(x <= k < y for x, y in marker_spans)):
-            return True
-    before = WORD.findall(folded[:a])[-1:] if a else []
-    after = WORD.match(folded, b + len(folded[b:]) - len(folded[b:].lstrip(" \t-")))
-    words = [*before, *([after.group(0)] if after else [])]
-    return any(w in COUNT_NEIGHBOURS for w in words)
+COUNT_WINDOW_AFTER = 3
+COUNT_WINDOW_BEFORE = 1
+
+
+def _tokens(raw: str, markers: Sequence[tuple[int, int]]) -> list[tuple[int, int, str]]:
+    """Tokens of the original text: ("slot", ...), ("digit", ...), ("money", ...) or a folded word.
+    A position inside a marker is a slot before anything else is tested."""
+    out: list[tuple[int, int, str]] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        slot = next(((x, y) for x, y in markers if x <= i < y), None)
+        if slot is not None:
+            out.append((slot[0], slot[1], "\x00slot"))
+            i = slot[1]
+            continue
+        ch = raw[i]
+        if is_digit_char(ch):
+            out.append((i, i + 1, "\x00digit"))
+        elif is_money_or_percent(ch):
+            out.append((i, i + 1, "\x00money"))
+        elif unicodedata.category(ch)[0] in "LM":
+            j = i
+            while j < n and unicodedata.category(raw[j])[0] in "LM" \
+                    and not any(x <= j < y for x, y in markers):
+                j += 1
+            out.append((i, j, fold_str(raw[i:j])))
+            i = j
+            continue
+        i += 1
+    return out
+
+
+def _is_count(token: str) -> bool:
+    return token.startswith("\x00") or token in COUNT_NEIGHBOURS
+
+
+def _neighbours_count(raw: str, start: int, end: int, markers: Sequence[tuple[int, int]],
+                      tokens: list[tuple[int, int, str]] | None = None) -> bool:
+    """True when the word at raw[start:end] reads as a count: a slot, digit, currency or percent
+    sign, unit or quantity noun is the word just before it or one of the next three."""
+    toks = tokens if tokens is not None else _tokens(raw, markers)
+    idx = next((k for k, (x, y, _) in enumerate(toks) if x <= start < y), None)
+    if idx is None:
+        return False
+    window = toks[max(0, idx - COUNT_WINDOW_BEFORE):idx] + toks[idx + 1:idx + 1 + COUNT_WINDOW_AFTER]
+    return any(_is_count(t) for _, _, t in window)
 
 
 def scan(text: str, *, language: Language, marker_spans: Iterable[tuple[int, int]] = (),
@@ -269,12 +298,13 @@ def scan(text: str, *, language: Language, marker_spans: Iterable[tuple[int, int
                  if italian_number_word(m.group(0))]
     taken: list[tuple[int, int]] = [m.span() for m in EXCEPTIONS.finditer(folded)]
     ambiguous = AMBIGUOUS[language] | AMBIGUOUS[Language.EN]
+    tokens = _tokens(text, markers)
     for category, a, b in hits:
         if any(a < y and x < b for x, y in taken):
             continue
         taken.append((a, b))
         word = folded[a:b]
-        if word in ambiguous and not _neighbours_count(masked, folded, origin, a, b, markers):
+        if word in ambiguous and not _neighbours_count(text, origin[a], origin[b - 1] + 1, markers, tokens):
             add(FindingKind.AMBIGUOUS_NUMBER_WORD, *span(a, b),
                 f"may state a number: {word!r}; check it is not a count", Severity.FLAG)
             continue
@@ -396,6 +426,28 @@ class Built:
     def flags(self) -> tuple[Finding, ...]:
         """For the human reviewer: ambiguous number words and universal claims."""
         return self.compiled.flags
+
+
+CHECK_NAME = "truth.compile"
+
+
+def to_check_results(result: CompileResult, *, variant_id: str, clock: Clock, attempt: int = 1,
+                     model_id: str | None = None) -> list[CheckResult]:
+    """One `check_result` row (layer CODE) per BLOCK finding (verdict FAIL) and per FLAG finding
+    (verdict FLAG, which the approver must acknowledge one by one), or a single PASS row. The
+    reason carries the kind, the span and the message, so the review card can point at the text."""
+    rows = []
+    for f in result.findings:
+        verdict = CheckVerdict.FAIL if f.severity is Severity.BLOCK else CheckVerdict.FLAG
+        rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=result.tenant_id,
+                                variant_id=variant_id, layer=CheckLayer.CODE, check_name=f"{CHECK_NAME}.{f.kind.value}",
+                                verdict=verdict, reason=f"[{f.start}:{f.end}] {f.message}", attempt=attempt,
+                                model_id=model_id))
+    if not rows:
+        rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=result.tenant_id,
+                                variant_id=variant_id, layer=CheckLayer.CODE, check_name=CHECK_NAME,
+                                verdict=CheckVerdict.PASS, attempt=attempt, model_id=model_id))
+    return rows
 
 
 def check_filled(filled: Filled) -> None:
