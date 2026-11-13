@@ -106,6 +106,13 @@ class TenantRepo:
         """Raw SQL, for trusted code only. Row-level security still applies, but prefer the typed methods."""
         return self.conn.execute(query, params)
 
+    def query(self, model: type[R], query: str | sql.Composable, params: Any = None) -> list[R]:
+        """Raw SELECT returning whole rows of `model` (`SELECT * ...`), for trusted code that
+        needs ordering or ranges the typed methods do not offer. Row-level security still applies."""
+        cur = self.conn.cursor(row_factory=dict_row)
+        cur.execute(query, params)
+        return [_from_db(model, r) for r in cur.fetchall()]
+
     def insert(self, row: R) -> R:
         model = type(row)
         data = _to_db(model, row)
