@@ -53,6 +53,7 @@ PRECISION_IT = [
     "Monitora la flotta in tempo reale.",
     "Ti aspettiamo in concessionaria per un caffè.",
     "Rossi Auto S.r.l. e Bianchi S.p.A. sono partner storici.",
+    "La gamma completa, dal più piccolo al più grande.",
 ]
 
 PRECISION_EN = [

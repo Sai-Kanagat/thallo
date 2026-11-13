@@ -33,7 +33,7 @@ L1 = [
     (IT, "Più venduto."), (IT, "Trentun clienti."), (IT, "Ottantotto clienti."),
     (TA, "தொண்ணூறு ஆண்டுகள்."), (TA, "நாலு கடைகள்."), (TA, "அஞ்சு கடைகள்."), (TA, "பன்னிரண்டு கடைகள்."),
     (TA, "இருமடங்கு"), (TA, "மும்மடங்கு"), (TA, "சதவீதம்"), (TA, "சதவிகிதம்"), (TA, "இரண்டாவது ஆண்டு."),
-    (TA, "மூன்றாம் ஆண்டு."),
+    (TA, "மூன்றாம் ஆண்டு."), (TA, "நம்பர் ஒன் டீலர்."), (EN, "X I I years"), (EN, "X.I.I. years"),
 ]
 
 
@@ -122,7 +122,7 @@ def test_l3_universal_without_one_produces_nothing(run, language, text):
     (EN, "Rather than wait, book now."), (EN, "Most of our vans."), (EN, "The XL van."), (EN, "Size XL."),
     (EN, "Model DC."), (EN, "CV joints."), (EN, "Iveco Daily Euro VI."), (IT, "Il furgone XL."), (IT, "Versione LX."),
     (IT, "Modello CC."), (EN, "Unique design."), (EN, "Leading the way."), (EN, "Record your visit."),
-    (EN, "Proven engine."),
+    (EN, "Proven engine."), (IT, "La gamma completa, dal più piccolo al più grande."),
 ])
 def test_l4_fixed_phrases_and_two_letter_codes_produce_nothing(run, language, text):
     result = run(text, language)
