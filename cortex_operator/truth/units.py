@@ -35,6 +35,16 @@ ISO_4217 = frozenset({
 })
 CURRENCY_SYMBOLS: dict[str, str] = {"EUR": "€", "INR": "₹", "USD": "$", "GBP": "£"}
 
+# ISO 4217 minor units (decimal places) where they differ from 2, for the codes above.
+MINOR_UNITS: dict[str, int] = {"JPY": 0, "KWD": 3, "BHD": 3, "OMR": 3}
+
+# Currencies printed with Indian digit grouping (12,34,567), in every language.
+INDIAN_GROUPING = frozenset({"INR"})
+
+
+def minor_units(code: str) -> int:
+    return MINOR_UNITS.get(code, 2)
+
 
 def is_number_unit(unit: str) -> bool:
     return unit == PERCENT or unit in SYMBOL_UNITS or unit in UNITS

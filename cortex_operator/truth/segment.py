@@ -17,6 +17,7 @@ Offsets refer to the text as given.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from cortex_operator.contracts.enums import Language
@@ -83,7 +84,8 @@ def segment(text: str, language: Language = Language.EN) -> list[Sentence]:
 
 
 def sentence_at(sentences: list[Sentence], offset: int) -> int | None:
-    for s in sentences:
-        if s.start <= offset < s.end:
-            return s.index
+    """Index of the sentence holding `offset`, by binary search over the sorted starts."""
+    k = bisect_right([s.start for s in sentences], offset) - 1
+    if k >= 0 and sentences[k].start <= offset < sentences[k].end:
+        return sentences[k].index
     return None

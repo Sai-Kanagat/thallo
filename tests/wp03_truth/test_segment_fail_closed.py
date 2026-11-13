@@ -28,7 +28,7 @@ CORPUS = [
     "Mr. Rossi came. He sold {{C-0001}}.",
     "It carries {{C-0001}}. Call us today.",
     "Carries {{C-0001}} every day.",
-    "Ditta S.p.A. il migliore {{C-0001}}.",
+    "Ditta S.p.A. the best {{C-0001}}.",  # abbreviation dots must not hide the superlative
     "திரு. குமார் சிறந்த டீலர் {{C-0001}}.",
     "Plain copy with nothing to check.",
     "{{C-0001}}{{C-0002}} trucks.",
@@ -46,7 +46,8 @@ def every_char(text, language=Language.EN):
 
 @pytest.fixture
 def library(make):
-    return {c.code: c for c in (make("C-0001", ClaimKind.NUMBER, "10"), make("C-0002", ClaimKind.NUMBER, "5"),
+    return {c.code: c for c in (make("C-0001", ClaimKind.NUMBER, "10", "year"),
+                                make("C-0002", ClaimKind.NUMBER, "5", "day"),
                                 make("C-0003", ClaimKind.NAME, "Rossi Trasporti"))}
 
 
@@ -87,7 +88,8 @@ def test_legacy_verdict_does_not_depend_on_segmentation(monkeypatch):
 def test_every_corpus_trick_with_unmarked_checkable_text_is_blocked(run, library):
     for text in CORPUS:
         if text in ("It carries {{C-0001}}. Call us today.", "Carries {{C-0001}} every day.",
-                    "Plain copy with nothing to check.", "Mr. Rossi came. He sold {{C-0001}}."):
+                    "Plain copy with nothing to check."):
+            # "Mr. Rossi came" blocks since L6: Rossi is the distinctive token of a protected name
             assert run(text, claims=library).ok, text
         else:
             assert not run(text, claims=library).ok, text

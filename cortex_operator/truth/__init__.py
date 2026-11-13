@@ -3,12 +3,15 @@ compile step that keeps numbers, superlatives, comparisons and names out of mode
 
 Modules
 - `claims`: candidate, human-only verification, expiry, change with its void list
-- `compiler`: `compile_text`, `scan`, `build` (compile, fill, check the output), the `Detector` hook
+- `compiler`: `compile_text`, `scan`, `build` (compile, fill, check the output), the STRUCTURAL
+  layer (complete, always blocks) and the `Detector` hook
+- `lexical`: the LEXICAL layer (best effort, tuned for precision)
+- `findings`: `Finding`, `FindingKind`, `Severity`
 - `fill`: `render_claim` and per-language number, unit, price and date formatting. Filling text
   is private and reached only through `build`
 - `units`: the units and ISO 4217 codes a claim may carry
 - `segment`: sentence segmentation, for display only (not a security boundary)
-- `lexicon`: per-language word lists, lookalike folding and script rules
+- `lexicon`: per-language word lists, number parsers, lookalike folding and script rules
 - `repository`: the storage Protocols WP-01 implements, and an in-memory version
 - `legacy`: the original engine's `ClaimLedger`, re-exported below so its imports keep working
 
@@ -27,6 +30,7 @@ from cortex_operator.truth.claims import (
     verify_claim,
 )
 from cortex_operator.truth.compiler import (
+    AllowedTermError,
     Built,
     CompileFailed,
     CompileResult,
@@ -45,6 +49,7 @@ from cortex_operator.truth.repository import ClaimRepository, ClaimUsage, InMemo
 from cortex_operator.truth.segment import Sentence, segment
 
 __all__ = [
+    "AllowedTermError",
     "DEFAULT_POLICY",
     "REF",
     "Built",

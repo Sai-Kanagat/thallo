@@ -6,8 +6,9 @@ Filling is reached only through `compiler.build`, which compiles first and check
 Precedence for each slot:
 1. The claim's approved wording for the language (`claim.languages[lang]`), used verbatim. A human
    approved it when verifying, so it wins over any formatting below.
-2. NUMBER and PRICE: the canonical value formatted for the language (decimal separator, digit
-   grouping) with the unit from `units.py`.
+2. NUMBER and PRICE: the canonical value formatted for the language (decimal separator, groups
+   of three) with the unit from `units.py`. A PRICE pads to its currency's ISO 4217 minor units
+   (JPY none, KWD three) and only INR uses Indian grouping (12,34,567), in every language.
 3. DATE: "5 January 2026", "5 gennaio 2026", "5 ஜனவரி 2026".
 4. NAME: the value verbatim. Names are not translated.
 5. QUOTE, CAPABILITY and OFFER: the value verbatim, only when the copy is in the tenant's default
@@ -28,7 +29,14 @@ from cortex_operator.contracts.clock import Clock
 from cortex_operator.contracts.enums import ClaimKind, Language
 from cortex_operator.contracts.models import Claim
 from cortex_operator.truth.claims import parse_date_value, problem
-from cortex_operator.truth.units import CURRENCY_SYMBOLS, PERCENT, SYMBOL_UNITS, UNITS
+from cortex_operator.truth.units import (
+    CURRENCY_SYMBOLS,
+    INDIAN_GROUPING,
+    PERCENT,
+    SYMBOL_UNITS,
+    UNITS,
+    minor_units,
+)
 
 SLOT = re.compile(r"\{\{(C-[0-9]{4,})\}\}")
 
@@ -61,10 +69,10 @@ SEPARATORS: dict[Language, tuple[str, str]] = {  # (decimal, group)
 }
 
 
-def _group(digits: str, language: Language, sep: str) -> str:
+def _group(digits: str, sep: str, indian: bool = False) -> str:
     if len(digits) <= 3:
         return digits
-    if language is Language.TA:  # Indian grouping: 12,34,567
+    if indian:  # Indian grouping, INR only: 12,34,567
         head, tail = digits[:-3], digits[-3:]
         parts = []
         while len(head) > 2:
@@ -80,12 +88,16 @@ def _group(digits: str, language: Language, sep: str) -> str:
     return sep.join(parts)
 
 
-def format_number(value: str, language: Language) -> str:
-    """Format a canonical decimal string ("1234.50") for a language, keeping every given digit."""
+def format_number(value: str, language: Language, *, indian: bool = False, decimals: int | None = None) -> str:
+    """Format a canonical decimal string ("1234.50") for a language, keeping every given digit.
+    `decimals` pads a fractional value to that many places (a currency's minor units); a whole
+    value stays whole. Groups of three, or Indian grouping when `indian` (INR only)."""
     dec, grp = SEPARATORS[language]
     sign = "-" if value.startswith("-") else ""
     whole, _, frac = value.lstrip("-").partition(".")
-    out = _group(whole, language, grp)
+    if frac and decimals is not None:
+        frac = frac.ljust(decimals, "0")
+    out = _group(whole, grp, indian)
     return f"{sign}{out}{dec}{frac}" if frac else f"{sign}{out}"
 
 
@@ -102,7 +114,9 @@ def _with_unit(number: str, value: str, unit: str | None, language: Language) ->
     raise FillError([f"no wording for unit {unit!r} in {language.value}"])
 
 
-def _price(number: str, unit: str, language: Language) -> str:
+def format_price(value: str, unit: str, language: Language) -> str:
+    """A price in its own currency: ISO 4217 minor units, Indian grouping only for INR."""
+    number = format_number(value, language, indian=unit in INDIAN_GROUPING, decimals=minor_units(unit))
     symbol = CURRENCY_SYMBOLS.get(unit)
     if language is Language.IT:
         return f"{number} {symbol or unit}"
@@ -140,7 +154,7 @@ def render_claim(claim: Claim, language: Language, *, default_language: Language
     if kind is ClaimKind.NUMBER:
         return _with_unit(format_number(claim.value, language), claim.value, claim.unit, language)
     if kind is ClaimKind.PRICE:
-        return _price(format_number(claim.value, language), claim.unit or "", language)
+        return format_price(claim.value, claim.unit or "", language)
     if kind is ClaimKind.DATE:
         return format_date(claim.value, language)
     if kind is ClaimKind.NAME:

@@ -56,7 +56,7 @@ def test_currency_and_percent_signs_fail(run):
     (IT, "Tre anni di garanzia.", FindingKind.NUMBER_WORD),
     (IT, "The best in Italia.", FindingKind.SUPERLATIVE),  # English inside Italian copy
     (TA, "சென்னையில் சிறந்த டீலர்.", FindingKind.SUPERLATIVE),
-    (TA, "மிகக் குறைந்த விலை.", FindingKind.SUPERLATIVE),
+    (TA, "மிகக் குறைந்த விலை.", FindingKind.SUPERLATIVE),  # very + low
     (TA, "சென்னையின் முன்னணி டீலர்.", FindingKind.SUPERLATIVE),
     (TA, "மற்றவர்களை விட வேகமாக.", FindingKind.COMPARATIVE),
     (TA, "இதை விடக் குறைவு.", FindingKind.COMPARATIVE),
@@ -81,11 +81,11 @@ def test_ordinary_copy_passes(run, language, text):
     assert result.ok, result.findings
 
 
-def test_ambiguous_italian_words_flag_instead_of_block(run):
-    """Lead decision: prima, sei, una flag for the reviewer instead of failing the build."""
+def test_ambiguous_italian_words_that_count_nothing_produce_nothing(run):
+    """Review ruling L2: a preposition, verb or article that counts nothing is not a finding."""
     for text in ("Prima di partire, chiamaci. Sei pronto?", "Una bella giornata."):
         result = run(text, IT)
-        assert result.ok and result.flags, text
+        assert result.ok and not result.flags, text
 
 
 # ---------------------------------------------------------------- names, hidden characters, slots
@@ -168,6 +168,6 @@ def test_claim_of_another_tenant_or_miskeyed_claim_is_refused(run, built, make, 
         run("Only {{C-0009}} today.", claims={"C-0009": other})
     with pytest.raises(LibraryError, match="another tenant"):
         built("Get {{C-0009}} today.", {"C-0009": other})
-    mine = make("C-0002", ClaimKind.NUMBER, "5")
+    mine = make("C-0002", ClaimKind.NUMBER, "5", "t")
     with pytest.raises(LibraryError, match="holds claim C-0002"):
         built("{{C-0001}}", {"C-0001": mine})
