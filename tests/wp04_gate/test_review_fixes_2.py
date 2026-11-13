@@ -175,6 +175,13 @@ def test_matching_consent_scope_publishes(world, kind, voice, scope):
     assert publish(world, a.id).allowed
 
 
+def test_video_with_voice_publishes_when_one_consent_covers_both_scopes(world):
+    _with_consent(world, kind=MediaKind.VIDEO, voice=True, scope=ConsentScope.LIKENESS,
+                  extra_scopes=[ConsentScope.VOICE])
+    a = world.approve()
+    assert publish(world, a.id).allowed
+
+
 def test_consent_scope_narrowed_after_approval_blocks(world):
     cid = _with_consent(world)
     a = world.approve()

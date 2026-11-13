@@ -3,8 +3,8 @@
 A media row with a consent_id needs that consent to be present, already given, not withdrawn, and to
 cover the use (contracts `ConsentScope`, a closed set, so no free text can parse as a yes): LIKENESS
 for images, PDFs and video, VOICE for audio, and VOICE as well for any media with `has_voice_track`.
-A media row points at one consent row with one scope, so a video with a voice track (LIKENESS and
-VOICE) cannot be covered today and fails closed. That needs a contract change (see the WP-04 report).
+A consent row covers `scope` plus `extra_scopes` (contracts 2.3.0), so one record can cover a video
+with a voice track (LIKENESS and VOICE).
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def consent_problem(item: MediaItem, now: datetime) -> tuple[str, str] | None:
         return MISSING, f"media {media.id}: consent not given yet"
     if c.withdrawn_at is not None and c.withdrawn_at <= now:
         return WITHDRAWN, f"media {media.id}: consent withdrawn"
-    covered = {c.scope} if isinstance(c.scope, ConsentScope) else set()
+    covered = {s for s in c.scopes if isinstance(s, ConsentScope)}
     if missing := required_scopes(item) - covered:
         return SCOPE, f"media {media.id}: consent does not cover {sorted(s.value for s in missing)}"
     return None

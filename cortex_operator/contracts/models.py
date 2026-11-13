@@ -220,6 +220,12 @@ class Consent(TenantRow):
     basis: ConsentBasis
     channel: MessageChannel | None = None
     scope: ConsentScope
+    # Further scopes the same consent covers (a filmed customer agreeing to likeness AND voice).
+    extra_scopes: list[ConsentScope] = added("0003", default_factory=list)
+
+    @property
+    def scopes(self) -> frozenset[ConsentScope]:
+        return frozenset({self.scope, *self.extra_scopes})
     evidence: str
     given_at: AwareDatetime
     withdrawn_at: AwareDatetime | None = None
