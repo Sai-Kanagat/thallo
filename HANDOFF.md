@@ -5,17 +5,19 @@ Product: Thallo, "Grown, not generated." Package is still `cortex_operator`. Con
 ## Wave 1: complete and merged
 WP-00 contracts, WP-01 data layer, WP-02 connections and vault, WP-03 truth library, WP-04 gate. The Supabase database is live with migrations 0001, 0002, 0003, 0010, 0011, 0012, 0020 and two restricted logins (`scripts/provision_db.py`). `0001_core.sql` is frozen: schema changes are new numbered migrations with `added("NNNN")` in models.py.
 
-## Next, in order (start in a FRESH session; one or two Opus workers at a time)
-1. Wave 1 end-to-end test, `tests/integration/test_wave1_flow.py`, in memory and on Postgres: tenant with operator and currency, a claim verified by a human, `truth.build` on text with a slot, flags written as check_result rows, bundle, `approve_bundle_from_repo` with flags acknowledged, `check_publish` allowed; then each of: changed text, new claim version, voided approval, unacknowledged flag, all blocked. This also needs the Postgres implementations of `GateRepository`, `AuditStore` and `ClaimRepository`, which nobody has built yet (a small WP-01 follow-up).
-2. Independent re-review of WP-03's final rounds (the first review's probes are in the scratchpad of the old session and use the old API; write new ones), and a cross-family review of gate and truth with Gemini (`GEMINI_API_KEY` is set).
-3. Rename the package to `thallo` (no worktrees are open now; remove the old ones under `.claude/worktrees/` first).
-4. Wave 2 per `docs/packages/WAVE2_ADDENDUM.md`: WP-05 and WP-06, then WP-08, then WP-07 and WP-09.
-5. WP-15 uses `docs/plays/plays_draft.json`.
+## Done since (13 Nov, evening)
+Wave 1 follow-up merged: Postgres adapters for gate, audit and claims, `write_gate_change`, the end-to-end flow test (`tests/integration/`), single-statement gate reads, a streamed audit chain. Truth library redesigned after a second review: a complete structural layer and a precision-tuned lexical layer (83 ordinary sentences: 0 blocks, 0 flags; 117 bypass strings: 0 misses). Contracts 2.4.0. Main: 1679 tests green. Migration 0013 is applied on Supabase.
+
+## Next, in order (lead orchestrates only; Opus builds, Sonnet or Haiku for mechanical work; two workers at most; stop at 70% of the 5-hour window)
+1. Rename the package to `thallo` (Sonnet; remove the old worktrees under `.claude/worktrees/` first; update pyproject, imports, scripts, docs, CI, `LEGACY` paths).
+2. Wave 2 per `docs/packages/WAVE2_ADDENDUM.md`: WP-05 and WP-06, then WP-08, then WP-07 and WP-09. Truth API changed: `compile_text` and `build` take `tenant_id`, `allowed_terms`, `tenant_currency`; read `truth/README.md`.
+3. End-of-wave audit: full CI, security review of gate, vault and publisher, Supabase against the code, GitHub CI, and the build-log page (new tagline, real status).
+4. WP-15 uses `docs/plays/plays_draft.json`.
 
 ## Open items
-- `gate/tlds.txt` is partial, so the prose exemption is off. With Sai's yes, download https://data.iana.org/TLD/tlds-alpha-by-domain.txt, record source and date, set `complete: yes`.
-- Known false blocks in truth: "Trento", "on top of", "XL", some Tamil words. All Tamil lists need a native reader.
-- Later contract batch: key id on grants and Ed25519 for the publisher; audit anchor recording (WP-20).
+- Truth, known gaps (lexical layer, backstopped by the WP-07 second reader): two-plus-two letter splits ("be st"), reversed text, single-letter Roman numerals, an ambiguous word followed by three or more adjectives, idioms ("golden jubilee"). Known false block: "Sei nuovo cliente?". Country flag emoji do not block (accepted). All Tamil lists need a native reader.
+- Next contract batch: `Claim.bound_noun`; a per-tenant `allowed_terms` table (human-approved); a key id on grants and Ed25519 for the publisher; audit anchor recording (WP-20); a database trigger making claim versions append-only.
+- `gate/tlds.txt` is partial, so the prose exemption is off, pending Sai's yes to download https://data.iana.org/TLD/tlds-alpha-by-domain.txt.
 - Main is ahead of GitHub (`Sai-Kanagat/thallo`); Sai pushes or says "push".
 
 ## Waiting on Sai
