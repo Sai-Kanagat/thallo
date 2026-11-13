@@ -14,6 +14,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from cortex_operator.contracts.models import Bundle, Claim, Consent, Media, TrackedLink, Variant
@@ -32,42 +33,39 @@ _HSPACE_RUN = re.compile("[ \t]+")
 _DOTS = str.maketrans({"。": ".", "｡": ".", "．": "."})  # NFKC already maps U+FF0E
 _INVISIBLE = re.compile("[­\u200b‌‍⁠﻿]")
 _TOKEN_SPLIT = re.compile(r"[\s<>\"]+")
+# Inside a token without a scheme, these also separate pieces: a link can hide behind any of them.
+_PIECE_SPLIT = re.compile("[,;|()\\[\\]{}!?'\"\u2018\u2019\u201c\u201d\u00ab\u00bb]+")
 _LEAD = "([{'\"*_«‘“¿¡"
 _TRAIL = ".,;:!?)]}'\"*_%»’”€$£"
 _SCHEME_IN = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _IPV4 = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
 _LABEL_RUN = re.compile(r"[\w-]+(?:\.[\w-]+)+")
 _NUMBER = re.compile(r"[+-]?\d+(?:[.,]\d+)*")
-_EMAIL = re.compile(r"([^@/:?#]+)@([^@/:?#]+)")
+_EMAIL = re.compile(r"([\w.+%-]+)@([\w-]+(?:\.[\w-]+)+)")
 # Final labels that are common file extensions and are NOT real IANA top-level domains. md
 # (Moldova), py (Paraguay), zip, mov and other real TLDs are deliberately absent: they stay links
 # unless the tenant vouches for the token through its non-link allowlist.
 FILE_EXTENSIONS = frozenset({"pdf", "js", "ts", "png", "jpg", "jpeg", "gif", "docx", "xlsx", "pptx", "csv", "txt"})
-# A small embedded set of real generic TLDs. Every two-letter alphabetic label is also treated as a
-# real TLD (country codes), and every xn-- label as one (internationalised TLDs). This is not the
-# full IANA list: a word missing here only loses the prose exemption below if it is on this list,
-# so the list errs towards treating words as TLDs.
-GENERIC_TLDS = frozenset("""
-com net org info biz name pro mobi asia tel travel jobs aero coop museum int edu gov mil arpa
-app dev page shop store online site website web tech cloud digital network systems solutions
-blog news media press live life world today link click one top xyz club vip win bid icu fun
-art design studio gallery photo photos pics video film music radio tv show game games
-bike auto car cars taxi tours travel holiday house home casa immo realestate properties
-email mail chat social team group company business agency consulting services support
-center expert guru ninja rocks cool best plus pink red blue black green gold
-eco bio green organic farm garden energy solar city town zone place space land
-academy school college university education training courses
-health care clinic dental doctor fitness yoga
-food pizza cafe restaurant bar wine beer kitchen recipes
-money bank finance capital fund cash credit loans insurance tax
-law legal lawyer attorney
-fashion clothing shoes jewelry watch
-sale deals discount coupons market markets trade exchange
-tools software hosting domains host server
-love sex porn adult
-zip mov foo nexus
-global international
-""".split())
+_TLD_FILE = Path(__file__).with_name("tlds.txt")
+
+
+def _load_tlds() -> tuple[frozenset[str], bool]:
+    names: set[str] = set()
+    complete = False
+    for raw in _TLD_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            if line.replace(" ", "").lower() == "#complete:yes":
+                complete = True
+            continue
+        if line:
+            names.add(line.lower())
+    return frozenset(names), complete
+
+
+# Real TLDs from gate/tlds.txt. While that file is a partial list, TLD_LIST_COMPLETE is False and the
+# prose exemption ("word.Word") is off, so an unknown capitalised word after a dot fails closed.
+GENERIC_TLDS, TLD_LIST_COMPLETE = _load_tlds()
 
 
 def is_real_tld(label: str) -> bool:
@@ -157,29 +155,35 @@ def _hostish(text: str) -> bool:
     return any(is_real_tld(m.group(0).split(".")[-1]) for m in _LABEL_RUN.finditer(text))
 
 
-def _token_link(t: str) -> str | None:
-    """The normalised URL a token stands for, or None when it is plainly not a link."""
-    m = _SCHEME_IN.search(t)
-    if m:
-        return normalise_url(t[m.start():])
-    if t.startswith("//"):
-        return normalise_url("https:" + t)
-    if (em := _EMAIL.fullmatch(t)) and not _hostish(em.group(1)):
-        return None  # a plain email address: nothing after @ but a host, nothing like a host before it
-    if _IPV4.search(t) or t.lower().startswith("www."):
-        return normalise_url("https://" + t.lstrip("/:.-"))
-    run = _LABEL_RUN.search(t)
-    if run is None or (_NUMBER.fullmatch(t) and t.count(".") < 3):
-        return None
-    labels = run.group(0).split(".")
+def _run_exempt(run: str, piece: str) -> bool:
+    """Whether one dot-label run is plainly not a host, judged on its own."""
+    labels = run.split(".")
     tld = labels[-1]
+    if all(lab.isdigit() for lab in labels):
+        return len(labels) < 4  # a number such as 1.200; four numeric labels is IPv4
+    if _NUMBER.fullmatch(run):
+        return True
     if len(tld) < 2 or tld.lower() in FILE_EXTENSIONS:
-        return None
-    prose = (len(labels) == 2 and run.group(0) == t and labels[0].isalpha() and tld.isalpha()
-             and tld[0].isupper() and tld[1:].islower() and not is_real_tld(tld))
-    if prose:
-        return None
-    return normalise_url("https://" + t[run.start():])
+        return True
+    return (TLD_LIST_COMPLETE and len(labels) == 2 and run == piece and labels[0].isalpha() and tld.isalpha()
+            and tld[0].isupper() and tld[1:].islower() and not is_real_tld(tld))
+
+
+def _piece_links(piece: str) -> list[str]:
+    """Links in one piece (no scheme inside). Every dot-run is checked; the first that is not
+    exempt starts a link, and the rest of the piece is that link's path."""
+    if not piece:
+        return []
+    if piece.startswith("//"):
+        return [normalise_url("https:" + piece)]
+    if (m := _IPV4.search(piece)) is not None:
+        return [normalise_url("https://" + piece[m.start():])]
+    if (w := re.search(r"(?i)(?<![\w.])www\.", piece)) is not None:
+        return [normalise_url("https://" + piece[w.start():])]
+    for run in _LABEL_RUN.finditer(piece):
+        if not _run_exempt(run.group(0), piece):
+            return [normalise_url("https://" + piece[run.start():].lstrip("-_"))]
+    return []
 
 
 def find_link_tokens(text: str) -> list[tuple[str, str]]:
@@ -187,9 +191,20 @@ def find_link_tokens(text: str) -> list[tuple[str, str]]:
     prepared = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text).translate(_DOTS))
     out: list[tuple[str, str]] = []
     for raw in _TOKEN_SPLIT.split(prepared):
-        t = _strip(raw)
-        if t and (url := _token_link(t)) is not None:
-            out.append((t, url))
+        token = _strip(raw)
+        if not token:
+            continue
+        em = _EMAIL.fullmatch(token)
+        if em and not _hostish(em.group(1)):
+            continue  # the whole token is exactly one plain email address
+        m = _SCHEME_IN.search(token)
+        head = token[: m.start()] if m else token
+        for part in _PIECE_SPLIT.split(head):
+            piece = _strip(part)
+            out += [(piece, url) for url in _piece_links(piece)]
+        if m:
+            url_text = token[m.start():]
+            out.append((url_text, normalise_url(url_text)))
     return out
 
 
@@ -231,8 +246,22 @@ def resolved_links(text: str, resolver: LinkResolver) -> list[list[str | None]]:
     return out
 
 
-def _vouched(text: str, non_links: frozenset[str]) -> set[str]:
+def valid_non_links(non_links: frozenset[str]) -> frozenset[str]:
+    """Allowlist keys the gate honours. An entry whose last label is a real TLD is ignored: a
+    plausible host must resolve, never be waved through."""
     keys = {link_key(x) for x in non_links}
+    return frozenset(k for k in keys if not is_real_tld(k.rstrip("/").split("/")[0].split(".")[-1]))
+
+
+def vouched_tokens(text: str, non_links: frozenset[str]) -> list[str]:
+    """The allowlist keys this text actually relies on, sorted. Bound into the variant hash."""
+    keys = valid_non_links(non_links)
+    return sorted({link_key(tok) for tok, url in find_link_tokens(text) if link_key(tok) in keys}
+                  | {link_key(url) for tok, url in find_link_tokens(text) if link_key(url) in keys})
+
+
+def _vouched(text: str, non_links: frozenset[str]) -> set[str]:
+    keys = valid_non_links(non_links)
     return {url for tok, url in find_link_tokens(text) if link_key(tok) in keys or link_key(url) in keys}
 
 
@@ -404,7 +433,8 @@ def _sorted_media(vc: VariantContent) -> list[MediaItem]:
     return sorted(vc.media, key=lambda m: (m.position, m.bytes_sha256, m.media.id))
 
 
-def variant_leaf(vc: VariantContent, resolver: LinkResolver) -> dict[str, Any]:
+def variant_leaf(vc: VariantContent, resolver: LinkResolver,
+                 non_links: frozenset[str] = frozenset()) -> dict[str, Any]:
     v = vc.variant
     claims = {c.id: c for c in vc.claims}  # a claim linked twice counts once
     rendered = canonical_text(v.rendered_text) if v.rendered_text is not None else None
@@ -418,6 +448,7 @@ def variant_leaf(vc: VariantContent, resolver: LinkResolver) -> dict[str, Any]:
         "text": canonical_text(v.text),
         "rendered_text": rendered,
         "links": resolved_links(outgoing_text(v), resolver),
+        "vouched_non_links": vouched_tokens(outgoing_text(v), non_links),
         "tracked_links": [list(t) for t in tracked],
         "media": [_media_leaf(m) for m in _sorted_media(vc)],
         "claims": [_claim_leaf(c) for c in sorted(claims.values(), key=lambda c: (c.code, c.id))],
@@ -436,6 +467,7 @@ class Snapshot:
     content: BundleContent
     leaves: Mapping[str, Mapping[str, Any]]
     hash: BundleHash
+    non_links: frozenset[str] = frozenset()
 
     def payload(self, variant_id: str) -> PublishPayload:
         vc = self.content.variant(variant_id)
@@ -447,10 +479,11 @@ class Snapshot:
         vc = self.content.variant(variant_id)
         if vc is None:
             return []
-        return unresolved(outgoing_text(vc.variant), list(self.leaves[variant_id]["links"]), non_links)
+        return unresolved(outgoing_text(vc.variant), list(self.leaves[variant_id]["links"]), self.non_links)
 
 
-def build_snapshot(content: BundleContent, resolver: LinkResolver) -> Snapshot:
+def build_snapshot(content: BundleContent, resolver: LinkResolver,
+                   non_links: frozenset[str] = frozenset()) -> Snapshot:
     """`resolver` is required: approval and publish must resolve links the same way, so both load
     through the repository (`load_bundle`) and pass `repo.resolve_link`."""
     memo = resolver if isinstance(resolver, MemoResolver) else MemoResolver(resolver)
@@ -459,7 +492,8 @@ def build_snapshot(content: BundleContent, resolver: LinkResolver) -> Snapshot:
     ids = [vc.variant.id for vc in content.variants]
     if len(set(ids)) != len(ids):
         raise CanonicalFormError("a variant appears twice in the bundle")
-    leaves = {vc.variant.id: variant_leaf(vc, memo) for vc in content.variants}
+    non_links = frozenset(non_links)
+    leaves = {vc.variant.id: variant_leaf(vc, memo, non_links) for vc in content.variants}
     hashes = {vid: _digest(VARIANT_DOMAIN, leaf) for vid, leaf in leaves.items()}
     b = content.bundle
     root = _digest(ROOT_DOMAIN, {
@@ -469,12 +503,14 @@ def build_snapshot(content: BundleContent, resolver: LinkResolver) -> Snapshot:
         "rule_version": b.rule_version,
         "variants": sorted(hashes.values()),
     })
-    return Snapshot(content=content, leaves=leaves, hash=BundleHash(root=root, variants=hashes))
+    return Snapshot(content=content, leaves=leaves, hash=BundleHash(root=root, variants=hashes),
+                    non_links=non_links)
 
 
-def bundle_hash(content: BundleContent, resolver: LinkResolver) -> BundleHash:
+def bundle_hash(content: BundleContent, resolver: LinkResolver,
+                non_links: frozenset[str] = frozenset()) -> BundleHash:
     """The root the approval binds to. Variant order carries no meaning; media order does."""
-    return build_snapshot(content, resolver).hash
+    return build_snapshot(content, resolver, non_links).hash
 
 
 def publish_payload(vc: VariantContent, resolver: LinkResolver) -> PublishPayload:
@@ -501,10 +537,10 @@ def media_hashes(vc: VariantContent) -> tuple[str, ...]:
 
 
 __all__ = [
-    "CANONICAL_VERSION", "FILE_EXTENSIONS", "GENERIC_TLDS", "BundleContent", "BundleHash", "CanonicalFormError",
-    "LinkResolver", "MediaItem", "MemoResolver", "PayloadMedia", "PublishPayload", "Snapshot", "VariantContent",
-    "build_snapshot", "bundle_hash", "canonical_json", "canonical_text", "claim_slots", "find_link_tokens",
-    "find_links", "find_unresolved_links", "has_unrendered_slot", "is_real_tld", "link_key", "media_hashes",
-    "normalise_url", "outgoing_text", "publish_payload", "resolved_links", "sha256_bytes", "unresolved",
-    "variant_hash", "variant_leaf",
+    "CANONICAL_VERSION", "FILE_EXTENSIONS", "GENERIC_TLDS", "TLD_LIST_COMPLETE", "BundleContent", "BundleHash",
+    "CanonicalFormError", "LinkResolver", "MediaItem", "MemoResolver", "PayloadMedia", "PublishPayload", "Snapshot",
+    "VariantContent", "build_snapshot", "bundle_hash", "canonical_json", "canonical_text", "claim_slots",
+    "find_link_tokens", "find_links", "find_unresolved_links", "has_unrendered_slot", "is_real_tld", "link_key",
+    "media_hashes", "normalise_url", "outgoing_text", "publish_payload", "resolved_links", "sha256_bytes",
+    "unresolved", "valid_non_links", "variant_hash", "variant_leaf", "vouched_tokens",
 ]
