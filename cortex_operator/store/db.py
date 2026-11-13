@@ -33,6 +33,17 @@ from cortex_operator.contracts.models import Operator, Row, Tenant
 R = TypeVar("R", bound=Row)
 
 
+# list_all pages through rows this many at a time, and refuses (never truncates) past the ceiling.
+# Module-level so tests can shrink them.
+PAGE_SIZE = 500
+MAX_ROWS = 10_000
+
+
+class TooManyRows(RuntimeError):
+    """A read that must be complete found more rows than MAX_ROWS. Callers that decide on the
+    rows (the publish gate) treat this as a failure and block; they never see a partial set."""
+
+
 class InvalidTenant(ValueError):
     """The tenant id is not a UUID, or the connection role would bypass row-level security."""
 
@@ -139,6 +150,52 @@ class TenantRepo:
         cur = self.conn.cursor(row_factory=dict_row)
         cur.execute(query, [_value(v) for v in where.values()] + [limit])
         return [_from_db(model, r) for r in cur.fetchall()]
+
+    def list_all(self, model: type[R], **where: Any) -> list[R]:
+        """Every row of this tenant matching the equality filters, oldest first (by id), read in
+        pages of PAGE_SIZE. Past MAX_ROWS it raises TooManyRows instead of returning a prefix."""
+        clauses = [sql.SQL("{} = %s").format(_column(model, k)) for k in where]
+        base = [_value(v) for v in where.values()]
+        out: list[R] = []
+        last: str | None = None
+        while True:
+            take = min(PAGE_SIZE, MAX_ROWS + 1 - len(out))
+            page_clauses = clauses + ([sql.SQL("id > %s")] if last is not None else [])
+            query = sql.SQL("SELECT * FROM {}").format(sql.Identifier(model.__table__))
+            if page_clauses:
+                query += sql.SQL(" WHERE ") + sql.SQL(" AND ").join(page_clauses)
+            query += sql.SQL(" ORDER BY id LIMIT %s")
+            cur = self.conn.cursor(row_factory=dict_row)
+            cur.execute(query, base + ([last] if last is not None else []) + [take])
+            page = [_from_db(model, r) for r in cur.fetchall()]
+            out.extend(page)
+            if len(out) > MAX_ROWS:
+                raise TooManyRows(f"{model.__table__}: more than {MAX_ROWS} rows")
+            if len(page) < take:
+                return out
+            last = page[-1].id
+
+    def query_all(self, model: type[R], query: str, params: Any = None) -> list[R]:
+        """Like `query`, but complete: every row, in pages, or TooManyRows. `query` must end in a
+        total ORDER BY (so pages do not overlap) and carry no LIMIT of its own."""
+        cur = self.conn.cursor(row_factory=dict_row)
+        return [_from_db(model, r) for r in self._paged_on(cur, query, params, model.__table__)]
+
+    def _paged_on(self, cur: psycopg.Cursor, query: str, params: Any, label: str) -> list[Any]:
+        out: list[Any] = []
+        while True:
+            take = min(PAGE_SIZE, MAX_ROWS + 1 - len(out))
+            cur.execute(query + " LIMIT %s OFFSET %s", [*(params or ()), take, len(out)])
+            page = cur.fetchall()
+            out.extend(page)
+            if len(out) > MAX_ROWS:
+                raise TooManyRows(f"{label}: more than {MAX_ROWS} rows")
+            if len(page) < take:
+                return out
+
+    def fetch_all(self, query: str, params: Any = None) -> list[tuple[Any, ...]]:
+        """Raw SELECT of plain tuples, complete or TooManyRows (same contract as `query_all`)."""
+        return self._paged_on(self.conn.cursor(), query, params, "query")
 
     def update(self, model: type[R], row_id: str, **fields: Any) -> bool:
         """Set columns on one row. False when no row of this tenant has that id."""

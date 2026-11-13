@@ -72,12 +72,12 @@ class PgGateRepository:
 
     def get_variants(self, tenant_id: str, bundle_id: str) -> Sequence[Variant]:
         own(self.repo, tenant_id)
-        return self.repo.list(Variant, bundle_id=bundle_id)
+        return self.repo.list_all(Variant, bundle_id=bundle_id)
 
     def get_variant_media(self, tenant_id: str, variant_id: str) -> Sequence[tuple[VariantMedia, Media]]:
         own(self.repo, tenant_id)
         out = []
-        for link in self.repo.list(VariantMedia, variant_id=variant_id):
+        for link in self.repo.list_all(VariantMedia, variant_id=variant_id):
             media = self.repo.get(Media, link.media_id)
             if media is None:
                 raise LookupError(f"media {link.media_id} is missing")
@@ -92,13 +92,13 @@ class PgGateRepository:
 
     def get_variant_claims(self, tenant_id: str, variant_id: str) -> Sequence[Claim]:
         own(self.repo, tenant_id)
-        return self.repo.query(Claim, "SELECT c.* FROM claim c JOIN variant_claim vc "
+        return self.repo.query_all(Claim, "SELECT c.* FROM claim c JOIN variant_claim vc "
                                       "ON vc.tenant_id = c.tenant_id AND vc.claim_id = c.id "
                                       "WHERE vc.variant_id = %s ORDER BY c.code, c.id", (variant_id,))
 
     def get_tracked_links(self, tenant_id: str, variant_id: str) -> Sequence[TrackedLink]:
         own(self.repo, tenant_id)
-        return self.repo.list(TrackedLink, variant_id=variant_id)
+        return self.repo.list_all(TrackedLink, variant_id=variant_id)
 
     def get_consent(self, tenant_id: str, consent_id: str) -> Consent | None:
         own(self.repo, tenant_id)
@@ -110,7 +110,7 @@ class PgGateRepository:
 
     def get_approvals(self, tenant_id: str, bundle_id: str) -> Sequence[Approval]:
         own(self.repo, tenant_id)
-        return self.repo.list(Approval, subject_kind=ApprovalSubject.BUNDLE, subject_id=bundle_id)
+        return self.repo.list_all(Approval, subject_kind=ApprovalSubject.BUNDLE, subject_id=bundle_id)
 
     def get_user(self, tenant_id: str, user_id: str) -> AppUser | None:
         own(self.repo, tenant_id)
@@ -121,7 +121,7 @@ class PgGateRepository:
 
     def get_check_results(self, tenant_id: str, variant_id: str) -> Sequence[CheckResult]:
         own(self.repo, tenant_id)
-        return self.repo.query(CheckResult, "SELECT * FROM check_result WHERE variant_id = %s ORDER BY id",
+        return self.repo.query_all(CheckResult, "SELECT * FROM check_result WHERE variant_id = %s ORDER BY id",
                                (variant_id,))
 
     def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:
@@ -141,7 +141,7 @@ class PgGateRepository:
         for prefix in self.redirect_prefixes:
             slug = url[len(prefix):] if url.startswith(prefix) else ""
             if slug and not (_SLUG_END & set(slug)):
-                rows = self.repo.list(TrackedLink, slug=slug)
+                rows = self.repo.list_all(TrackedLink, slug=slug)
                 return rows[0].destination if rows else None
         return url if url in self.vouched_links else None
 
