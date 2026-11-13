@@ -82,7 +82,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 
 ## Migrations
 
-- `0001_core.sql` is generated, and it may still be regenerated until the first real database is deployed (Sai's Supabase step). After that, every schema change is a new numbered migration. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
+- `0001_core.sql` is generated and is now FROZEN: it was applied to the real Supabase database on 12 Nov 2026 at contracts 2.1.0. Every schema change from here is a new numbered migration (`0002` to `0009` are reserved for lead-owned core changes), and `models.py` changes with it in the same commit. Migrations must run without a true superuser: never name the SUPERUSER or BYPASSRLS attributes; check them instead. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
 - `scripts/migrate.py` applies files in order, once each, and refuses a file that changed after it was applied.
 - Row-level security per tenant arrives in WP-01's migration, not here.
 
