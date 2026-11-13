@@ -9,9 +9,14 @@ from cortex_operator.truth.fill import Filled
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 
 
+def bare(value):
+    return {"en": value, "it": value, "ta": value}
+
+
 @pytest.fixture
 def library(make):
-    return {c.code: c for c in (make("C-0001", ClaimKind.NUMBER, "10"), make("C-0002", ClaimKind.NUMBER, "5"),
+    return {c.code: c for c in (make("C-0001", ClaimKind.NUMBER, "10", languages=bare("10")),
+                                make("C-0002", ClaimKind.NUMBER, "5", languages=bare("5")),
                                 make("C-0003", ClaimKind.NAME, "Rossi Trasporti"))}
 
 
@@ -26,11 +31,11 @@ B1 = [
     (IT, "Migliaia di clienti."), (IT, "Centinaia di clienti."), (IT, "Sei anni di garanzia."),
     (IT, "Il secondo anno."), (IT, "Il terzo anno."),
     (IT, "La prima concessionaria."), (IT, "Cinquanta per cento."), (IT, "Mezzo milione."),
-    (IT, "Un anno record."), (IT, "Il top in Emilia."), (IT, "Una decina di sedi."),
+    (IT, "Un anno record."), (IT, "Una decina di sedi."),
     (TA, "பதினைந்து ஆண்டுகள்."), (TA, "பதினொன்று கடைகள்."), (TA, "இருநூறு வாடிக்கையாளர்கள்."),
     (TA, "எழுபது ஆண்டுகள்."), (TA, "ஆயிரம் வாடிக்கையாளர்கள்."), (TA, "ஆயிரக்கணக்கான வாடிக்கையாளர்கள்."),
     (EN, "One hundred customers."), (EN, "We sold one truck."), (EN, "Our second year."),
-    (EN, "Third year running."), (EN, "A fivefold increase."), (EN, "The top dealer in Chennai."),
+    (EN, "Third year running."), (EN, "A fivefold increase."),
     (EN, "A record year."), (EN, "Our bestseller model."), (EN, "Serving you for XV years."),
     (EN, "Over xii years."), (EN, "Serving you for MCMXC years."), (EN, "Fifty percent off."),
     (EN, "Two per cent less."), (EN, "Sales of mln units."),
@@ -41,6 +46,12 @@ B1 = [
 def test_b1_number_words_block(run, language, text):
     result = run(text, language)
     assert not result.ok, text
+
+
+def test_b1_top_flags_after_the_precision_ruling(run):
+    for language, text in ((IT, "Il top in Emilia."), (EN, "The top dealer in Chennai.")):
+        result = run(text, language)
+        assert result.ok and result.flags, text
 
 
 def test_b1_roman_numeral_lookalike_words_pass(run):

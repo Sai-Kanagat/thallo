@@ -65,7 +65,10 @@ def make(clock, tenant, human, verifier, repo):
         owner = tenant_id or tenant
         claim, _ = new_candidate(tenant_id=owner, code=code, kind=kind, value=value, unit=unit, clock=clock,
                                  actor=SYSTEM, evidence=f"source for {code}", **kw)
-        store = repo if owner == tenant else InMemoryClaimRepository()
+        # a second claim under a code already made stands alone (a fresh repository), so tests
+        # can make independent claims; change and version tests use `repo` directly
+        fresh = owner != tenant or repo.latest(owner, code) is not None
+        store = InMemoryClaimRepository() if fresh else repo
         if verified:
             actor = human if owner == tenant else HumanActor(id=human.id, tenant_id=owner, session_id="live")
             claim, _ = verify_claim(claim, actor, verifier=verifier, clock=clock, repo=store, expires_at=expires_at,

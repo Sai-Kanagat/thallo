@@ -414,7 +414,7 @@ class _Scan:
 
         patterns: list[str] = []
         for name in self.names:
-            parts = [p for p in re.split(r"[\W_\d]+", fold_str(name)) if p]
+            parts = WORD.findall(fold_str(name))  # letters and marks (Tamil vowel signs are not \w)
             whole = "".join(parts)
             if len(whole) >= 2:
                 patterns.append(whole)

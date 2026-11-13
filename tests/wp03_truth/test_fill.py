@@ -3,15 +3,15 @@ import pytest
 from cortex_operator.contracts.enums import ClaimKind, Language
 from cortex_operator.truth import ClaimError, FillError, render_claim
 from cortex_operator.truth.fill import format_number
-from tests.wp03_truth.conftest import DAY
+from tests.wp03_truth.conftest import DAY, wording
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 
 
 @pytest.mark.parametrize(("value", "language", "out"), [
     ("3.5", EN, "3.5"), ("3.5", IT, "3,5"), ("3.5", TA, "3.5"),
-    ("1234567.50", EN, "1,234,567.50"), ("1234567.50", IT, "1.234.567,50"), ("1234567.50", TA, "12,34,567.50"),
-    ("999", TA, "999"), ("100000", TA, "1,00,000"), ("-1200", IT, "-1.200"),
+    ("1234567.50", EN, "1,234,567.50"), ("1234567.50", IT, "1.234.567,50"), ("1234567.50", TA, "1,234,567.50"),
+    ("999", TA, "999"), ("100000", TA, "100,000"), ("-1200", IT, "-1.200"),
 ])
 def test_number_formatting_keeps_every_digit(value, language, out):
     assert format_number(value, language) == out
@@ -29,7 +29,7 @@ def one(make, built):
     ("3.5", "t", EN, "3.5 tonnes"), ("3.5", "t", IT, "3,5 tonnellate"), ("3.5", "t", TA, "3.5 டன்"),
     ("1", "t", EN, "1 tonne"), ("1", "t", IT, "1 tonnellata"),
     ("48", "hour", IT, "48 ore"), ("30", "day", TA, "30 நாட்கள்"), ("1", "year", TA, "1 ஆண்டு"),
-    ("12.5", "%", IT, "12,5%"), ("120", "km", IT, "120 km"), ("40", None, IT, "40"),
+    ("12.5", "%", IT, "12,5%"), ("120", "km", IT, "120 km"),
 ])
 def test_numbers_with_units(one, value, unit, language, out):
     assert one(ClaimKind.NUMBER, value, unit, language) == out
@@ -49,6 +49,14 @@ def test_prices(one, value, unit, language, out):
 ])
 def test_dates(one, value, language, out):
     assert one(ClaimKind.DATE, value, language=language) == out
+
+
+def test_indian_grouping_is_for_inr():
+    assert format_number("100000", EN, indian=True) == "1,00,000"
+
+
+def test_unitless_number_prints_its_approved_wording(one):
+    assert one(ClaimKind.NUMBER, "40", None, IT, languages=wording("40")) == "40 sedi"
 
 
 def test_approved_wording_wins(one):
@@ -94,9 +102,9 @@ def test_build_reports_codes_ids_and_slot_spans(make, clock, tenant):
     from cortex_operator.truth import build
     a = make("C-0001", ClaimKind.NUMBER, "1", "t")
     b = make("C-0002", ClaimKind.NAME, "Acme")
-    out = build("{{C-0002}} moves {{C-0001}}; {{C-0002}} again.", tenant_id=tenant, language=EN,
+    out = build("{{C-0002}} moves {{C-0001}}, then {{C-0002}} again.", tenant_id=tenant, language=EN,
                 claims={"C-0001": a, "C-0002": b}, clock=clock, default_language=EN).filled
-    assert out.text == "Acme moves 1 tonne; Acme again."
+    assert out.text == "Acme moves 1 tonne, then Acme again."
     assert out.codes == ("C-0002", "C-0001") and out.claim_ids == (b.id, a.id)
     assert [out.text[x:y] for x, y in out.slot_spans] == ["Acme", "1 tonne", "Acme"]
 
