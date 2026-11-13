@@ -21,7 +21,16 @@ $$;
 ALTER FUNCTION app_current_tenant() SET search_path = pg_catalog;
 
 -- The app role can never be privileged, whatever else is granted to it.
-ALTER ROLE cortex_app NOSUPERUSER NOBYPASSRLS NOINHERIT;
+-- Managed Postgres (Supabase) has no true superuser, and only a superuser may name the
+-- SUPERUSER attribute at all, so it is checked here instead of set.
+ALTER ROLE cortex_app NOINHERIT;
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'cortex_app' AND (rolsuper OR rolbypassrls)) THEN
+    RAISE EXCEPTION 'cortex_app must not be a superuser or bypass row-level security';
+  END IF;
+END
+$$;
 
 -- The kill switch is operator-only: the app role reads its tenant row and nothing more.
 REVOKE UPDATE (paused) ON tenant FROM cortex_app;

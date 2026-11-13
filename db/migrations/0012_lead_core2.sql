@@ -22,7 +22,14 @@ BEGIN
   END IF;
 END
 $$;
-ALTER ROLE cortex_worker NOSUPERUSER NOBYPASSRLS NOINHERIT;
+ALTER ROLE cortex_worker NOINHERIT;
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'cortex_worker' AND (rolsuper OR rolbypassrls)) THEN
+    RAISE EXCEPTION 'cortex_worker must not be a superuser or bypass row-level security';
+  END IF;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO cortex_worker;
 GRANT EXECUTE ON FUNCTION app_current_tenant() TO cortex_worker;
 GRANT SELECT, UPDATE ON job TO cortex_worker;

@@ -120,6 +120,8 @@ def table_ddl(model: type[Row]) -> str:
     fks: list[str] = []
     after: list[str] = []
     for col, field in model.model_fields.items():
+        if "since" in _extra(field):
+            continue  # added by a later migration; 0001 is frozen
         base, optional = _unwrap(field.annotation)
         sql_type, check = _sql_type(field, base)
         parts = [f"  {col} {sql_type}"]

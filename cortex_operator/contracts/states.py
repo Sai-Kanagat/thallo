@@ -129,7 +129,7 @@ C = ClaimState
 CLAIM = _m("claim", C, C.CANDIDATE, {
     C.CANDIDATE: {C.VERIFIED, C.REJECTED},  # VERIFIED only by a HumanActor
     C.VERIFIED: {C.EXPIRED, C.VOIDED},
-    C.EXPIRED: {C.VERIFIED, C.REJECTED},
+    C.EXPIRED: {C.VERIFIED, C.REJECTED, C.VOIDED},  # VOIDED: superseded by a new version
     C.VOIDED: set(),  # terminal: a change writes a NEW claim version, so what was published stays on record
     C.REJECTED: set(),
 })
