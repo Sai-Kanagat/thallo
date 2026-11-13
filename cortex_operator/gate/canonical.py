@@ -176,14 +176,20 @@ def _piece_links(piece: str) -> list[str]:
         return []
     if piece.startswith("//"):
         return [normalise_url("https:" + piece)]
+    # The link starts at the EARLIEST host candidate of any kind, so a later IPv4 or www. match
+    # can never hide an earlier host (for example "evil.com/1.2.3.4").
+    starts: list[int] = []
     if (m := _IPV4.search(piece)) is not None:
-        return [normalise_url("https://" + piece[m.start():])]
+        starts.append(m.start())
     if (w := re.search(r"(?i)(?<![\w.])www\.", piece)) is not None:
-        return [normalise_url("https://" + piece[w.start():])]
+        starts.append(w.start())
     for run in _LABEL_RUN.finditer(piece):
         if not _run_exempt(run.group(0), piece):
-            return [normalise_url("https://" + piece[run.start():].lstrip("-_"))]
-    return []
+            starts.append(run.start())
+            break
+    if not starts:
+        return []
+    return [normalise_url("https://" + piece[min(starts):].lstrip("-_"))]
 
 
 def find_link_tokens(text: str) -> list[tuple[str, str]]:
@@ -250,7 +256,11 @@ def valid_non_links(non_links: frozenset[str]) -> frozenset[str]:
     """Allowlist keys the gate honours. An entry whose last label is a real TLD is ignored: a
     plausible host must resolve, never be waved through."""
     keys = {link_key(x) for x in non_links}
-    return frozenset(k for k in keys if not is_real_tld(k.rstrip("/").split("/")[0].split(".")[-1]))
+    # Judge each entry the way the link finder would: any label run ending in a real TLD, any
+    # scheme, userinfo, port, IPv4 or www. prefix makes it a plausible host, which is refused.
+    return frozenset(k for k in keys if not (
+        _hostish(k) or "://" in k or k.startswith("//") or "@" in k or ":" in k
+        or _IPV4.search(k) or k.lower().startswith("www.")))
 
 
 def vouched_tokens(text: str, non_links: frozenset[str]) -> list[str]:

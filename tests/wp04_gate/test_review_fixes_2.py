@@ -157,6 +157,7 @@ def _with_consent(world, *, kind=MediaKind.IMAGE, scope=None, voice=False, **con
     (MediaKind.AUDIO, True, ConsentScope.LIKENESS),
     (MediaKind.VIDEO, True, ConsentScope.LIKENESS),  # voice track needs voice too; one row cannot cover both
     (MediaKind.VIDEO, False, ConsentScope.VOICE),
+    (MediaKind.VIDEO, False, ConsentScope.LIKENESS),  # has_voice_track defaults False: never trusted for video
 ])
 def test_consent_scope_must_match_the_use(world, kind, voice, scope):
     _with_consent(world, kind=kind, scope=scope, voice=voice)
@@ -167,7 +168,6 @@ def test_consent_scope_must_match_the_use(world, kind, voice, scope):
 @pytest.mark.parametrize("kind,voice,scope", [
     (MediaKind.IMAGE, False, ConsentScope.LIKENESS),
     (MediaKind.AUDIO, True, ConsentScope.VOICE),
-    (MediaKind.VIDEO, False, ConsentScope.LIKENESS),
 ])
 def test_matching_consent_scope_publishes(world, kind, voice, scope):
     _with_consent(world, kind=kind, scope=scope, voice=voice)
@@ -443,3 +443,15 @@ def test_a_newer_pass_closes_an_older_flag(world):
     old = world.checks[-1]
     world.checks.append(old.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2}))
     assert world.approve().acknowledged_flag_ids == []
+
+
+def test_earliest_host_wins_and_allowlist_cannot_vouch_for_hosts():
+    from cortex_operator.gate.canonical import find_links, valid_non_links
+
+    assert find_links("vai su evil.com/1.2.3.4") == find_links("vai su evil.com/1.2.3.4")[:1]
+    assert "evil.com" in find_links("vai su evil.com/1.2.3.4")[0]
+    assert "evil.com" in find_links("vai su evil.com/www.x")[0]
+    for bad in ("evil.com", "evil.com/x", "https://evil.com", "user@evil.com", "evil.com:8080", "www.evil",
+                "1.2.3.4", "sub.evil.com/report.pdf"):
+        assert valid_non_links(frozenset({bad})) == frozenset(), bad
+    assert valid_non_links(frozenset({"report.pdf"}))

@@ -2,7 +2,7 @@
 
 A media row with a consent_id needs that consent to be present, already given, not withdrawn, and to
 cover the use (contracts `ConsentScope`, a closed set, so no free text can parse as a yes): LIKENESS
-for images, PDFs and video, VOICE for audio, and VOICE as well for any media with `has_voice_track`.
+for images and PDFs, LIKENESS and VOICE for video, VOICE for audio and for any media with `has_voice_track`.
 A consent row covers `scope` plus `extra_scopes` (contracts 2.3.0), so one record can cover a video
 with a voice track (LIKENESS and VOICE).
 """
@@ -20,7 +20,9 @@ SCOPE = "consent_scope"
 _BASE: dict[MediaKind, frozenset[ConsentScope]] = {
     MediaKind.IMAGE: frozenset({ConsentScope.LIKENESS}),
     MediaKind.PDF: frozenset({ConsentScope.LIKENESS}),
-    MediaKind.VIDEO: frozenset({ConsentScope.LIKENESS}),
+    # Video always needs VOICE as well: `has_voice_track` defaults to False, so trusting it
+    # would fail open. A silent clip of a person just needs a consent covering both scopes.
+    MediaKind.VIDEO: frozenset({ConsentScope.LIKENESS, ConsentScope.VOICE}),
     MediaKind.AUDIO: frozenset({ConsentScope.VOICE}),
 }
 
