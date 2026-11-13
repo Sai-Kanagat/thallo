@@ -24,7 +24,7 @@ B1 = [
     (IT, "Trentacinque clienti."), (IT, "Ventitré anni."), (IT, "Duemilacinquecento euro."),
     (IT, "Tredici sedi."), (IT, "Quindici anni."), (IT, "Centoventi clienti."), (IT, "Quarantadue sedi."),
     (IT, "Migliaia di clienti."), (IT, "Centinaia di clienti."), (IT, "Sei anni di garanzia."),
-    (IT, "Uno dei concessionari."), (IT, "Il secondo anno."), (IT, "Il terzo anno."),
+    (IT, "Il secondo anno."), (IT, "Il terzo anno."),
     (IT, "La prima concessionaria."), (IT, "Cinquanta per cento."), (IT, "Mezzo milione."),
     (IT, "Un anno record."), (IT, "Il top in Emilia."), (IT, "Una decina di sedi."),
     (TA, "பதினைந்து ஆண்டுகள்."), (TA, "பதினொன்று கடைகள்."), (TA, "இருநூறு வாடிக்கையாளர்கள்."),

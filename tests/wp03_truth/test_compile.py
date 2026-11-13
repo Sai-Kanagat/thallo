@@ -81,11 +81,11 @@ def test_ordinary_copy_passes(run, language, text):
     assert result.ok, result.findings
 
 
-def test_known_cost_italian_prima_and_sei_block(run):
-    """The review asked for prima, sei, uno and una as number words. Ordinary Italian using them
-    as 'before', 'you are' or an article now needs a rewrite. Recorded so the cost is visible."""
-    assert not run("Prima di partire, chiamaci. Sei pronto?", IT).ok
-    assert not run("Una nuova sede.", IT).ok
+def test_ambiguous_italian_words_flag_instead_of_block(run):
+    """Lead decision: prima, sei, una flag for the reviewer instead of failing the build."""
+    for text in ("Prima di partire, chiamaci. Sei pronto?", "Una nuova sede."):
+        result = run(text, IT)
+        assert result.ok and result.flags, text
 
 
 # ---------------------------------------------------------------- names, hidden characters, slots

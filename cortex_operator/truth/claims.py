@@ -42,9 +42,9 @@ class ClaimError(ValueError):
 
 @dataclass(frozen=True)
 class ExpiryPolicy:
-    """Default lifetime per kind, and the longest a human may set by hand. Prices and offers
-    default to 30 days and may be set to at most 90; a longer date needs a stored reason, and the
-    claim row has no field for one yet (contract change request), so it is refused."""
+    """Default lifetime per kind, and the longest a human may set by hand without a reason.
+    Prices and offers default to 30 days and may be set to at most 90; a longer date needs a
+    non-empty `expiry_reason`, stored on the claim (contracts 2.1.0)."""
 
     ttl_by_kind: Mapping[ClaimKind, timedelta] = field(
         default_factory=lambda: {ClaimKind.PRICE: timedelta(days=30), ClaimKind.OFFER: timedelta(days=30)})
@@ -177,7 +177,8 @@ def new_candidate(*, tenant_id: str, code: str, kind: ClaimKind, value: str, clo
 
 
 def verify_claim(claim: Claim, actor: Actor, *, verifier: SessionVerifier, clock: Clock,
-                 expires_at: datetime | None = None, policy: ExpiryPolicy = DEFAULT_POLICY) -> tuple[Claim, Event]:
+                 expires_at: datetime | None = None, expiry_reason: str | None = None,
+                 policy: ExpiryPolicy = DEFAULT_POLICY) -> tuple[Claim, Event]:
     """Human-only. Moves a candidate (or an expired claim) to verified and sets its expiry.
 
     Expiry is, in order: the date the human gives; else the earlier of the claim's own future
@@ -193,8 +194,10 @@ def verify_claim(claim: Claim, actor: Actor, *, verifier: SessionVerifier, clock
     if expires_at is not None:
         if expires_at <= now:
             raise ClaimError(f"{claim.code}: expiry must be in the future")
-        if longest is not None and expires_at > now + longest:
-            raise ClaimError(f"{claim.code}: a {claim.kind.value} may be verified for at most {longest.days} days")
+        reason = (expiry_reason or "").strip()
+        if longest is not None and expires_at > now + longest and not reason:
+            raise ClaimError(f"{claim.code}: a {claim.kind.value} may be verified for at most {longest.days} days"
+                             " unless an expiry_reason is given")
         expiry: datetime | None = expires_at
     else:
         options = []
@@ -207,7 +210,9 @@ def verify_claim(claim: Claim, actor: Actor, *, verifier: SessionVerifier, clock
             if claim.expires_at > now:
                 options.append(claim.expires_at)
         expiry = min(options) if options else None
-    verified = _rebuild(claim, state=ClaimState.VERIFIED, verified_by=human.id, verified_at=now, expires_at=expiry)
+    long_dated = expires_at is not None and longest is not None and expires_at > now + longest
+    verified = _rebuild(claim, state=ClaimState.VERIFIED, verified_by=human.id, verified_at=now, expires_at=expiry,
+                        expiry_reason=(expiry_reason or "").strip() if long_dated else None)
     return verified, _event(clock, verified, human, EventName.CLAIM_VERIFIED,
                             ClaimPayload(claim_id=verified.id, code=verified.code))
 
@@ -294,7 +299,7 @@ def change_claim(claim: Claim, *, actor: Actor, clock: Clock, usage: ClaimUsage,
     keep_expiry = claim.expires_at if claim.expires_at is not None and claim.expires_at > now else None
     current = _rebuild(claim, **material, id=new_id(clock), created_at=now, version=claim.version + 1,
                        supersedes_id=claim.id, state=CLAIM.initial, verified_by=None, verified_at=None,
-                       expires_at=keep_expiry)
+                       expires_at=keep_expiry, expiry_reason=claim.expiry_reason if keep_expiry else None)
     variants = tuple(usage.variants_using_claim(claim.tenant_id, claim.id))
     approvals = tuple(usage.live_approvals_for_variants(claim.tenant_id, list(variants))) if variants else ()
     events = (

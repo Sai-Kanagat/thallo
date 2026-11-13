@@ -16,7 +16,7 @@ from datetime import datetime
 
 from cortex_operator.contracts import sha256
 from cortex_operator.contracts.enums import Language
-from cortex_operator.truth.compiler import scan
+from cortex_operator.truth.compiler import Severity, scan
 from cortex_operator.truth.segment import segment as _segment  # display only; tests swap it
 
 REF = re.compile(r"\[\[(C-[0-9]+)\]\]")
@@ -61,8 +61,8 @@ class ClaimLedger:
         text = unicodedata.normalize("NFC", text)
         ids = REF.findall(text)
         errors = [p for p in (self.problem(i, now) for i in ids) if p]
-        findings = scan(text, language=Language.EN, marker_spans=[m.span() for m in REF.finditer(text)],
-                        protected_names=protected_names)
+        findings = [f for f in scan(text, language=Language.EN, marker_spans=[m.span() for m in REF.finditer(text)],
+                                    protected_names=protected_names) if f.severity is Severity.BLOCK]
         if findings:
             sentences = _segment(text, Language.EN)
             grouped: dict[str, list[str]] = {}
