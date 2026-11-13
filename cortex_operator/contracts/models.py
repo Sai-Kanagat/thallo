@@ -60,6 +60,11 @@ def fk(table: str, *, unique: bool = False, **kw: Any) -> Any:
     return Field(json_schema_extra=extra, **kw)
 
 
+def added(migration: str, **kw: Any) -> Any:
+    """A column added after 0001 was frozen. 0001's render skips it; the named migration adds it."""
+    return Field(json_schema_extra={"since": migration}, **kw)
+
+
 def unique(**kw: Any) -> Any:
     return Field(json_schema_extra={"unique": True}, **kw)
 
@@ -421,6 +426,9 @@ class Approval(TenantRow):
     approved_at: AwareDatetime
     expires_at: AwareDatetime
     canary: bool = False
+    # Ids of the FLAG check_result rows the approver explicitly acknowledged. The gate refuses a
+    # grant unless this covers every open flag on the bundle's variants.
+    acknowledged_flag_ids: list[str] = added("0002", default_factory=list)
     voided_at: AwareDatetime | None = None
     void_reason: str | None = None
 
