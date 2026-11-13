@@ -53,6 +53,8 @@ def _is_any_uuid(value: str) -> bool:
 def _scope(conn: psycopg.Connection, tenant_id: str) -> None:
     # set_config(..., true) is SET LOCAL with a bound parameter: no string building.
     conn.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    # Times are UTC (contracts), whatever the server, database or role default time zone is.
+    conn.execute("SELECT set_config('TimeZone', 'UTC', true)")
 
 
 def _column(model: type[Row], name: str) -> sql.Identifier:
@@ -103,6 +105,13 @@ class TenantRepo:
     def execute(self, query: str | sql.Composable, params: Any = None) -> psycopg.Cursor:
         """Raw SQL, for trusted code only. Row-level security still applies, but prefer the typed methods."""
         return self.conn.execute(query, params)
+
+    def query(self, model: type[R], query: str | sql.Composable, params: Any = None) -> list[R]:
+        """Raw SELECT returning whole rows of `model` (`SELECT * ...`), for trusted code that
+        needs ordering or ranges the typed methods do not offer. Row-level security still applies."""
+        cur = self.conn.cursor(row_factory=dict_row)
+        cur.execute(query, params)
+        return [_from_db(model, r) for r in cur.fetchall()]
 
     def insert(self, row: R) -> R:
         model = type(row)
