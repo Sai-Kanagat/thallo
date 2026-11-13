@@ -18,6 +18,7 @@ from cortex_operator.contracts.enums import (
     Channel,
     ClaimKind,
     ConsentBasis,
+    ConsentScope,
     Language,
     MediaKind,
     MediaProvenance,
@@ -28,6 +29,7 @@ from cortex_operator.contracts.models import (
     Approval,
     AppUser,
     Bundle,
+    CheckResult,
     Claim,
     Consent,
     Media,
@@ -88,6 +90,7 @@ class World:
     paused_everywhere: bool = False
     fail_on: str | None = None
     non_links: set[str] = field(default_factory=set)
+    checks: list[CheckResult] = field(default_factory=list)
     anchor: tuple[int, str] | None = None
     signer: GateSigner = field(default_factory=lambda: GateSigner(secrets.token_bytes(32)))
 
@@ -165,6 +168,10 @@ class World:
         self._ok("non_link_allowlist")
         return frozenset(self.non_links)
 
+    def get_check_results(self, tenant_id, variant_id):
+        self._ok("get_check_results")
+        return [c for c in self.checks if c.variant_id == variant_id and c.tenant_id == tenant_id]
+
     def resolve_link(self, tenant_id, url):
         self._ok("resolve_link")
         return self.links.get(url)
@@ -197,7 +204,7 @@ class World:
 
     def approve(self, *, return_change: bool = False, **kw):
         """Approve as the verified human through the repository path, then commit the change."""
-        shown = bundle_hash(self.content(), self.links.get).root
+        shown = bundle_hash(self.content(), self.links.get, frozenset(self.non_links)).root
         change = approve_bundle_from_repo(
             self, tenant_id=self.tenant.id, bundle_id=self.bundle.id, actor=self.human(), verifier=self.verifier(),
             shown_hash=shown, method=kw.pop("method", ApprovalMethod.PER_BUNDLE),
@@ -229,7 +236,7 @@ class World:
 
     def add_consent(self) -> str:
         c = Consent(id=ident(self.clock), created_at=self.clock.now(), tenant_id=self.tenant.id, person_id=None,
-                    subject_label="Rider in hero photo", basis=ConsentBasis.OPT_IN, scope="likeness",
+                    subject_label="Rider in hero photo", basis=ConsentBasis.OPT_IN, scope=ConsentScope.LIKENESS,
                     evidence="signed release, scan 14", given_at=self.clock.now())
         self.consents[c.id] = c
         return c.id

@@ -8,12 +8,13 @@ from datetime import timedelta
 import pytest
 
 from cortex_operator.contracts.actors import HumanActor
-from cortex_operator.contracts.enums import MediaKind
+from cortex_operator.contracts.enums import ConsentScope, MediaKind
 from cortex_operator.gate import ApprovalRefused, BlockReason, check_publish, decide, load_bundle
 from cortex_operator.gate.canonical import find_links, find_unresolved_links
 from cortex_operator.gate.decision import ApprovalEvidence
 from cortex_operator.gate.signing import ENV_KEY, GateSigner
 from cortex_operator.trust.audit import compute_entry_hash
+from tests.wp04_gate.conftest import ident
 
 
 def vid0(w):
@@ -65,7 +66,7 @@ def test_plain_text_is_not_a_link(text):
 
 
 @pytest.mark.parametrize("text", [
-    "See report.pdf", "Built on Node.js", "Il Dr.Rossi risponde", "Va bene ciao.Grazie",
+    "See report.pdf", "Built on Node.js",
     "e.g. this", "Demo S.p.A.", "a.m. or p.m.", "data.csv and notes.txt", "foto.JPEG",
     "Write to mario.rossi@demo.example", "info@demo.it",
 ])
@@ -77,6 +78,10 @@ def test_file_names_abbreviations_and_prose_are_not_links(text):
     "evil.zip", "evil.mov",  # real TLDs, not just file extensions
     "Read README.md", "run main.py",  # .md (Moldova) and .py (Paraguay) are real TLDs
     "Ciao.It", "Vieni.Shop", "Grazie.Com",  # prose shape, but the last label is a real TLD
+    "Prenota.Accountant", "Vai.Quest",
+    # links hidden behind punctuation inside one token (reviewer probe v3)
+    "Scarica report.pdf,bit.ly/abc", "notes.txt|evil.com", "a.pdf;bit.ly/x", "info@shop.it,bit.ly",
+    "x.PNG/evil.com", "(report.pdf)[evil.com]", "ok!evil.com?", "\"a.txt\"evil.com",
     "a@b.example/x", "x@evil.example?q=1", "evil.com@x.example",  # not plain email addresses
     "Visit evil.Com", "www.evil", "demo.shop", "Shop.Example/x", "https://x.y",
 ])
@@ -85,21 +90,38 @@ def test_plausible_hosts_still_count(text):
 
 
 def test_find_unresolved_links_for_early_copy_checks():
-    text = "Go to demo.shop or https://known.example/a, see report.pdf"
-    known = {"https://known.example/a": "https://known.example/a"}
-    assert find_unresolved_links(text, known.get) == ["https://demo.shop/"]
-    assert find_unresolved_links(text, known.get, non_links=frozenset({"DEMO.shop"})) == []
+    text = "Go to build.mjs or https://known.example/a?x=1, see report.pdf"
+    known = {"https://known.example/a?x=1": "https://known.example/a?x=1"}
+    assert find_unresolved_links(text, known.get) == ["https://build.mjs/"]
+    assert find_unresolved_links(text, known.get, non_links=frozenset({"BUILD.mjs"})) == []
+    # an allowlist entry ending in a real TLD is ignored: it must resolve
+    assert find_unresolved_links("go demo.shop", known.get, non_links=frozenset({"demo.shop"})) == ["https://demo.shop/"]
 
 
 def test_an_unknown_host_blocks_until_the_tenant_vouches_for_it(world):
-    world.edit_variant(vid0(world), rendered_text="Ordina su demo.shop oggi")
+    world.edit_variant(vid0(world), rendered_text="Esegui build.mjs oggi")
     with pytest.raises(ApprovalRefused):
         world.approve()
-    world.non_links |= {"DEMO.shop"}  # case-insensitive, after NFKC
+    world.non_links |= {"BUILD.mjs"}  # case-insensitive, after NFKC
     a = world.approve()
     assert publish(world, a.id).allowed
     world.non_links.clear()
-    blocked(publish(world, a.id), BlockReason.UNRESOLVED_LINK)
+    d = publish(world, a.id)
+    blocked(d, BlockReason.UNRESOLVED_LINK)
+    assert BlockReason.CONTENT_CHANGED in d.reasons  # the vouched tokens are part of the hash
+
+
+@pytest.mark.parametrize("text", ["Scarica report.pdf,bit.ly/abc", "notes.txt|evil.com", "a.pdf;bit.ly/x",
+                                  "info@shop.it,bit.ly"])
+def test_hidden_link_cannot_be_approved(world, text):
+    world.edit_variant(vid0(world), rendered_text=text)
+    with pytest.raises(ApprovalRefused):
+        world.approve()
+
+
+def test_prose_shape_counts_while_the_tld_list_is_partial():
+    from cortex_operator.gate.canonical import TLD_LIST_COMPLETE
+    assert bool(find_links("Il Dr.Rossi risponde")) is (not TLD_LIST_COMPLETE)
 
 
 def test_unresolved_idn_link_blocks_publish(world):
@@ -119,35 +141,36 @@ def test_full_width_dot_link_must_resolve(world):
 
 # ---------------------------------------------------------------- 2. consent scope matches use
 
-def _with_consent(world, *, kind=MediaKind.IMAGE, scope="likeness", **consent_update):
+def _with_consent(world, *, kind=MediaKind.IMAGE, scope=None, voice=False, **consent_update):
     mid = next(iter(world.media))
     cid = world.add_consent()
-    world.consents[cid] = world.consents[cid].model_copy(update={"scope": scope, **consent_update})
-    world.media[mid] = world.media[mid].model_copy(update={"consent_id": cid, "kind": kind})
+    world.consents[cid] = world.consents[cid].model_copy(update={"scope": scope or ConsentScope.LIKENESS,
+                                                                 **consent_update})
+    world.media[mid] = world.media[mid].model_copy(update={"consent_id": cid, "kind": kind,
+                                                           "has_voice_track": voice})
     return cid
 
 
-@pytest.mark.parametrize("kind,scope", [
-    (MediaKind.IMAGE, "voice"),
-    (MediaKind.IMAGE, "contact"),
-    (MediaKind.AUDIO, "likeness"),
-    (MediaKind.VIDEO, "likeness"),  # no voice field on media yet: a video is assumed to carry a voice
-    (MediaKind.VIDEO, "voice"),
+@pytest.mark.parametrize("kind,voice,scope", [
+    (MediaKind.IMAGE, False, ConsentScope.VOICE),
+    (MediaKind.IMAGE, False, ConsentScope.CONTACT),
+    (MediaKind.AUDIO, True, ConsentScope.LIKENESS),
+    (MediaKind.VIDEO, True, ConsentScope.LIKENESS),  # voice track needs voice too; one row cannot cover both
+    (MediaKind.VIDEO, False, ConsentScope.VOICE),
 ])
-def test_consent_scope_must_match_the_use(world, kind, scope):
-    _with_consent(world, kind=kind, scope=scope)
+def test_consent_scope_must_match_the_use(world, kind, voice, scope):
+    _with_consent(world, kind=kind, scope=scope, voice=voice)
     with pytest.raises(ApprovalRefused):
         world.approve()
 
 
-@pytest.mark.parametrize("kind,scope", [
-    (MediaKind.IMAGE, "likeness"),
-    (MediaKind.AUDIO, "voice"),
-    (MediaKind.VIDEO, "likeness+voice"),
-    (MediaKind.VIDEO, "voice, likeness"),
+@pytest.mark.parametrize("kind,voice,scope", [
+    (MediaKind.IMAGE, False, ConsentScope.LIKENESS),
+    (MediaKind.AUDIO, True, ConsentScope.VOICE),
+    (MediaKind.VIDEO, False, ConsentScope.LIKENESS),
 ])
-def test_matching_consent_scope_publishes(world, kind, scope):
-    _with_consent(world, kind=kind, scope=scope)
+def test_matching_consent_scope_publishes(world, kind, voice, scope):
+    _with_consent(world, kind=kind, scope=scope, voice=voice)
     a = world.approve()
     assert publish(world, a.id).allowed
 
@@ -155,7 +178,7 @@ def test_matching_consent_scope_publishes(world, kind, scope):
 def test_consent_scope_narrowed_after_approval_blocks(world):
     cid = _with_consent(world)
     a = world.approve()
-    world.consents[cid] = world.consents[cid].model_copy(update={"scope": "contact"})
+    world.consents[cid] = world.consents[cid].model_copy(update={"scope": ConsentScope.CONTACT})
     blocked(publish(world, a.id), BlockReason.CONSENT_SCOPE)
 
 
@@ -363,3 +386,53 @@ def test_supersede_voids_are_signed(world):
     world.approve()
     voids = [e for e in world.audit_store.entries(world.tenant.id) if e.action == "approval.voided"]
     assert voids and all(e.payload.get("mac") for e in voids)
+
+
+# ---------------------------------------------------------------- 7. FLAG verdicts must be acknowledged
+
+def _flag(world, vid=None):
+    from cortex_operator.contracts.enums import CheckLayer, CheckVerdict
+    from cortex_operator.contracts.models import CheckResult
+    r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
+                    variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name="universal_claim",
+                    verdict=CheckVerdict.FLAG, reason="'always' is a universal claim")
+    world.checks.append(r)
+    return r.id
+
+
+def test_an_unacknowledged_flag_refuses_the_grant(world):
+    f1, _f2 = _flag(world), _flag(world, list(world.variants)[1])
+    with pytest.raises(ApprovalRefused, match="flag"):
+        world.approve(acknowledged_flag_ids=[f1])
+
+
+def test_acknowledging_every_flag_grants_and_signs_them(world):
+    f1, f2 = _flag(world), _flag(world, list(world.variants)[1])
+    a = world.approve(acknowledged_flag_ids=[f2, f1])
+    assert sorted(a.acknowledged_flag_ids) == sorted([f1, f2])
+    grant = next(e for e in world.audit_store.entries(world.tenant.id) if e.action == "approval.granted")
+    assert sorted(grant.payload["acknowledged_flag_ids"]) == sorted([f1, f2])
+    assert publish(world, a.id).allowed
+    world.approvals[a.id] = a.model_copy(update={"acknowledged_flag_ids": [f1]})  # row tampered
+    blocked(publish(world, a.id), BlockReason.NO_GRANT_RECORD)
+
+
+def test_acknowledging_an_unknown_flag_is_refused(world):
+    with pytest.raises(ApprovalRefused):
+        world.approve(acknowledged_flag_ids=[world.bundle.id])
+
+
+def test_a_flag_raised_after_approval_voids_nothing_but_text_changes_still_do(world):
+    a = world.approve()
+    _flag(world)
+    assert publish(world, a.id).allowed
+    world.edit_variant(vid0(world), rendered_text="Changed")
+    blocked(publish(world, a.id), BlockReason.CONTENT_CHANGED)
+
+
+def test_a_newer_pass_closes_an_older_flag(world):
+    from cortex_operator.contracts.enums import CheckVerdict
+    _flag(world)
+    old = world.checks[-1]
+    world.checks.append(old.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2}))
+    assert world.approve().acknowledged_flag_ids == []

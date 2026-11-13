@@ -259,4 +259,4 @@ def test_golden_root_is_stable():
     assert h.root == GOLDEN_ROOT, h.root
 
 
-GOLDEN_ROOT = "a0236206b3659ab11604964c14a07b6b899529dc64184e4bff2767391eb914da"
+GOLDEN_ROOT = "78b07c40545a6e4f9f1d521e5c1e806256883f1d0449282bcf03cd8aadec9b83"
