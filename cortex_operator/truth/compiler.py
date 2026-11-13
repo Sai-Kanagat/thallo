@@ -44,8 +44,8 @@ from cortex_operator.contracts.ids import new_id
 from cortex_operator.contracts.models import CheckResult, Claim
 from cortex_operator.truth.claims import problem
 from cortex_operator.truth.fill import SLOT, Filled, FillError, LibraryError, _fill, check_library
-from cortex_operator.truth.findings import Finding, FindingKind, Severity
-from cortex_operator.truth.lexical import scan_lexical
+from cortex_operator.truth.findings import AllowedTermError, Finding, FindingKind, Severity
+from cortex_operator.truth.lexical import check_allowed_terms, scan_lexical
 from cortex_operator.truth.lexicon import (
     STARS,
     WORD,
@@ -59,7 +59,8 @@ from cortex_operator.truth.lexicon import (
 from cortex_operator.truth.segment import Sentence, sentence_at
 from cortex_operator.truth.segment import segment as _segment  # display only; tests swap it
 
-__all__ = ["Built", "CompileFailed", "CompileResult", "Detector", "Finding", "FindingKind", "Severity", "build",
+__all__ = ["AllowedTermError", "Built", "CompileFailed", "CompileResult", "Detector", "Finding", "FindingKind",
+           "Severity", "build",
            "check_filled", "compile_text", "scan", "to_check_results"]
 
 MAX_TEXT_CHARS = 20_000
@@ -176,8 +177,11 @@ def scan(text: str, *, language: Language, marker_spans: Iterable[tuple[int, int
     if len(text) > MAX_TEXT_CHARS:
         return [Finding(FindingKind.TEXT_TOO_LONG, 0, 0, "", f"text is over {MAX_TEXT_CHARS} characters")]
     markers = sorted(marker_spans)
+    names = list(protected_names)
+    allowed_terms = list(allowed_terms)
+    check_allowed_terms(allowed_terms, names)
     findings = _structural(text, markers, language)
-    for kind, severity, a, b, message in scan_lexical(text, markers, language, protected_names, allowed_terms):
+    for kind, severity, a, b, message in scan_lexical(text, markers, language, names, allowed_terms):
         findings.append(Finding(kind, a, b, text[a:b], message, severity=severity))
     return findings
 
@@ -294,10 +298,23 @@ def compile_text(text: str, *, tenant_id: str, language: Language,
     sequence; any row older than another of its code is refused. A claim of another tenant, or
     under a key that is not its code, raises LibraryError.
     `allowed_terms`: human-approved tenant terms (product, place and street names) that never
-    produce a lexical finding. The structural rules ignore them.
+    produce a lexical finding. The structural rules and protected names ignore them, and a term
+    that overlaps a protected name raises AllowedTermError.
     `tenant_currency`: when given, a PRICE in another currency is refused unless its approved
     wording for the language names that currency."""
     library, stale = _as_library(claims, tenant_id)
+    return _compile(text, tenant_id=tenant_id, language=language, library=library, stale=stale, clock=clock,
+                    allowed_claim_ids=allowed_claim_ids, protected_names=protected_names,
+                    allowed_terms=allowed_terms, tenant_currency=tenant_currency, detectors=detectors)
+
+
+def _compile(text: str, *, tenant_id: str, language: Language, library: dict[str, Claim], stale: set[str],
+             clock: Clock, allowed_claim_ids: Collection[str] | None, protected_names: Iterable[str],
+             allowed_terms: Iterable[str], tenant_currency: str | None,
+             detectors: Sequence[Detector]) -> CompileResult:
+    names = protected_names_from(library.values(), protected_names)
+    allowed_terms = list(allowed_terms)
+    check_allowed_terms(allowed_terms, names)
     text = unicodedata.normalize("NFC", text)
     now = clock.now()
     if len(text) > MAX_TEXT_CHARS:
@@ -323,8 +340,7 @@ def compile_text(text: str, *, tenant_id: str, language: Language,
             codes.append(code)
 
     findings += _slot_findings(text, slot_spans)
-    findings += scan(text, language=language, marker_spans=slot_spans,
-                     protected_names=protected_names_from(library.values(), protected_names),
+    findings += scan(text, language=language, marker_spans=slot_spans, protected_names=names,
                      allowed_terms=allowed_terms)
 
     sentences = _segment(text, language)  # display only: which sentence to show the writer
@@ -394,10 +410,10 @@ def build(text: str, *, tenant_id: str, language: Language, claims: Mapping[str,
     """Compile, fill, then check the output. The only public way to fill slots. Pass
     `library(repo, tenant_id)` as `claims`. Raises CompileFailed, FillError or LibraryError; never
     returns half-checked text. Review flags pass through on `Built.flags`."""
-    library, _ = _as_library(claims, tenant_id)
-    result = compile_text(text, tenant_id=tenant_id, language=language, claims=claims, clock=clock,
-                          allowed_claim_ids=allowed_claim_ids, protected_names=protected_names,
-                          allowed_terms=allowed_terms, tenant_currency=tenant_currency, detectors=detectors)
+    library, stale = _as_library(claims, tenant_id)  # read once: compile and fill see the same rows
+    result = _compile(text, tenant_id=tenant_id, language=language, library=library, stale=stale, clock=clock,
+                      allowed_claim_ids=allowed_claim_ids, protected_names=protected_names,
+                      allowed_terms=allowed_terms, tenant_currency=tenant_currency, detectors=detectors)
     if not result.ok:
         raise CompileFailed(result)
     filled = _fill(result.text, language=language, claims=library, clock=clock, default_language=default_language,

@@ -34,8 +34,14 @@ class FindingKind(StrEnum):
     COMPARATIVE = "comparative"
     NAMED_CUSTOMER = "named_customer"
     SPACED_LETTERS = "spaced_letters"
+    OVERLONG_WORD = "overlong_word"  # a word too long to parse blocks instead of passing unchecked
     # backstop
     CLASSIFIER = "classifier"  # raised by a plugged-in Detector
+
+
+class AllowedTermError(ValueError):
+    """An `allowed_terms` entry overlaps a protected name. A programming or data error: names may
+    only appear through a slot, so no tenant term may excuse one."""
 
 
 @dataclass(frozen=True)

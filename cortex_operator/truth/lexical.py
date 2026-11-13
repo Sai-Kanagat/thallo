@@ -13,7 +13,10 @@ Verdicts:
   nothing; comparatives without "than" or "di"; universal claims in a sentence with a verb of
   performance or a product noun (L3).
 - Nothing: articles, pronouns and prepositions that count nothing ("una nuova sede", "sei
-  pronto", "prima di"), fixed phrases (L4) and the tenant's `allowed_terms` (L5).
+  pronto", "prima di"), fixed phrases (L4) and the tenant's `allowed_terms` (L5). Neither a fixed
+  phrase nor an allowed term ever silences a protected name, and an allowed term that overlaps
+  one is refused (`AllowedTermError`). A word over MAX_WORD letters blocks (OVERLONG_WORD): too
+  long to parse is never passed unchecked.
 
 An ambiguous count word (one, sei, una, prima, secondo, half, ...) counts something when it
 modifies a quantity noun or unit (the next word, or after up to two words that are not function
@@ -32,12 +35,13 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Sequence
 
 from cortex_operator.contracts.enums import Language
-from cortex_operator.truth.findings import FindingKind, Severity
+from cortex_operator.truth.findings import AllowedTermError, FindingKind, Severity
 from cortex_operator.truth.lexicon import (
     ARTICLE_COUNT_WORDS,
     COPULAS,
     FUNCTION_WORDS,
     LEFT,
+    MAX_WORD,
     MEASURE_NOUNS,
     QUANTITY_NOUNS,
     RANK_MARKERS,
@@ -188,12 +192,12 @@ class _Scan:
     # ------------------------------------------------------------ helpers
 
     def add(self, kind: FindingKind, severity: Severity, a: int, b: int, message: str, *,
-            phrase: bool = False) -> bool:
+            phrase: bool = False, force: bool = False) -> bool:
         """Add a finding on the folded span [a, b) unless a quiet token is inside it. A block
         pattern (`phrase`) is only silenced by an allowed term, not by a fixed phrase, so "no one
         sells more" still blocks although "no one" alone is a fixed phrase."""
         toks = self.t.tokens_in(a, b)
-        if any((self.allowed if phrase else self.quiet)[k] for k in toks):
+        if not force and any((self.allowed if phrase else self.quiet)[k] for k in toks):
             return False
         if severity is Severity.BLOCK:
             for k in toks:
@@ -271,9 +275,15 @@ class _Scan:
         comparatives: list[int] = []
         universals: list[int] = []
         for k in range(t.n):
-            if t.slot[k] or self.quiet[k] or self.blocked[k]:
+            if t.slot[k]:
                 continue
             w = t.words[k]
+            if len(w) > MAX_WORD:  # fail closed: too long to parse means not checked
+                self.add(FindingKind.OVERLONG_WORD, Severity.BLOCK, t.starts[k], t.ends[k],
+                         f"word over {MAX_WORD} letters cannot be checked", force=True)
+                continue
+            if self.quiet[k] or self.blocked[k]:
+                continue
             original = t.text[slice(*t.original(t.starts[k], t.ends[k]))]
             category = block_word(w, lang)
             if category is None and lang is Language.IT:
@@ -412,15 +422,8 @@ class _Scan:
             i = idx[e - 1] + 1
             return i >= size or not _is_letter(folded[i])
 
-        patterns: list[str] = []
-        for name in self.names:
-            parts = WORD.findall(fold_str(name))  # letters and marks (Tamil vowel signs are not \w)
-            whole = "".join(parts)
-            if len(whole) >= 2:
-                patterns.append(whole)
-            patterns += [p for p in parts if len(p) >= 4 and p not in COMMON_NAME_WORDS and p != whole]
         seen: set[tuple[int, int]] = set()
-        for pattern in sorted(set(patterns), key=len, reverse=True):
+        for pattern in name_patterns(self.names):
             j = compact.find(pattern)
             while j >= 0:
                 e = j + len(pattern)
@@ -428,9 +431,34 @@ class _Scan:
                 if boundary_before(j) and end_ok:
                     a, b = idx[j], idx[e - 1] + 1
                     if not any(x < b and a < y for x, y in seen) and self.add(
-                            FindingKind.NAMED_CUSTOMER, Severity.BLOCK, a, b, f"name outside a slot: {pattern!r}"):
+                            FindingKind.NAMED_CUSTOMER, Severity.BLOCK, a, b, f"name outside a slot: {pattern!r}",
+                            force=True):
                         seen.add((a, b))
                 j = compact.find(pattern, j + 1)
+
+
+def name_patterns(names: Iterable[str]) -> list[str]:
+    """Letters-only forms to protect: each whole name, and each distinctive token of it (four or
+    more letters, not a common business word), longest first."""
+    patterns: set[str] = set()
+    for name in names:
+        parts = WORD.findall(fold_str(name))  # letters and marks (Tamil vowel signs are not \w)
+        whole = "".join(parts)
+        if len(whole) >= 2:
+            patterns.add(whole)
+        patterns.update(p for p in parts if len(p) >= 4 and p not in COMMON_NAME_WORDS)
+    return sorted(patterns, key=len, reverse=True)
+
+
+def check_allowed_terms(terms: Iterable[str], names: Iterable[str]) -> None:
+    """Refuse an allowed term that overlaps a protected name: names never ride on a tenant term."""
+    names = list(names)
+    patterns = name_patterns(names)
+    wholes = {"".join(WORD.findall(fold_str(n))) for n in names}
+    for term in terms:
+        compact = "".join(WORD.findall(fold_str(term)))
+        if compact and (any(p in compact for p in patterns) or any(compact in w for w in wholes)):
+            raise AllowedTermError(f"allowed term {term!r} overlaps a protected name; names appear only through a slot")
 
 
 def _allowed_pattern(terms: Iterable[str]) -> re.Pattern[str] | None:

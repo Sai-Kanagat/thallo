@@ -30,6 +30,7 @@ from cortex_operator.truth.claims import (
     verify_claim,
 )
 from cortex_operator.truth.compiler import (
+    AllowedTermError,
     Built,
     CompileFailed,
     CompileResult,
@@ -48,6 +49,7 @@ from cortex_operator.truth.repository import ClaimRepository, ClaimUsage, InMemo
 from cortex_operator.truth.segment import Sentence, segment
 
 __all__ = [
+    "AllowedTermError",
     "DEFAULT_POLICY",
     "REF",
     "Built",
