@@ -12,6 +12,9 @@ import psycopg
 EXEMPT = frozenset({"schema_migrations"})  # migration bookkeeping, no grants to the app role
 # Above tenants: RLS enabled with no policy, and no grants to the app role (0012).
 NO_ACCESS = frozenset({"operator", "identity"})
+# Above tenants, readable but never writable by the app role (0013): RLS enabled, every policy
+# SELECT only, and SELECT the only privilege any cortex role holds. Not forced: the owner writes.
+GLOBAL_READ_ONLY = frozenset({"system_setting"})
 # Narrow cross-tenant policies allowed to non-app roles only: (table, policy, role).
 WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker")})
 
@@ -33,6 +36,21 @@ ORDER BY c.relname
 """
 
 
+def _read_only_problems(conn: psycopg.Connection, name: str, enabled: bool, policies: list[str]) -> list[str]:
+    out: list[str] = []
+    if not enabled:
+        out.append(f"{name}: row-level security not enabled")
+    for cmd, _using, _check, polname, roles in (p.split("|", 4) for p in policies):
+        if cmd != "r":
+            out.append(f"{name}: policy {polname} for {roles} allows more than SELECT")
+    writes = conn.execute(
+        "SELECT DISTINCT grantee, privilege_type FROM information_schema.role_table_grants "
+        "WHERE table_schema = 'public' AND table_name = %s AND grantee LIKE 'cortex%%' "
+        "AND privilege_type <> 'SELECT' ORDER BY 1, 2", (name,)).fetchall()
+    out += [f"{name}: {grantee} holds {privilege}; only SELECT is allowed" for grantee, privilege in writes]
+    return out
+
+
 def audit_rls(conn: psycopg.Connection) -> list[str]:
     problems: list[str] = []
     for name, enabled, forced, policies in conn.execute(_QUERY).fetchall():
@@ -46,6 +64,9 @@ def audit_rls(conn: psycopg.Connection) -> list[str]:
                 "WHERE table_name = %s AND grantee LIKE 'cortex_app%%'", (name,)).fetchone()[0]
             if granted:
                 problems.append(f"{name}: the app role must have no grants")
+            continue
+        if name in GLOBAL_READ_ONLY:
+            problems += _read_only_problems(conn, name, enabled, policies)
             continue
         if not enabled:
             problems.append(f"{name}: row-level security not enabled")
