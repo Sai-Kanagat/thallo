@@ -13,6 +13,7 @@ For every variant in the bundle:
 | `text` | canonical text of the source text, claim slots like `{{C-0012}}` included |
 | `rendered_text` | canonical text of the rendered text, or `null` |
 | `links` | every link in the outgoing text, in order of appearance, as `[url, destination]` |
+| `vouched_non_links` | the tenant allowlist keys this variant's text relies on, sorted |
 | `tracked_links` | every tracked link row whose `variant_id` is this variant, as `[slug, destination, whatsapp_code]`, sorted, duplicates removed |
 | `media` | one entry per file in position order: `position`, `sha256` of the bytes, `kind`, `mime` (lowercase), canonical `alt_text`, `disclosure_label`, `consent_id` |
 | `claims` | one entry per linked claim, sorted by code then id, duplicates removed: `id`, `code`, `version`, `supersedes_id`, `value` (NFC), `unit`, `as_of` (ISO date), `evidence_sha256`, `wording` (canonical text per language) |
@@ -34,20 +35,19 @@ Everything else counts. Case, punctuation, no-break spaces, zero-width character
 
 ## Links
 
-Detection works on a copy of the text after NFKC, with the ideographic and half-width full stops (U+3002, U+FF61) turned into dots and invisible characters (soft hyphen, zero-width space, joiners, word joiner, BOM) removed. The text is split on whitespace, `<`, `>` and `"`, and leading and trailing punctuation (brackets, quotes, `*`, `_`, and at the end also `.,;:!?%` and currency signs) is stripped from each token. A token is a link, matched broadly so that the check fails closed, when it:
+Detection works on a copy of the text after NFKC, with the ideographic and half-width full stops (U+3002, U+FF61) turned into dots and invisible characters (soft hyphen, zero-width space, joiners, word joiner, BOM) removed. The text is split into tokens on whitespace, `<`, `>` and `"`, and surrounding punctuation is stripped. A token that is exactly one plain email address (a clean host after `@`, and no dot-run ending in a real TLD before it) is not a link. Otherwise, a scheme URL in the token (`https://`, `ftp://`, any `x://`) is taken whole from the scheme to the end of the token, and the part before it is split again into pieces on `, ; | ( ) [ ] { } ! ?` and quote characters, because a link can hide behind any of them (`report.pdf,bit.ly/abc`). In each piece:
 
-- contains a scheme (`https://`, `ftp://`, any `x://`), read from the scheme on;
-- starts with `//`, read as https;
-- contains an IPv4 address, or starts with `www.`;
-- contains a dot-separated run of labels (letters of any script, digits, `-`, `_`), read as https from the start of that run.
+- a piece starting with `//`, an IPv4 address, or `www.` is a link;
+- otherwise EVERY dot-separated run of labels (letters of any script, digits, `-`, `_`) is judged on its own, and the first run that is not exempt starts a link, read as https, with the rest of the piece as its path.
 
-These are not links:
+A run is exempt (not a link) when it is:
 
-- numbers, such as `1.200`, `12,5` or `1.200,50` (three dots or more is IPv4 and counts);
-- plain email addresses: nothing but a host after `@` (no `/`, `?` or `#`), and no dot-label run ending in a real TLD before it;
+- a number, such as `1.200`, `12,5` or `1.200,50` (four numeric labels is IPv4 and counts);
 - a run whose final label is a single character (`e.g.`, `a.m.`, `S.p.A.`);
 - a run whose final label is a common file extension that is not a real IANA TLD: `pdf`, `js`, `ts`, `png`, `jpg`, `jpeg`, `gif`, `docx`, `xlsx`, `pptx`, `csv`, `txt`, in any case. Real TLDs such as `md` (Moldova), `py` (Paraguay), `zip` and `mov` still count, so `README.md` blocks until the tenant vouches for it;
-- prose with no space after a full stop: exactly two alphabetic words, the second capitalised (`ciao.Grazie`, `Dr.Rossi`), unless the second word is a real TLD. Real here means any two-letter label, any `xn--` label, or a word on the embedded `GENERIC_TLDS` set in `canonical.py` (a working subset of the IANA list, not all of it).
+- prose with no space after a full stop (`ciao.Grazie`, `Dr.Rossi`): exactly two alphabetic words, the second capitalised and not a real TLD. This exemption is switched OFF while `gate/tlds.txt` is a partial list (`TLD_LIST_COMPLETE` is False), so today such prose fails closed.
+
+Real TLDs are every two-letter label, every `xn--` label, and every name in `gate/tlds.txt`. That file is today a hand-maintained partial subset of the IANA list, written without network access; it says so in its header. Replacing it with the full IANA list and marking it `complete: yes` needs Sai's OK to download https://data.iana.org/TLD/tlds-alpha-by-domain.txt.
 
 Each link is normalised: scheme and host lowercased, `:80` on http and `:443` on https dropped, an empty path becomes `/`. User info, path, query and fragment are kept byte for byte, with no percent decoding.
 
@@ -55,13 +55,13 @@ Each link is resolved by `GateRepository.resolve_link` (the tracked link table, 
 
 Each link is resolved once per bundle check: the resolver is memoised (`MemoResolver`), every variant leaf is built once, and both the root hash and the publish payload are derived from those same leaves. Publish blocks with `payload_mismatch` unless the payload's `variant_hash` equals the hashed leaf.
 
-A link that does not resolve is hashed as `null`, and it blocks, unless the token or its URL is on the tenant's non-link allowlist (`GateRepository.non_link_allowlist`, compared case-insensitively after the same NFKC preparation): approval is refused (the reviewer cannot see where it goes) and publish is blocked with `unresolved_link`. The allowlist is not hashed, so removing an entry after approval makes publish block. `find_unresolved_links(text, resolver, non_links)` lets the copy checks (WP-07) find these early.
+A link that does not resolve is hashed as `null`, and it blocks, unless the token or its URL is on the tenant's non-link allowlist (`GateRepository.non_link_allowlist`, compared case-insensitively after the same NFKC preparation): approval is refused (the reviewer cannot see where it goes) and publish is blocked with `unresolved_link`. An allowlist entry whose last label is a real TLD is ignored, because a plausible host must resolve. The allowlist keys a variant relies on are part of its leaf (`vouched_non_links`), so removing one after approval changes the hash as well as blocking the link. `find_unresolved_links(text, resolver, non_links)` lets the copy checks (WP-07) find these early.
 
 ## Media
 
 Each file is hashed as sha256 over its bytes, read fresh from storage at the moment of hashing (`MediaItem.from_bytes`). The path is never hashed, so a file moved to another bucket keeps its hash, and a file overwritten at the same path changes it. The media row's own `sha256` is compared separately and a mismatch is its own block reason. Media order carries meaning (carousels), so position order is kept; ties break on hash then media id.
 
-A media row with a `consent_id` needs consent (an identifiable person), checked by `gate/consent.py` at approval and at publish. The consent row must exist and have `given_at` at or before now (`consent_missing`), must not be withdrawn (`consent_withdrawn`), and its scope must cover the use (`consent_scope`): likeness for images and PDFs, voice for audio, and likeness plus voice for video, since the media row has no field saying a video is silent. A scope may list several uses, such as `likeness+voice`.
+A media row with a `consent_id` needs consent (an identifiable person), checked by `gate/consent.py` at approval and at publish. The consent row must exist and have `given_at` at or before now (`consent_missing`), must not be withdrawn (`consent_withdrawn`), and its `ConsentScope` (a closed enum, never free text) must cover the use (`consent_scope`): LIKENESS for images, PDFs and video, VOICE for audio, and VOICE as well for any media with `has_voice_track`. A media row points at one consent with one scope, so a video with a voice track cannot be covered yet and fails closed.
 
 ## Ordering
 
