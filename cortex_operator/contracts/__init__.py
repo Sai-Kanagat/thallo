@@ -19,7 +19,7 @@ from cortex_operator.contracts.legacy import (
     week_offsets,
 )
 
-CONTRACT_VERSION = "2.1.0"
+CONTRACT_VERSION = "2.3.0"
 
 __all__ = [
     "CONTRACT_VERSION",

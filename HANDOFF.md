@@ -1,37 +1,31 @@
-# Status (paused at the usage cap, 12 Nov 2026, 09:05)
+# Status (13 Nov 2026, stopped at the usage cap: week at 94%)
 
-Product name: Thallo, tagline "Grown, not generated." The Python package is still `cortex_operator`; rename it before wave 2 fans out. Plan of record: `docs/BUILD_PLAN.md`. Contracts: `docs/contracts.md` (version 2.0.0). Model policy: AGENTS.md (Opus by default; Fable at low effort for contracts, WP-15 play data and bugs that cross three or more modules).
+Product: Thallo, "Grown, not generated." Package is still `cortex_operator`. Contracts 2.3.0 (`docs/contracts.md`). Models: AGENTS.md. Run everything: `bash scripts/ci.sh` (Docker must be running; 1316 tests green on main).
 
-Run everything: `bash scripts/ci.sh` (needs Docker; 448 tests green on main at 3c983c6).
+## Wave 1: complete and merged
+WP-00 contracts, WP-01 data layer, WP-02 connections and vault, WP-03 truth library, WP-04 gate. The Supabase database is live with migrations 0001, 0002, 0003, 0010, 0011, 0012, 0020 and two restricted logins (`scripts/provision_db.py`). `0001_core.sql` is frozen: schema changes are new numbered migrations with `added("NNNN")` in models.py.
 
-## Wave 1
-| Package | State |
-|---|---|
-| WP-00 contracts | Merged, at 2.0.0 after a Fable review |
-| WP-01 data layer | Merged |
-| WP-02 connections and vault | Merged |
-| WP-03 truth library | Branch `worktree-agent-a84d480e55ac49165`: paused mid-merge of contracts 2.0.0 |
-| WP-04 gate | Branch `worktree-agent-ae202a7cd6122358e`: paused mid fix round |
+## Next, in order (start in a FRESH session; one or two Opus workers at a time)
+1. Wave 1 end-to-end test, `tests/integration/test_wave1_flow.py`, in memory and on Postgres: tenant with operator and currency, a claim verified by a human, `truth.build` on text with a slot, flags written as check_result rows, bundle, `approve_bundle_from_repo` with flags acknowledged, `check_publish` allowed; then each of: changed text, new claim version, voided approval, unacknowledged flag, all blocked. This also needs the Postgres implementations of `GateRepository`, `AuditStore` and `ClaimRepository`, which nobody has built yet (a small WP-01 follow-up).
+2. Independent re-review of WP-03's final rounds (the first review's probes are in the scratchpad of the old session and use the old API; write new ones), and a cross-family review of gate and truth with Gemini (`GEMINI_API_KEY` is set).
+3. Rename the package to `thallo` (no worktrees are open now; remove the old ones under `.claude/worktrees/` first).
+4. Wave 2 per `docs/packages/WAVE2_ADDENDUM.md`: WP-05 and WP-06, then WP-08, then WP-07 and WP-09.
+5. WP-15 uses `docs/plays/plays_draft.json`.
 
-Both paused workers keep their work in `.claude/worktrees/`. Resume each with its remaining list:
-
-**WP-03, still to do:** apply the approved legacy test fix (scratchpad engine_fix.diff: drop digits from two `tests/test_engine.py` texts); add the REVIEW_FLAG tier for ambiguous words (sei, uno, una, prima, secondo, pronoun "one") and universal claims (never, always, every, all, sempre, mai, tutti), hard-blocking only next to a digit, slot, unit or quantity noun; finish the 2.0.0 merge (claim versions: change writes a new row, VOIDED is terminal, lookups take the latest live version); fix two new automated findings: the Italian number-root regex can backtrack catastrophically (make the roots unambiguous or tokenise first, and cap input length), and the multiplier check after a slot runs on raw text, so run it on folded text and add multiplication signs, or reject any non-space, non-punctuation character right after a slot. Then an independent review, and a cross-family review once a Gemini key exists.
-
-**WP-04: built, needs one check before merge.** Branch head 9621622, merged with contracts 2.0.0, 724 tests green. This round added: an HMAC on grants and voids (`THALLO_GATE_SIGNING_KEY`, publish blocks without it), a full grant check against the chain plus void entries, one resolver snapshot (`PAYLOAD_MISMATCH`), fail-closed links with file-name and prose exemptions, `find_unresolved_links`, consent scope (`CONSENT_SCOPE`), and claim version in the hash. Next step: a focused security re-check of commits after be27d20 only (the earlier rounds are already verified), then `git merge --no-ff`. Open contract requests for the next batch: `Media.has_voice_track`, a key id in the grant payload, Ed25519 so the publisher holds only a public key, and `Claim.expiry_reason` (from WP-03).
-
-After both merge: run the fake-clock week end to end, then start wave 2 with two Opus workers at a time.
-
-## Usage plan
-Stop at 70% of the 5-hour window. Use the Fable reset (expires 17 Nov) when the window hits that cap. Keep the full reset (expires 10 Dec) for a week that runs out days before the Wednesday reset. Start wave 2 in a fresh session from this file: the lead session's context had grown to about 530k tokens, which makes every turn expensive.
+## Open items
+- `gate/tlds.txt` is partial, so the prose exemption is off. With Sai's yes, download https://data.iana.org/TLD/tlds-alpha-by-domain.txt, record source and date, set `complete: yes`.
+- Known false blocks in truth: "Trento", "on top of", "XL", some Tamil words. All Tamil lists need a native reader.
+- Later contract batch: key id on grants and Ed25519 for the publisher; audit anchor recording (WP-20).
+- Main is ahead of GitHub (`Sai-Kanagat/thallo`); Sai pushes or says "push".
 
 ## Waiting on Sai
-1. `.env`: `DATABASE_ADMIN_URL` holds only the tail of the Supabase URI. It needs the full `postgresql://postgres.<ref>:<password>@aws-0-eu-west-1.pooler.supabase.com:5432/postgres`. Check with `.venv/bin/python scripts/check_env.py` (prints SET or MISSING, never values).
-2. `THALLO_GATE_SIGNING_KEY` (hex, at least 32 bytes) and `THALLO_VAULT_KEY` (base64, 32 bytes): generate locally and keep them in `.env` and a password manager.
-3. Then: apply migrations to Supabase, create the cortex_app login and the cortex_worker login, generate `THALLO_VAULT_KEY`, then the Anthropic and Gemini keys, Postiz, and a private GitHub repo for CI.
-3. Platform access applications: WhatsApp Cloud, Google Ads, Business Profile.
-4. Pilot consents: done (written, kept out of the repo).
+1. Reset the Supabase database password (part of it appeared in a transcript), update `DATABASE_ADMIN_URL`, rerun `scripts/provision_db.py`.
+2. Back up `THALLO_VAULT_KEY` and `THALLO_GATE_SIGNING_KEY` from `.env` in a password manager.
+3. `ANTHROPIC_API_KEY` and `POSTIZ_API_KEY` in `.env`; the rest of `docs/SETUP_FOR_SAI.md` (access applications first).
+4. Answers to the four questions at the end of `docs/plays/plays_draft.json`, and the decisions table in the setup guide.
+5. Yes or no on the IANA list download.
 
-Build log page: https://saikanagat.com/build-log/ (repo ~/code/portfolio-live).
+Usage: stop at 70% of the 5-hour window unless Sai says otherwise. The Fable reset expires 17 Nov; the full reset expires 10 Dec. Build log: https://saikanagat.com/build-log/ (still shows the old tagline and wave 0).
 
 # Kickoff prompt for the orchestrator
 

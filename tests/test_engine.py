@@ -92,7 +92,7 @@ def test_unsupported_claim_never_reaches_review():
 def test_verified_claim_compiles_and_expired_claim_does_not():
     ledger = ClaimLedger()
     claim = ledger.add("40% less", "report.pdf", "evidence", MONDAY)
-    text = f"We cut review time by 40% [[{claim.id}]]."
+    text = f"We cut review time sharply [[{claim.id}]]."
     assert ledger.compile(text, START)[1]
     ledger.verify(claim.id)
     assert ledger.compile(text, START) == ([claim.id], [])
@@ -130,7 +130,7 @@ def test_changed_evidence_blocks():
     engine, board, item = build()
     claim = engine.claims.add("x", "s", "old")
     engine.claims.verify(claim.id)
-    item.text = f"Fact 1 [[{claim.id}]]."
+    item.text = f"Fact [[{claim.id}]]."
     passport = engine.approve(item, "sai", START)
     claim.evidence_hash = "new"
     assert not engine.gate.evaluate(item, passport, engine.brand, START).allowed
