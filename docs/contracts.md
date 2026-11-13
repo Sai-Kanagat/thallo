@@ -19,6 +19,8 @@ Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex
 
 ## Rules baked into the types
 
+- What the truth compile step guarantees, and what it does not. GUARANTEED (structural, complete): no digit in any script prints outside a verified slot; slots cannot combine or be scaled into a number no claim states; a slot fills only from the tenant's latest live claim version. BEST EFFORT (lexical, never complete): number words, superlatives, comparatives and names are caught from per-language lists tuned for precision. The backstops for that layer are the cross-family second reader (WP-07) and the weekly 20-sentence hand audit. No document or pitch may claim more than this.
+
 - Three verdicts, three behaviours. FAIL blocks the build. FLAG (ambiguous number words, universal claims, grader and second-reader doubts) never blocks the build but must be acknowledged one by one by the approver: the gate refuses a grant unless `acknowledged_flag_ids` covers every open FLAG `check_result` on the bundle's current variants, and the acknowledged ids are inside the signed grant. PASS collapses on the review card. A flag is therefore never a silent pass.
 
 - Money: every client-money column is in the tenant's `currency` (ISO 4217) and carries no currency suffix. Only our own provider costs (`cost_ledger.cost_eur`, `cost_cap_eur`) are in euros.
@@ -78,6 +80,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 |---|---|---|
 | 1.0.0 | 2026-11-11 | First freeze, after the independent review's 5 blocking findings were fixed |
 | 1.0.1 | 2026-11-11 | AdsRequest payload check made recursive (security review). Tightening only: no caller change |
+| 2.4.0 | 2026-11-13 | `HumanOnlyAction.CHANGE_CLAIM`; claim EXPIRED to VOIDED when superseded. No schema change |
 | 2.3.0 | 2026-11-13 | `consent.extra_scopes` (migration 0003): one consent can cover likeness and voice. Use `Consent.scopes` |
 | 2.2.0 | 2026-11-13 | Review flags need acknowledgement: `approval.acknowledged_flag_ids` (migration 0002, first post-freeze change). Post-freeze columns use `added("000N")` in models.py |
 | 2.1.0 | 2026-11-12 | From WP-03 and WP-04 reviews: `ConsentScope` closed enum on `consent.scope`, `Media.has_voice_track`, `Claim.expiry_reason` |

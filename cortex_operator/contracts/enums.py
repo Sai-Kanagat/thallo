@@ -266,6 +266,7 @@ class HumanOnlyAction(StrEnum):
 
     APPROVE = "approve"
     VERIFY_CLAIM = "verify_claim"
+    CHANGE_CLAIM = "change_claim"  # changing a verified claim voids approvals, so it needs a person
     SIGN_SPEND = "sign_spend"
     RAISE_TRUST_LEVEL = "raise_trust_level"
     SIGN_TEMPLATE = "sign_template"
