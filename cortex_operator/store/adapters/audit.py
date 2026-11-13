@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from psycopg import errors
 
 from cortex_operator.contracts.models import AuditEntry
+from cortex_operator.store import db as store_db
 from cortex_operator.store.db import TenantRepo
 from cortex_operator.trust.audit import AuditConflict, AuditError
 
@@ -50,8 +51,11 @@ class PgAuditStore:
         own(self.repo, tenant_id)
         if not isinstance(from_seq, int) or isinstance(from_seq, bool):
             raise AuditError("from_seq must be an int")
-        return tuple(self.repo.query_all(AuditEntry, "SELECT * FROM audit_log WHERE seq >= %s ORDER BY seq",
-                                         (from_seq,)))
+        # The chain is append-only and lives as long as the tenant, so it has its own ceiling
+        # (AUDIT_MAX_ROWS, not MAX_ROWS) and is streamed. WP-20's recorded anchor will bound this
+        # window: verify from the anchor forward instead of from seq 1.
+        return tuple(self.repo.stream_all(AuditEntry, "SELECT * FROM audit_log WHERE seq >= %s ORDER BY seq",
+                                          (from_seq,), max_rows=store_db.AUDIT_MAX_ROWS))
 
     def about(self, tenant_id: str, subject_kind: str, subject_id: str) -> Sequence[AuditEntry]:
         own(self.repo, tenant_id)
