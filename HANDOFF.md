@@ -63,3 +63,14 @@ Must land before WP-09 exposes connection settings to tenants:
 1. HIGH. `thallo/providers/image/template_render.py`: the `chromium` binary path is a connection setting. Remove it from `TemplateRenderSettings`; resolve the binary only from operator configuration (`THALLO_CHROMIUM` or `find_chromium()`).
 2. MEDIUM. Same file: `brand_dir`, `templates_dir`, `output_dir`, `photo_dirs` are connection settings. Derive them from an operator base directory keyed by tenant id, or require each resolved path to sit inside that tenant's operator-assigned root.
 Rule for every provider from here on: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+
+## Lead ruling: check results are bound to content (contracts 2.5.0, to build)
+Why: the gate fix on branch `worktree-agent-af29c4c07c8cfae8c` (commit ded0f2a) refuses a grant on a latest FAIL, but review showed a FAIL can never be superseded (the compiler writes FAIL under `truth.compile.<kind>` and a clean rerun writes PASS under `truth.compile`), and nothing ties a check row to the content it checked. Do not merge ded0f2a alone.
+
+Design:
+1. `check_result.content_sha256` (new column, NOT NULL, `added("0021")` plus migration `0021_check_content_hash.sql`): the per-variant canonical hash the gate uses in the approval root, computed by the same gate function. Every writer sets it (truth `to_check_results`, copy production, design lint).
+2. The gate reads only rows whose `content_sha256` equals the variant's current hash. Rows for older content are ignored, so fixing the content is what clears a FAIL. Among matching rows, per `(variant_id, layer, check_name)` take the highest attempt: any FAIL there refuses the grant; every FLAG there must be acknowledged.
+3. Coverage: a variant with no matching CODE-layer row is "not checked" and the grant is refused. The truth compiler always writes at least a PASS row.
+4. `check_result` becomes append-only for the app role (no UPDATE, no DELETE), in the same migration, following the pattern in `0010_wp01_rls.sql`. `attempt` is `ge=1` in the model and a CHECK in the migration.
+5. `check_publish` re-reads check results for the payload's content hash and blocks on any FAIL, on missing coverage, and if the read raises.
+Consequence: rows written while drafting stop counting once media or text changes; the WP-07 check stack reruns the code checks on the finished variant.
