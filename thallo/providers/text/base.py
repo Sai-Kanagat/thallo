@@ -3,8 +3,9 @@
 Each vendor is one file in this package with its own `register(registry)`. This module holds what
 they share:
 
-- `HttpCall`, `HttpReply`, `Transport`: one HTTP exchange. The default transport is stdlib
-  `urllib`. Tests pass a fixture transport, so no test ever reaches the network.
+- `HttpCall`, `HttpReply`, `Transport`: one HTTP exchange. The default transport is
+  `HttpTransport` (stdlib http.client, no redirects, SSRF checks, pinned address). Tests pass
+  a fixture transport, so no test ever reaches the network.
 - `Auth`: the secret travels to the transport as a `Secret` and is revealed only inside the
   transport, at the moment the header is built. It never sits in a URL, a body, provenance,
   settings or an error message.
@@ -22,14 +23,16 @@ returns a `pending_person` task saying what is missing.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
-import urllib.error
-import urllib.request
-from collections.abc import Callable, Mapping
+import socket
+import ssl
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_UP, Decimal
-from ipaddress import ip_address
+from enum import StrEnum
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
@@ -94,27 +97,137 @@ class HttpReply:
 Transport = Callable[[HttpCall], HttpReply]
 
 
-def urllib_transport(call: HttpCall) -> HttpReply:
-    """The real transport. Only http and https URLs reach urllib."""
-    if urlsplit(call.url).scheme not in ("http", "https"):
-        raise TextProviderError("only http and https endpoints are allowed")
-    headers = {"content-type": "application/json", "accept": "application/json", **call.headers}
-    if call.auth is not None:
-        headers[call.auth.header] = call.auth.scheme + call.auth.secret.reveal()
-    data = None if call.body is None else json.dumps(call.body, ensure_ascii=False).encode()
-    req = urllib.request.Request(call.url, data=data, headers=headers, method=call.method)  # noqa: S310
+class AddressPolicy(StrEnum):
+    PUBLIC = "public"  # hosted vendors: globally routable addresses only, https only
+    LOOPBACK = "loopback"  # the local provider: this machine only
+
+
+Resolver = Callable[[str, int], Sequence[str]]
+MAX_BODY_BYTES = 8 * 1024 * 1024
+
+
+def system_resolver(host: str, port: int) -> list[str]:
     try:
-        with urllib.request.urlopen(req, timeout=call.timeout) as resp:  # noqa: S310
-            status, raw = resp.status, resp.read()
-    except urllib.error.HTTPError as exc:
-        status, raw = exc.code, exc.read()
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise TextProviderError(f"could not reach the endpoint ({type(exc).__name__})") from None
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        raise TextProviderError("the endpoint's host name did not resolve") from None
+    return [str(info[4][0]) for info in infos]
+
+
+def _normal(ip: str) -> IPv4Address | IPv6Address:
+    addr = ip_address(ip.split("%", 1)[0])
+    if isinstance(addr, IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    if isinstance(addr, IPv6Address) and addr.sixtofour is not None:
+        return addr.sixtofour
+    return addr
+
+
+def address_allowed(ip: str, policy: AddressPolicy) -> bool:
     try:
-        body = json.loads(raw) if raw else None
+        addr = _normal(ip)
     except ValueError:
-        body = None
-    return HttpReply(status, body)
+        return False
+    if policy is AddressPolicy.LOOPBACK:
+        return addr.is_loopback
+    return addr.is_global and not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+                                   or addr.is_multicast or addr.is_unspecified)
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    """Connects to the address that was validated; the Host header keeps the original name."""
+
+    def __init__(self, host: str, port: int, ip: str, timeout: float) -> None:
+        super().__init__(host, port, timeout=timeout)
+        self._pinned_ip = ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    """Connects to the validated address; TLS verifies the certificate against the original host
+    name, which is also the SNI name."""
+
+    def __init__(self, host: str, port: int, ip: str, timeout: float) -> None:
+        self._tls = ssl.create_default_context()  # CERT_REQUIRED and check_hostname on
+        super().__init__(host, port, timeout=timeout, context=self._tls)
+        self._pinned_ip = ip
+
+    def connect(self) -> None:
+        raw = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._tls.wrap_socket(raw, server_hostname=self.host)
+
+
+ConnectionFactory = Callable[[str, str, int, str, float], Any]  # scheme, host, port, ip, timeout
+
+
+def pinned_connection(scheme: str, host: str, port: int, ip: str, timeout: float) -> http.client.HTTPConnection:
+    cls = _PinnedHTTPS if scheme == "https" else _PinnedHTTP
+    return cls(host, port, ip, timeout)
+
+
+class HttpTransport:
+    """The real transport, on stdlib http.client.
+
+    - Redirects are never followed: http.client has no redirect handling, and any 3xx answer
+      raises. The secret is attached to this one request only, so it cannot travel to a second host.
+    - SSRF: the host name is resolved once (resolver injectable for tests), every address it
+      returns must pass the policy (PUBLIC: globally routable, so no private, loopback,
+      link-local, reserved, multicast or unspecified address, IPv4-mapped and 6to4 IPv6 unwrapped;
+      LOOPBACK: this machine only), and the socket connects to that validated address, so a
+      second DNS answer cannot swap it. TLS still verifies the original host name.
+    - Errors carry a status class or an error type, never a raw body or an address.
+    """
+
+    def __init__(self, policy: AddressPolicy, *, resolver: Resolver = system_resolver,
+                 connect: ConnectionFactory = pinned_connection) -> None:
+        self.policy = policy
+        self.resolver = resolver
+        self.connect = connect
+
+    def __call__(self, call: HttpCall) -> HttpReply:
+        parts = urlsplit(call.url)
+        allowed = ("https",) if self.policy is AddressPolicy.PUBLIC else ("http", "https")
+        if parts.scheme not in allowed or not parts.hostname or parts.username or parts.password or parts.fragment:
+            raise TextProviderError("the endpoint URL is not allowed")
+        host = parts.hostname
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            raise TextProviderError("the endpoint URL is not allowed") from None
+        ips = list(self.resolver(host, port))
+        if not ips or not all(address_allowed(ip, self.policy) for ip in ips):
+            raise TextProviderError(f"the endpoint resolves to an address outside the {self.policy.value} policy")
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        headers = {"content-type": "application/json", "accept": "application/json", **call.headers}
+        data = None if call.body is None else json.dumps(call.body, ensure_ascii=False).encode()
+        conn = self.connect(parts.scheme, host, port, ips[0], call.timeout)
+        try:
+            if call.auth is not None:
+                headers[call.auth.header] = call.auth.scheme + call.auth.secret.reveal()
+            conn.request(call.method, path, body=data, headers=headers)
+            resp = conn.getresponse()
+            status, raw = resp.status, resp.read(MAX_BODY_BYTES + 1)
+        except (OSError, http.client.HTTPException) as exc:
+            raise TextProviderError(f"could not reach the endpoint ({type(exc).__name__})") from None
+        finally:
+            if call.auth is not None:
+                headers.pop(call.auth.header, None)
+            conn.close()
+        if 300 <= status < 400:
+            raise TextProviderError("the endpoint answered with a redirect (HTTP 3xx); redirects are refused")
+        if len(raw) > MAX_BODY_BYTES:
+            raise TextProviderError("the endpoint's answer is too large")
+        try:
+            body = json.loads(raw) if raw else None
+        except ValueError:
+            body = None
+        return HttpReply(status, body)
+
+
+def status_class(status: int) -> str:
+    return f"{status // 100}xx" if 100 <= status < 600 else "with an invalid status"
 
 
 # ====================================================================== settings
@@ -130,19 +243,34 @@ class PricedSettings(BaseModel):
 
 
 def check_https(url: str) -> str:
+    """Static check of a hosted base_url (tenant-writable). The address check runs again at
+    connect time in HttpTransport, after resolution."""
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
         raise ValueError("base_url must be https with a host and no credentials in it")
+    if parts.query or parts.fragment or "?" in url or "#" in url:
+        raise ValueError("base_url may not carry a query string or a fragment")
+    try:
+        literal = ip_address(parts.hostname)
+    except ValueError:
+        literal = None
+    if literal is not None and not address_allowed(str(literal), AddressPolicy.PUBLIC):
+        raise ValueError("base_url may not point at a private, loopback or reserved address")
+    if parts.hostname == "localhost" or parts.hostname.endswith((".localhost", ".local", ".internal")):
+        raise ValueError("base_url may not point at a local host name")
     return url.rstrip("/")
 
 
 def check_local(url: str) -> str:
+    """The local provider's endpoint, from operator configuration only: loopback or localhost."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
-        raise ValueError("base_url must be http or https with a host and no credentials in it")
+        raise ValueError("the local endpoint must be http or https with a host and no credentials in it")
+    if parts.query or parts.fragment:
+        raise ValueError("the local endpoint may not carry a query string or a fragment")
     host = parts.hostname
     try:
-        loopback = ip_address(host).is_loopback
+        loopback = _normal(host).is_loopback
     except ValueError:
         loopback = host == "localhost"
     if not loopback:
@@ -200,12 +328,13 @@ class HttpTextProvider:
     licence_note: ClassVar[str | None] = None
     Settings: ClassVar[type[PricedSettings]]
     model_id: ClassVar[re.Pattern[str]] = MODEL_ID
+    address_policy: ClassVar[AddressPolicy] = AddressPolicy.PUBLIC
 
     def __init__(self, ctx: ProviderContext, *, transport: Transport | None = None) -> None:
         self.ctx = ctx
         self.clock = ctx.clock
         self.model = ctx.connection.model
-        self.transport: Transport = transport or urllib_transport
+        self.transport: Transport = transport or HttpTransport(self.address_policy)
         try:
             self.settings: PricedSettings | None = self.Settings.model_validate(ctx.connection.settings)
         except ValidationError:
@@ -271,7 +400,7 @@ class HttpTextProvider:
             return c.Health(connected=False, checked_at=now, detail=type(exc).__name__)
         ok = 200 <= reply.status < 300 and self.health_ok(reply)
         return c.Health(connected=ok, checked_at=now,
-                        detail=None if ok else f"health check answered HTTP {reply.status}")
+                        detail=None if ok else f"health check answered HTTP {status_class(reply.status)}")
 
     def health_ok(self, reply: HttpReply) -> bool:
         return True
@@ -308,7 +437,7 @@ class HttpTextProvider:
                                         settings={"unconfigured": issue}))
         reply = self.transport(self.build_call(request, self._auth()))
         if not 200 <= reply.status < 300:
-            raise TextProviderError(f"{self.name} answered HTTP {reply.status}")
+            raise TextProviderError(f"{self.name} answered HTTP {status_class(reply.status)}")
         parsed = self.parse(reply)
         data = parse_json_output(parsed.text) if request.output_schema is not None else None
         if request.output_schema is not None and data is None:

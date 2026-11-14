@@ -1,0 +1,57 @@
+{
+  "_provenance": "Every response below is HAND-WRITTEN from the vendors' published response shapes (Nov 2026). None was captured from a live call. Field names and nesting follow the docs; ids, counts and texts are invented.",
+  "claude_messages": {"status": 200, "body": {
+    "id": "msg_01HANDWRITTEN000000000001", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5",
+    "content": [{"type": "thinking", "thinking": "", "signature": "handwritten"},
+                {"type": "text", "text": "Fresh bread every morning at our corner shop."}],
+    "stop_reason": "end_turn", "stop_sequence": null, "stop_details": null,
+    "usage": {"input_tokens": 410, "output_tokens": 37, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+  "claude_refusal": {"status": 200, "body": {
+    "id": "msg_01HANDWRITTEN000000000002", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5",
+    "content": [], "stop_reason": "refusal",
+    "stop_details": {"type": "refusal", "category": null, "explanation": "hand-written example"},
+    "usage": {"input_tokens": 410, "output_tokens": 0}}},
+  "claude_max_tokens": {"status": 200, "body": {
+    "id": "msg_01HANDWRITTEN000000000003", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5",
+    "content": [{"type": "text", "text": "Fresh bread every"}], "stop_reason": "max_tokens",
+    "usage": {"input_tokens": 410, "output_tokens": 2000}}},
+  "claude_model": {"status": 200, "body": {
+    "type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5",
+    "created_at": "2026-09-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000}},
+  "claude_overloaded": {"status": 529, "body": {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}},
+  "gemini_generate": {"status": 200, "body": {
+    "candidates": [{"content": {"role": "model", "parts": [{"text": "thinking summary", "thought": true},
+                                                         {"text": "Fresh bread every morning at our corner shop."}]},
+                    "finishReason": "STOP", "index": 0}],
+    "usageMetadata": {"promptTokenCount": 402, "candidatesTokenCount": 31, "thoughtsTokenCount": 12, "totalTokenCount": 445},
+    "modelVersion": "gemini-3.1-flash-lite", "responseId": "handwritten-gemini-0001"}},
+  "gemini_blocked": {"status": 200, "body": {
+    "candidates": [{"finishReason": "SAFETY", "index": 0}],
+    "usageMetadata": {"promptTokenCount": 402, "totalTokenCount": 402}, "modelVersion": "gemini-3.1-flash-lite"}},
+  "gemini_model": {"status": 200, "body": {
+    "name": "models/gemini-3.1-flash-lite", "displayName": "Gemini 3.1 Flash-Lite",
+    "inputTokenLimit": 1048576, "outputTokenLimit": 65536, "supportedGenerationMethods": ["generateContent"]}},
+  "openai_chat": {"status": 200, "body": {
+    "id": "chatcmpl-HANDWRITTEN0001", "object": "chat.completion", "created": 1767603600, "model": "gpt-5-mini",
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "Fresh bread every morning at our corner shop.",
+                                         "refusal": null}, "finish_reason": "stop"}],
+    "usage": {"prompt_tokens": 398, "completion_tokens": 29, "total_tokens": 427}}},
+  "openai_length": {"status": 200, "body": {
+    "id": "chatcmpl-HANDWRITTEN0002", "object": "chat.completion", "created": 1767603600, "model": "gpt-5-mini",
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "Fresh bread every"}, "finish_reason": "length"}],
+    "usage": {"prompt_tokens": 398, "completion_tokens": 2000, "total_tokens": 2398}}},
+  "openai_models": {"status": 200, "body": {
+    "object": "list", "data": [{"id": "gpt-5-mini", "object": "model", "created": 1767603600, "owned_by": "system"}]}},
+  "openai_unauthorized": {"status": 401, "body": {
+    "error": {"message": "Incorrect API key provided.", "type": "invalid_request_error", "code": "invalid_api_key"}}},
+  "ollama_chat": {"status": 200, "body": {
+    "model": "llama3.3:8b", "created_at": "2026-01-05T09:00:00Z",
+    "message": {"role": "assistant", "content": "Fresh bread every morning at our corner shop."},
+    "done": true, "done_reason": "stop", "total_duration": 2100000000, "prompt_eval_count": 380, "eval_count": 25}},
+  "ollama_length": {"status": 200, "body": {
+    "model": "llama3.3:8b", "created_at": "2026-01-05T09:00:00Z",
+    "message": {"role": "assistant", "content": "Fresh bread"}, "done": true, "done_reason": "length",
+    "prompt_eval_count": 380, "eval_count": 2000}},
+  "ollama_tags": {"status": 200, "body": {
+    "models": [{"name": "llama3.3:8b", "model": "llama3.3:8b", "modified_at": "2026-01-01T00:00:00Z", "size": 4900000000}]}}
+}
