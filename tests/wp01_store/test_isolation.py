@@ -8,10 +8,10 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from cortex_operator.contracts.enums import ActorKind, ClaimKind
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import TABLES, AuditEntry, Claim, Lead, Person
-from cortex_operator.store import InvalidTenant, audit_rls
+from thallo.contracts.enums import ActorKind, ClaimKind
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import TABLES, AuditEntry, Claim, Lead, Person
+from thallo.store import InvalidTenant, audit_rls
 
 NO_LINKS = {"first_touch_id": None, "last_touch_id": None, "owner_id": None}
 
@@ -154,7 +154,7 @@ def test_bad_tenant_id_is_refused(database):
 
 
 def test_privileged_url_is_refused(urls, clock):
-    from cortex_operator.store import Database
+    from thallo.store import Database
 
     with pytest.raises(InvalidTenant), Database(urls["admin"], clock).tenant("0190f3a0-0000-7000-8000-000000000001"):
         pass
@@ -163,7 +163,7 @@ def test_privileged_url_is_refused(urls, clock):
 def test_every_table_has_a_full_policy(admin):
     assert audit_rls(admin) == []
     covered = {r[0] for r in admin.execute("SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'")}
-    from cortex_operator.store.rls import NO_ACCESS
+    from thallo.store.rls import NO_ACCESS
 
     assert {t.__table__ for t in TABLES} - NO_ACCESS <= covered  # every tenant table, job included
     assert {"engine_passport", "engine_taste", "engine_sealed"} <= covered

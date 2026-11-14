@@ -5,10 +5,11 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor
-from cortex_operator.contracts.enums import ActorKind, ApprovalMethod, ApprovalSubject
-from cortex_operator.contracts.states import BundleState, ClaimState
-from cortex_operator.gate import (
+from tests.wp04_gate.conftest import make_world
+from thallo.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor
+from thallo.contracts.enums import ActorKind, ApprovalMethod, ApprovalSubject
+from thallo.contracts.states import BundleState, ClaimState
+from thallo.gate import (
     DEFAULT_APPROVAL_TTL,
     MAX_APPROVAL_TTL,
     ApprovalRefused,
@@ -17,7 +18,6 @@ from cortex_operator.gate import (
     is_expired,
     void_bundle_approvals,
 )
-from tests.wp04_gate.conftest import make_world
 
 
 def call(world, **over):

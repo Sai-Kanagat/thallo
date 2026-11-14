@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from cortex_operator.contracts.actors import ActorRef, AgentActor, HumanActor, SystemActor
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import ActorKind
-from cortex_operator.trust.audit import (
+from tests.wp04_gate.conftest import ident
+from thallo.contracts.actors import ActorRef, AgentActor, HumanActor, SystemActor
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import ActorKind
+from thallo.trust.audit import (
     AuditConflict,
     AuditDraft,
     AuditError,
@@ -15,7 +16,6 @@ from cortex_operator.trust.audit import (
     compute_entry_hash,
     verify_chain,
 )
-from tests.wp04_gate.conftest import ident
 
 T = "019b8d62-7a80-7000-8000-00000000aaaa"
 U = "019b8d62-7a80-7000-8000-00000000bbbb"

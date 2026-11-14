@@ -2,11 +2,12 @@ import time
 
 import pytest
 
-from cortex_operator.contracts.enums import CheckLayer, CheckVerdict, ClaimKind, Language
-from cortex_operator.contracts.events import ClaimChangedPayload, EventName
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.states import ClaimState
-from cortex_operator.truth import (
+from tests.wp03_truth.conftest import DAY
+from thallo.contracts.enums import CheckLayer, CheckVerdict, ClaimKind, Language
+from thallo.contracts.events import ClaimChangedPayload, EventName
+from thallo.contracts.ids import new_id
+from thallo.contracts.states import ClaimState
+from thallo.truth import (
     ClaimError,
     FindingKind,
     Severity,
@@ -16,8 +17,7 @@ from cortex_operator.truth import (
     to_check_results,
     verify_claim,
 )
-from cortex_operator.truth.compiler import MAX_TEXT_CHARS
-from tests.wp03_truth.conftest import DAY
+from thallo.truth.compiler import MAX_TEXT_CHARS
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 
@@ -89,8 +89,8 @@ def test_check_results_carry_fail_flag_and_pass(run, clock, tenant):
 
 
 def test_legacy_gate_ignores_flags():
-    from cortex_operator.contracts.clock import FAKE_EPOCH
-    from cortex_operator.truth import ClaimLedger
+    from thallo.contracts.clock import FAKE_EPOCH
+    from thallo.truth import ClaimLedger
     assert ClaimLedger().compile("Always calm weeks.", FAKE_EPOCH) == ([], [])
 
 
@@ -116,7 +116,7 @@ def test_adversarial_input_finishes_fast(run, lib, language, text):
 
 
 def test_italian_number_parse_is_linear():
-    from cortex_operator.truth.lexicon import italian_number_word
+    from thallo.truth.lexicon import italian_number_word
     start = time.perf_counter()
     for _ in range(200):
         italian_number_word("cento" * 12 + "q")
@@ -155,7 +155,7 @@ def test_change_writes_a_new_version_and_voids_the_old(make, clock, tenant, huma
 def test_change_of_expired_candidate_voided_and_rejected(make, clock, human, verifier, repo):
     exp = make("C-0001", ClaimKind.NUMBER, "3", "t", verify_expires_at=clock.now() + DAY)
     clock.advance(DAY)
-    from cortex_operator.truth import expire_due
+    from thallo.truth import expire_due
     [(expired, _)] = expire_due([exp], clock)
     ch = change_claim(expired, actor=human, verifier=verifier, clock=clock, repo=repo, value="4")
     assert ch.previous.state is ClaimState.VOIDED and ch.current.version == 2  # O2: expired rows are voided too

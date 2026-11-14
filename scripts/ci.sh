@@ -17,14 +17,14 @@ fi
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "1/5 lint"
-"$PY" -m ruff check cortex_operator scripts tests  # legacy engine files are excluded in pyproject.toml
+"$PY" -m ruff check thallo scripts tests  # legacy engine files are excluded in pyproject.toml
 
 echo "2/5 repository rules"
 "$PY" scripts/check_rules.py
 
 echo "3/5 migration matches the models"
-"$PY" -m cortex_operator.contracts.ddl | diff -u db/migrations/0001_core.sql - \
-  || { echo "regenerate: python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql"; exit 1; }
+"$PY" -m thallo.contracts.ddl | diff -u db/migrations/0001_core.sql - \
+  || { echo "regenerate: python -m thallo.contracts.ddl > db/migrations/0001_core.sql"; exit 1; }
 
 CONTAINER=""
 cleanup() { [ -n "$CONTAINER" ] && docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }

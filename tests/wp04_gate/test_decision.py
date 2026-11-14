@@ -7,10 +7,10 @@ from decimal import Decimal
 
 import pytest
 
-from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate import ApprovalEvidence, BlockReason, SpendCheck, check_publish, void_bundle_approvals
-from cortex_operator.gate import decide as _decide
 from tests.wp04_gate.conftest import make_world
+from thallo.contracts.states import BundleState, ClaimState, VariantState
+from thallo.gate import ApprovalEvidence, BlockReason, SpendCheck, check_publish, void_bundle_approvals
+from thallo.gate import decide as _decide
 
 
 def first_variant(world):

@@ -4,11 +4,11 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.actors import HumanActor, SystemActor
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.truth import InMemoryClaimRepository, build, compile_text, new_candidate, verify_claim
+from thallo.contracts.actors import HumanActor, SystemActor
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.contracts.ids import new_id
+from thallo.truth import InMemoryClaimRepository, build, compile_text, new_candidate, verify_claim
 
 SYSTEM = SystemActor(id="extractor")
 DAY = timedelta(days=1)

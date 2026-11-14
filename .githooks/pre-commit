@@ -14,5 +14,5 @@ if [ ! -x "$PY" ]; then
 fi
 [ -x "$PY" ] || PY=python3
 "$PY" scripts/check_rules.py || { echo "pre-commit: repository rules failed." >&2; exit 1; }
-"$PY" -m cortex_operator.contracts.ddl | diff -q db/migrations/0001_core.sql - >/dev/null \
+"$PY" -m thallo.contracts.ddl | diff -q db/migrations/0001_core.sql - >/dev/null \
   || { echo "pre-commit: db/migrations/0001_core.sql does not match the models; regenerate it." >&2; exit 1; }

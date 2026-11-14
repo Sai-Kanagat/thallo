@@ -1,8 +1,8 @@
 """Lexical layer (L1 to L6): best effort, tuned for precision."""
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import FindingKind, Severity
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import FindingKind, Severity
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

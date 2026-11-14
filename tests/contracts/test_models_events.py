@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cortex_operator.contracts.actors import AgentActor, SystemActor
-from cortex_operator.contracts.clock import FAKE_EPOCH
-from cortex_operator.contracts.ddl import render
-from cortex_operator.contracts.events import PAYLOADS, ClaimPayload, Event, EventName, LeadPayload
-from cortex_operator.contracts.models import ER_ENTITIES, TABLES, Lead, ModelMade, Tenant, TenantRow
+from thallo.contracts.actors import AgentActor, SystemActor
+from thallo.contracts.clock import FAKE_EPOCH
+from thallo.contracts.ddl import render
+from thallo.contracts.events import PAYLOADS, ClaimPayload, Event, EventName, LeadPayload
+from thallo.contracts.models import ER_ENTITIES, TABLES, Lead, ModelMade, Tenant, TenantRow
 
 ROOT = Path(__file__).resolve().parents[2]
 T = "0190f3a0-0000-7000-8000-000000000001"
@@ -67,7 +67,7 @@ def test_lead_fit_is_bounded():
 
 def test_committed_migration_matches_models():
     committed = (ROOT / "db" / "migrations" / "0001_core.sql").read_text()
-    assert committed == render(), "run: python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql"
+    assert committed == render(), "run: python -m thallo.contracts.ddl > db/migrations/0001_core.sql"
 
 
 def test_every_event_has_a_payload_type():

@@ -874,7 +874,7 @@ Everything in Parts 1 to 3 gets built. This part splits it into 42 work packages
 
 ```
 cortex-operator/
-  cortex_operator/
+  thallo/
     contracts/     shared types, states, events, fake clock
     store/         Postgres access, tenant scoping
     connections/   registry, contract, vault

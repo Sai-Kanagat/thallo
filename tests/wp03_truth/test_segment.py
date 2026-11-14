@@ -1,8 +1,8 @@
 """The segmenter is for display only. These tests pin its behaviour for writer feedback."""
 import pytest
 
-from cortex_operator.contracts.enums import Language
-from cortex_operator.truth import segment
+from thallo.contracts.enums import Language
+from thallo.truth import segment
 
 
 def texts(text, language=Language.EN):

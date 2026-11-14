@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from cortex_operator.contracts import Item
-from cortex_operator.postiz import PostizMetrics, PostizPublisher
-from cortex_operator.publishing import deliver
+from thallo.contracts import Item
+from thallo.postiz import PostizMetrics, PostizPublisher
+from thallo.publishing import deliver
 
 MAP = {"linkedin": {"id": "ch1", "type": "linkedin"}}
 

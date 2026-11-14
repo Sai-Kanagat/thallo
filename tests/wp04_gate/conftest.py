@@ -11,9 +11,9 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.actors import HumanActor
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import (
+from thallo.contracts.actors import HumanActor
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import (
     ApprovalMethod,
     Channel,
     ClaimKind,
@@ -24,8 +24,8 @@ from cortex_operator.contracts.enums import (
     MediaProvenance,
     UserRole,
 )
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import (
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import (
     Approval,
     AppUser,
     Bundle,
@@ -38,16 +38,16 @@ from cortex_operator.contracts.models import (
     Variant,
     VariantMedia,
 )
-from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate import (
+from thallo.contracts.states import BundleState, ClaimState, VariantState
+from thallo.gate import (
     GateChange,
     approve_bundle_from_repo,
     bundle_hash,
     load_bundle,
     void_bundle_approvals,
 )
-from cortex_operator.gate.signing import GateSigner
-from cortex_operator.trust.audit import AuditLog, InMemoryAuditStore
+from thallo.gate.signing import GateSigner
+from thallo.trust.audit import AuditLog, InMemoryAuditStore
 
 _counter = itertools.count(1)
 

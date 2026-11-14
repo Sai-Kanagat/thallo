@@ -3,8 +3,8 @@ import time
 
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth.compiler import MAX_TEXT_CHARS
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth.compiler import MAX_TEXT_CHARS
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

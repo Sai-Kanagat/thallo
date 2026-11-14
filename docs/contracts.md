@@ -1,6 +1,6 @@
 # Contracts (WP-00)
 
-Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex_operator/contracts/`. Every package builds against these files and none edits them.
+Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `thallo/contracts/`. Every package builds against these files and none edits them.
 
 ## What is frozen
 
@@ -47,15 +47,15 @@ Version 2.0.0, 12 Nov 2026 (first frozen 11 Nov at 1.0.0). Code lives in `cortex
 - Hooks only receive their own tenant's events.
 - No table stores an IP address or a raw secret. Secrets are a `secret_ref` the vault resolves.
 - Missing metrics are stored as missing, never as zero.
-- Time comes from a `Clock`. `scripts/check_rules.py` fails any product code that reads the system clock or imports a network or vendor SDK outside `cortex_operator/providers/`.
+- Time comes from a `Clock`. `scripts/check_rules.py` fails any product code that reads the system clock or imports a network or vendor SDK outside `thallo/providers/`.
 
 ## How to use them as a worker
 
 ```python
-from cortex_operator.contracts.clock import FakeClock, FAKE_EPOCH
-from cortex_operator.contracts.models import Variant
-from cortex_operator.contracts.states import VARIANT, VariantState
-from cortex_operator.contracts.testing.contract_suite import assert_provider_contract
+from thallo.contracts.clock import FakeClock, FAKE_EPOCH
+from thallo.contracts.models import Variant
+from thallo.contracts.states import VARIANT, VariantState
+from thallo.contracts.testing.contract_suite import assert_provider_contract
 
 VARIANT.check(VariantState.REVIEW, VariantState.APPROVED)  # raises IllegalTransition if not legal
 assert_provider_contract(MyProvider(...), FakeClock(FAKE_EPOCH))  # every provider you write
@@ -89,7 +89,7 @@ The lead bumps `CONTRACT_VERSION` in `contracts/__init__.py` on every breaking c
 
 ## Migrations
 
-- `0001_core.sql` is generated and is now FROZEN: it was applied to the real Supabase database on 12 Nov 2026 at contracts 2.1.0. Every schema change from here is a new numbered migration (`0002` to `0009` are reserved for lead-owned core changes), and `models.py` changes with it in the same commit. Migrations must run without a true superuser: never name the SUPERUSER or BYPASSRLS attributes; check them instead. Never hand-edit it: change `models.py`, then run `python -m cortex_operator.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
+- `0001_core.sql` is generated and is now FROZEN: it was applied to the real Supabase database on 12 Nov 2026 at contracts 2.1.0. Every schema change from here is a new numbered migration (`0002` to `0009` are reserved for lead-owned core changes), and `models.py` changes with it in the same commit. Migrations must run without a true superuser: never name the SUPERUSER or BYPASSRLS attributes; check them instead. Never hand-edit it: change `models.py`, then run `python -m thallo.contracts.ddl > db/migrations/0001_core.sql`. CI fails on drift.
 - `scripts/migrate.py` applies files in order, once each, and refuses a file that changed after it was applied.
 - Row-level security per tenant arrives in WP-01's migration, not here.
 

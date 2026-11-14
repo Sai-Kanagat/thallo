@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Variant
-from cortex_operator.contracts.states import VariantState
-from cortex_operator.gate import BlockReason
-from cortex_operator.store import db as store_db
-from cortex_operator.store.adapters import LocalBlobStore
-from cortex_operator.store.db import TooManyRows
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import Variant
+from thallo.contracts.states import VariantState
+from thallo.gate import BlockReason
+from thallo.store import db as store_db
+from thallo.store.adapters import LocalBlobStore
+from thallo.store.db import TooManyRows
 
 from .backends import PgBackend
 from .test_wave1_flow import approve, publish, seed, signer  # noqa: F401  (signer is a fixture)

@@ -7,7 +7,7 @@ lookalikes, names). Every one must block.
 """
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
+from thallo.contracts.enums import ClaimKind, Language
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

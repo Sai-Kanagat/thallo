@@ -4,19 +4,19 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.connections import (
+from thallo.connections import (
     HealthMonitor,
     InMemoryChannelAccountStore,
     InMemoryHealthState,
     ListEventSink,
 )
-from cortex_operator.contracts import connection as c
-from cortex_operator.contracts.clock import FAKE_EPOCH
-from cortex_operator.contracts.enums import Capability, Channel, ConnectionMode
-from cortex_operator.contracts.events import EventName
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import ChannelAccount
-from cortex_operator.contracts.testing.mocks import MockProvider
+from thallo.contracts import connection as c
+from thallo.contracts.clock import FAKE_EPOCH
+from thallo.contracts.enums import Capability, Channel, ConnectionMode
+from thallo.contracts.events import EventName
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import ChannelAccount
+from thallo.contracts.testing.mocks import MockProvider
 
 from .conftest import T1, T2
 

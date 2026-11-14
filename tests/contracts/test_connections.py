@@ -6,13 +6,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from cortex_operator.contracts import connection as c
-from cortex_operator.contracts.actors import HumanActor
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import Capability, Channel, Language, MessageChannel
-from cortex_operator.contracts.events import ClaimPayload, Event, EventName
-from cortex_operator.contracts.testing.contract_suite import ContractFailure, assert_provider_contract
-from cortex_operator.contracts.testing.mocks import MockProvider, mock_providers
+from thallo.contracts import connection as c
+from thallo.contracts.actors import HumanActor
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import Capability, Channel, Language, MessageChannel
+from thallo.contracts.events import ClaimPayload, Event, EventName
+from thallo.contracts.testing.contract_suite import ContractFailure, assert_provider_contract
+from thallo.contracts.testing.mocks import MockProvider, mock_providers
 
 T = "0190f3a0-0000-7000-8000-000000000001"
 A = "0190f3a0-0000-7000-8000-000000000031"

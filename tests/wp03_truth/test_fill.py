@@ -1,9 +1,9 @@
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import ClaimError, FillError, render_claim
-from cortex_operator.truth.fill import format_number
 from tests.wp03_truth.conftest import DAY, wording
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import ClaimError, FillError, render_claim
+from thallo.truth.fill import format_number
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 
@@ -99,7 +99,7 @@ def test_build_refuses_expired_price(make, built, clock):
 
 
 def test_build_reports_codes_ids_and_slot_spans(make, clock, tenant):
-    from cortex_operator.truth import build
+    from thallo.truth import build
     a = make("C-0001", ClaimKind.NUMBER, "1", "t")
     b = make("C-0002", ClaimKind.NAME, "Acme")
     out = build("{{C-0002}} moves {{C-0001}}, then {{C-0002}} again.", tenant_id=tenant, language=EN,

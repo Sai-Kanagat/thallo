@@ -1,0 +1,88 @@
+"""Truth library (WP-03): typed claims with proof and expiry, slot filling per language, and the
+compile step that keeps numbers, superlatives, comparisons and names out of model-typed copy.
+
+Modules
+- `claims`: candidate, human-only verification, expiry, change with its void list
+- `compiler`: `compile_text`, `scan`, `build` (compile, fill, check the output), the STRUCTURAL
+  layer (complete, always blocks) and the `Detector` hook
+- `lexical`: the LEXICAL layer (best effort, tuned for precision)
+- `findings`: `Finding`, `FindingKind`, `Severity`
+- `fill`: `render_claim` and per-language number, unit, price and date formatting. Filling text
+  is private and reached only through `build`
+- `units`: the units and ISO 4217 codes a claim may carry
+- `segment`: sentence segmentation, for display only (not a security boundary)
+- `lexicon`: per-language word lists, number parsers, lookalike folding and script rules
+- `repository`: the storage Protocols WP-01 implements, and an in-memory version
+- `legacy`: the original engine's `ClaimLedger`, re-exported below so its imports keep working
+
+`truth.Claim` is the legacy dataclass. The contract row is `thallo.contracts.models.Claim`.
+"""
+from thallo.truth.claims import (
+    DEFAULT_POLICY,
+    ClaimChange,
+    ClaimError,
+    ExpiryPolicy,
+    change_claim,
+    expire_due,
+    new_candidate,
+    next_code,
+    reject_claim,
+    verify_claim,
+)
+from thallo.truth.compiler import (
+    AllowedTermError,
+    Built,
+    CompileFailed,
+    CompileResult,
+    Detector,
+    Finding,
+    FindingKind,
+    Severity,
+    build,
+    compile_text,
+    scan,
+    to_check_results,
+)
+from thallo.truth.fill import Filled, FillError, LibraryError, render_claim
+from thallo.truth.legacy import REF, Claim, ClaimLedger, render
+from thallo.truth.repository import ClaimRepository, ClaimUsage, InMemoryClaimRepository, library
+from thallo.truth.segment import Sentence, segment
+
+__all__ = [
+    "AllowedTermError",
+    "DEFAULT_POLICY",
+    "REF",
+    "Built",
+    "Claim",
+    "ClaimChange",
+    "ClaimError",
+    "ClaimLedger",
+    "ClaimRepository",
+    "ClaimUsage",
+    "CompileFailed",
+    "CompileResult",
+    "Detector",
+    "ExpiryPolicy",
+    "Severity",
+    "FillError",
+    "Filled",
+    "Finding",
+    "FindingKind",
+    "InMemoryClaimRepository",
+    "library",
+    "LibraryError",
+    "Sentence",
+    "build",
+    "change_claim",
+    "compile_text",
+    "expire_due",
+    "new_candidate",
+    "next_code",
+    "reject_claim",
+    "render",
+    "render_claim",
+    "scan",
+    "segment",
+    "to_check_results",
+    "verify_claim",
+]

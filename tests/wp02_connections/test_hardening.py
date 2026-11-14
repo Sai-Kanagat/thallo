@@ -5,7 +5,7 @@ import traceback
 
 import pytest
 
-from cortex_operator.connections import (
+from thallo.connections import (
     InMemorySecretStore,
     InvalidConnection,
     KeyRing,
@@ -14,7 +14,7 @@ from cortex_operator.connections import (
     VaultError,
     VaultKeyError,
 )
-from cortex_operator.contracts.enums import Capability
+from thallo.contracts.enums import Capability
 
 from .conftest import T1, b64, new_key
 from .test_registry import TEXT, ids, register
@@ -138,11 +138,11 @@ def test_no_vault_secret_when_the_connection_store_fails(registry, providers, se
 
 def test_every_discovered_provider_passes_the_contract(providers):
     """Parametrised over what discovery finds, so a new provider file is covered with no test edit."""
-    from cortex_operator.connections import ProviderContext
-    from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-    from cortex_operator.contracts.models import Connection
-    from cortex_operator.contracts.testing.contract_suite import assert_provider_contract
-    from cortex_operator.contracts.testing.samples import _id
+    from thallo.connections import ProviderContext
+    from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+    from thallo.contracts.models import Connection
+    from thallo.contracts.testing.contract_suite import assert_provider_contract
+    from thallo.contracts.testing.samples import _id
 
     clock = FakeClock(FAKE_EPOCH)
     for cap in Capability:

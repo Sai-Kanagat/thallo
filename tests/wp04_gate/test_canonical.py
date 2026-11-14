@@ -6,8 +6,9 @@ import hashlib
 
 import pytest
 
-from cortex_operator.contracts.enums import Channel, Language
-from cortex_operator.gate.canonical import (
+from tests.wp04_gate.conftest import make_world
+from thallo.contracts.enums import Channel, Language
+from thallo.gate.canonical import (
     BundleContent,
     CanonicalFormError,
     MediaItem,
@@ -19,7 +20,6 @@ from cortex_operator.gate.canonical import (
     normalise_url,
     sha256_bytes,
 )
-from tests.wp04_gate.conftest import make_world
 
 
 def root(content, resolver=None):
@@ -170,8 +170,8 @@ def test_claim_version_binds_the_root(update):
 
 def test_a_new_claim_version_voids_the_approval():
     """Contracts 2.0.0: a change writes a new claim row (version + 1) and voids the old one."""
-    from cortex_operator.contracts.states import ClaimState
-    from cortex_operator.gate import BlockReason, check_publish
+    from thallo.contracts.states import ClaimState
+    from thallo.gate import BlockReason, check_publish
 
     w = make_world()
     a = w.approve()

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from cortex_operator.contracts import BrandSettings, Item, Status
-from cortex_operator.notion import NotionCockpit, NotionMap
-from cortex_operator.publishing import MockPublisher
-from cortex_operator.store import PostgresStore
-from cortex_operator.truth import ClaimLedger
-from cortex_operator.workflow import Engine
+from thallo.contracts import BrandSettings, Item, Status
+from thallo.notion import NotionCockpit, NotionMap
+from thallo.publishing import MockPublisher
+from thallo.store import PostgresStore
+from thallo.truth import ClaimLedger
+from thallo.workflow import Engine
 
 MONDAY = datetime(2026, 11, 16, 9)  # noqa: DTZ001 naive on purpose: the original engine's own convention
 TEXT = "We help operators ship calmer weeks."

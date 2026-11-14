@@ -1,9 +1,9 @@
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.truth import CompileFailed, Finding, FindingKind, LibraryError
 from tests.wp03_truth.conftest import DAY
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.contracts.ids import new_id
+from thallo.truth import CompileFailed, Finding, FindingKind, LibraryError
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

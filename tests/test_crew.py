@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from cortex_operator.contracts import Item
-from cortex_operator.crew import CRITIC, STRATEGIST, CrewWriter
-from cortex_operator.truth import ClaimLedger
+from thallo.contracts import Item
+from thallo.crew import CRITIC, STRATEGIST, CrewWriter
+from thallo.truth import ClaimLedger
 
 NOW = datetime(2026, 11, 9)
 ITEM = Item("a", "s", "linkedin", "Launch", NOW)

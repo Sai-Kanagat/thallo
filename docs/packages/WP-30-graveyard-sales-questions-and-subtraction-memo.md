@@ -39,7 +39,7 @@ What is real, what is mocked, what needs Sai, and what you could not verify.
 
 ```
 cortex-operator/
-  cortex_operator/
+  thallo/
     contracts/     shared types, states, events, fake clock
     store/         Postgres access, tenant scoping
     connections/   registry, contract, vault

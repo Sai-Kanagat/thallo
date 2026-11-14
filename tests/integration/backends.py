@@ -1,6 +1,6 @@
 """Two backends for the wave 1 flow, behind one small facade.
 
-`PgBackend` uses the real adapters (`cortex_operator.store.adapters`) over `Database.tenant`, as
+`PgBackend` uses the real adapters (`thallo.store.adapters`) over `Database.tenant`, as
 the per-run app role. `MemoryBackend` is an in-memory store with the same rules the database
 enforces for this flow: rows are scoped to the session's tenant (row-level security), audit
 seqs are unique per tenant and insert-only, claim versions are unique and append-only, and a
@@ -16,9 +16,9 @@ from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from cortex_operator.contracts.clock import Clock
-from cortex_operator.contracts.enums import ApprovalSubject
-from cortex_operator.contracts.models import (
+from thallo.contracts.clock import Clock
+from thallo.contracts.enums import ApprovalSubject
+from thallo.contracts.models import (
     Approval,
     AppUser,
     AuditEntry,
@@ -36,10 +36,10 @@ from cortex_operator.contracts.models import (
     VariantClaim,
     VariantMedia,
 )
-from cortex_operator.contracts.states import CLAIM, ClaimState
-from cortex_operator.gate.approvals import GateChange
-from cortex_operator.gate.canonical import normalise_url
-from cortex_operator.store.adapters import (
+from thallo.contracts.states import CLAIM, ClaimState
+from thallo.gate.approvals import GateChange
+from thallo.gate.canonical import normalise_url
+from thallo.store.adapters import (
     BlobStore,
     ChangeNotApplied,
     ClaimWriteRefused,
@@ -49,8 +49,8 @@ from cortex_operator.store.adapters import (
     TenantMismatch,
     write_gate_change,
 )
-from cortex_operator.store.adapters.claims import CONTENT, LIFECYCLE
-from cortex_operator.trust.audit import AuditConflict, AuditLog
+from thallo.store.adapters.claims import CONTENT, LIFECYCLE
+from thallo.trust.audit import AuditConflict, AuditLog
 
 REDIRECT = "https://thallo.test/r/"
 
@@ -85,7 +85,7 @@ class PgBackend:
     name = "postgres"
 
     def __init__(self, urls: dict[str, str], clock: Clock, blobs: BlobStore) -> None:
-        from cortex_operator.store import Database
+        from thallo.store import Database
 
         self.urls = urls
         self.clock = clock

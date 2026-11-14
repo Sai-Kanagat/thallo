@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Bundle
-from cortex_operator.contracts.states import CLAIM, IllegalTransition
-from cortex_operator.gate.approvals import GateChange
-from cortex_operator.store.adapters import BlobError, ChangeNotApplied, ClaimWriteRefused, LocalBlobStore
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import Bundle
+from thallo.contracts.states import CLAIM, IllegalTransition
+from thallo.gate.approvals import GateChange
+from thallo.store.adapters import BlobError, ChangeNotApplied, ClaimWriteRefused, LocalBlobStore
 
 from .test_wave1_flow import backend, seed, signer  # noqa: F401  (fixtures)
 

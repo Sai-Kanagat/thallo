@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from cortex_operator.connections import InvalidConnection
-from cortex_operator.contracts.enums import Capability, ConnectionMode
-from cortex_operator.contracts.models import Connection  # noqa: F401
+from thallo.connections import InvalidConnection
+from thallo.contracts.enums import Capability, ConnectionMode
+from thallo.contracts.models import Connection  # noqa: F401
 
 from .conftest import T1
 from .test_registry import TEXT, Hosted, S, register

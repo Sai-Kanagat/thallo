@@ -1,12 +1,12 @@
 """Claim lifecycle fixes from the review (O1 to O3) and price formatting (O5)."""
 import pytest
 
-from cortex_operator.contracts.actors import HumanActor, HumanOnlyViolation, SystemActor
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.states import ClaimState
-from cortex_operator.truth import ClaimError, change_claim, expire_due, new_candidate, render_claim, verify_claim
 from tests.wp03_truth.conftest import DAY, SYSTEM
+from thallo.contracts.actors import HumanActor, HumanOnlyViolation, SystemActor
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.contracts.ids import new_id
+from thallo.contracts.states import ClaimState
+from thallo.truth import ClaimError, change_claim, expire_due, new_candidate, render_claim, verify_claim
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

@@ -1,9 +1,9 @@
 """Repository rules that tests alone do not catch. Run by scripts/ci.sh and tests/contracts.
 
 1. Time comes from a Clock. No datetime.now(), utcnow(), date.today() or time.time() outside
-   cortex_operator/contracts/clock.py.
+   thallo/contracts/clock.py.
 2. The core never calls a vendor. Network and vendor SDK imports live only in
-   cortex_operator/providers/.
+   thallo/providers/.
 3. No em or en dashes in code, docs, SQL or config.
 
 LEGACY lists files from the original engine that break a rule today. The list may only
@@ -26,14 +26,14 @@ VENDOR_RE = re.compile(
     r"twilio|smtplib|socket)\b", re.M)
 DASH_RE = re.compile("[" + chr(0x2013) + chr(0x2014) + "]")
 
-CLOCK_HOME = "cortex_operator/contracts/clock.py"
-PROVIDERS = "cortex_operator/providers/"
+CLOCK_HOME = "thallo/contracts/clock.py"
+PROVIDERS = "thallo/providers/"
 
 LEGACY: dict[str, set[str]] = {
-    "cortex_operator/run.py": {"clock"},  # ported by the worker package
-    "cortex_operator/notion.py": {"clock", "vendor"},  # WP-17 calendar mirror
-    "cortex_operator/postiz.py": {"clock", "vendor"},  # WP-08 publisher
-    "cortex_operator/writer.py": {"vendor"},  # WP-06 text providers
+    "thallo/run.py": {"clock"},  # ported by the worker package
+    "thallo/notion.py": {"clock", "vendor"},  # WP-17 calendar mirror
+    "thallo/postiz.py": {"clock", "vendor"},  # WP-08 publisher
+    "thallo/writer.py": {"vendor"},  # WP-06 text providers
 }
 
 
@@ -58,14 +58,14 @@ def violations() -> list[str]:
         allowed = LEGACY.get(rel, set())
         if DASH_RE.search(text):
             found.append(f"{rel}: em or en dash")
-        if path.suffix != ".py" or not rel.startswith("cortex_operator/"):
+        if path.suffix != ".py" or not rel.startswith("thallo/"):
             continue  # clock and vendor rules bind product code; tests feed bad input on purpose
         code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
         code = re.sub(r'"""[\s\S]*?"""', "", code)
         if rel != CLOCK_HOME and "clock" not in allowed and CLOCK_RE.search(code):
             found.append(f"{rel}: reads the system clock; take a Clock instead")
         if not rel.startswith(PROVIDERS) and "vendor" not in allowed and VENDOR_RE.search(code):
-            found.append(f"{rel}: network or vendor import outside cortex_operator/providers/")
+            found.append(f"{rel}: network or vendor import outside thallo/providers/")
     for rel in LEGACY:
         if not (ROOT / rel).exists():
             found.append(f"{rel}: listed in LEGACY but gone; remove it from the list")

@@ -8,10 +8,10 @@ import random
 
 import pytest
 
-from cortex_operator.contracts.clock import FAKE_EPOCH
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import ClaimLedger, compiler, legacy
-from cortex_operator.truth.segment import Sentence
+from thallo.contracts.clock import FAKE_EPOCH
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import ClaimLedger, compiler, legacy
+from thallo.truth.segment import Sentence
 
 CORPUS = [
     "Best in Italy.Price 4.5 lakh {{C-0001}}.",

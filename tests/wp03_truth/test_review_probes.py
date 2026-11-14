@@ -1,10 +1,10 @@
 """Every probe string from the independent review (probe.py, probe2.py) must fail the build."""
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import CompileFailed, FillError, FindingKind
-from cortex_operator.truth.compiler import check_filled
-from cortex_operator.truth.fill import Filled
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import CompileFailed, FillError, FindingKind
+from thallo.truth.compiler import check_filled
+from thallo.truth.fill import Filled
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 

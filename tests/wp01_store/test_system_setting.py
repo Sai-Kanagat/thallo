@@ -5,8 +5,8 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from cortex_operator.store import audit_rls
-from cortex_operator.store.adapters import read_system_paused
+from thallo.store import audit_rls
+from thallo.store.adapters import read_system_paused
 
 
 def test_app_role_reads_the_switch(database, tenants):

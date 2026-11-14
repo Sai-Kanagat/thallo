@@ -1,11 +1,11 @@
 """Structural layer (S1 to S5): complete, always BLOCK, and blind to `allowed_terms`."""
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import CompileFailed, FillError, FindingKind, InMemoryClaimRepository, change_claim, library
-from cortex_operator.truth.compiler import check_filled
-from cortex_operator.truth.fill import Filled
 from tests.wp03_truth.conftest import wording
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import CompileFailed, FillError, FindingKind, InMemoryClaimRepository, change_claim, library
+from thallo.truth.compiler import check_filled
+from thallo.truth.fill import Filled
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 NBSP, NNBSP = chr(0xA0), chr(0x202F)
@@ -95,7 +95,7 @@ def test_s3_flags_of_countries_are_not_digits(run):
 # ---------------------------------------------------------------- S4: a unitless NUMBER needs wording
 
 def test_s4_unitless_number_without_wording_cannot_be_verified(make):
-    from cortex_operator.truth import ClaimError
+    from thallo.truth import ClaimError
     with pytest.raises(ClaimError, match="wording"):
         make("C-0001", ClaimKind.NUMBER, "10")
     with pytest.raises(ClaimError, match="wording"):
@@ -127,9 +127,9 @@ def test_s5_an_older_version_in_the_rows_given_is_refused(make, run, clock, tena
 
 def test_s5_the_review_bypass_is_closed(make, clock, human, verifier, repo):
     """Review p6: an EXPIRED v1 stayed EXPIRED after a change and could be re-verified."""
-    from cortex_operator.contracts.states import ClaimState
-    from cortex_operator.truth import ClaimError, expire_due, verify_claim
     from tests.wp03_truth.conftest import DAY
+    from thallo.contracts.states import ClaimState
+    from thallo.truth import ClaimError, expire_due, verify_claim
     v1 = make("C-0102", ClaimKind.PRICE, "5", "EUR")
     clock.advance(31 * DAY)
     [(ex, _)] = expire_due([v1], clock)

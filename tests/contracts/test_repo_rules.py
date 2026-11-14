@@ -15,7 +15,7 @@ def test_repository_rules_hold():
 
 
 def test_rules_catch_offenders(tmp_path, monkeypatch):
-    bad = tmp_path / "cortex_operator" / "copy"
+    bad = tmp_path / "thallo" / "copy"
     bad.mkdir(parents=True)
     (bad / "x.py").write_text("import anthropic\nfrom datetime import datetime\nnow = datetime.now()\n")
     (tmp_path / "note.md").write_text("a " + chr(0x2014) + " b\n")

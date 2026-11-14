@@ -1,7 +1,7 @@
 """Wave 1 end to end: store, truth, gate and the audit log working together.
 
 Every test runs twice: in memory, and on Postgres as the per-run app role through the real
-adapters (`cortex_operator.store.adapters`). The happy path builds a tenant from nothing to an
+adapters (`thallo.store.adapters`). The happy path builds a tenant from nothing to an
 allowed publish whose payload is exactly what was approved. Each test after it changes one thing
 and shows publish is blocked. The last ones verify the audit chain end to end and that a gate
 change is all or nothing.
@@ -16,9 +16,9 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.actors import HumanActor, SystemActor
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import (
+from thallo.contracts.actors import HumanActor, SystemActor
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import (
     ApprovalMethod,
     ApprovalSubject,
     Channel,
@@ -31,8 +31,8 @@ from cortex_operator.contracts.enums import (
     SourceKind,
     UserRole,
 )
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import (
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import (
     Approval,
     AppUser,
     Asset,
@@ -51,8 +51,8 @@ from cortex_operator.contracts.models import (
     VariantClaim,
     VariantMedia,
 )
-from cortex_operator.contracts.states import BundleState, ClaimState, VariantState
-from cortex_operator.gate import (
+from thallo.contracts.states import BundleState, ClaimState, VariantState
+from thallo.gate import (
     ApprovalRefused,
     BlockReason,
     approve_bundle_from_repo,
@@ -60,12 +60,12 @@ from cortex_operator.gate import (
     load_bundle,
     void_bundle_approvals,
 )
-from cortex_operator.gate.approvals import ACTION_GRANTED, ACTION_VOIDED, AUDIT_SUBJECT
-from cortex_operator.gate.canonical import build_snapshot
-from cortex_operator.gate.signing import ENV_KEY, GateSigner
-from cortex_operator.store.adapters import ClaimWriteRefused, LocalBlobStore, TenantMismatch
-from cortex_operator.trust.audit import AuditConflict, verify_chain
-from cortex_operator.truth import build, change_claim, library, new_candidate, to_check_results, verify_claim
+from thallo.gate.approvals import ACTION_GRANTED, ACTION_VOIDED, AUDIT_SUBJECT
+from thallo.gate.canonical import build_snapshot
+from thallo.gate.signing import ENV_KEY, GateSigner
+from thallo.store.adapters import ClaimWriteRefused, LocalBlobStore, TenantMismatch
+from thallo.trust.audit import AuditConflict, verify_chain
+from thallo.truth import build, change_claim, library, new_candidate, to_check_results, verify_claim
 
 from .backends import REDIRECT, MemoryBackend, PgBackend
 

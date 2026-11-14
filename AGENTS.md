@@ -20,10 +20,10 @@ If you are a worker, your brief is one file in `docs/packages/`. It carries your
 - Never use Fable for HTML generation or simple API wrappers.
 
 ## Contracts and CI
-- The frozen contracts are in `cortex_operator/contracts/`, described in `docs/contracts.md`. Read that file before writing code.
+- The frozen contracts are in `thallo/contracts/`, described in `docs/contracts.md`. Read that file before writing code.
 - Additive schema changes go in your package's own migration. Breaking changes go through the lead (`docs/contracts.md`, "Changing a contract").
 - Every provider you write must pass `assert_provider_contract()`.
-- Take a `Clock`; never read the system clock. Never import a network or vendor SDK outside `cortex_operator/providers/`.
+- Take a `Clock`; never read the system clock. Never import a network or vendor SDK outside `thallo/providers/`.
 - Run `scripts/ci.sh` before asking for review. It needs no keys.
 
 ## Hard limits, in every permission mode

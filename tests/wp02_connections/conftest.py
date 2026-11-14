@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from cortex_operator.connections import (
+from thallo.connections import (
     ConnectionRegistry,
     InMemoryConnectionStore,
     InMemorySecretStore,
@@ -13,7 +13,7 @@ from cortex_operator.connections import (
     ProviderRegistry,
     Vault,
 )
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 
 T1 = "0190f3a0-0000-7000-8000-000000000001"
 T2 = "0190f3a0-0000-7000-8000-000000000002"

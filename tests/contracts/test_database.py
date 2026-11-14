@@ -48,14 +48,14 @@ def db():
 
 
 def test_all_tables_exist(db):
-    from cortex_operator.contracts.models import TABLES
+    from thallo.contracts.models import TABLES
 
     rows = db.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'").fetchall()
     assert {t.__table__ for t in TABLES} <= {r[0] for r in rows}
 
 
 def test_model_columns_match_database(db):
-    from cortex_operator.contracts.models import TABLES
+    from thallo.contracts.models import TABLES
 
     for t in TABLES:
         cols = db.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s",

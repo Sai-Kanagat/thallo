@@ -58,23 +58,23 @@ def admin(urls):
 
 @pytest.fixture
 def clock():
-    from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
+    from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 
     return FakeClock(FAKE_EPOCH)
 
 
 @pytest.fixture
 def database(urls, clock):
-    from cortex_operator.store import Database
+    from thallo.store import Database
 
     return Database(urls["app"], clock, admin_url=urls["admin"])
 
 
 @pytest.fixture
 def tenants(database):
-    from cortex_operator.contracts.enums import Language
-    from cortex_operator.contracts.ids import new_id
-    from cortex_operator.contracts.models import Operator, Tenant
+    from thallo.contracts.enums import Language
+    from thallo.contracts.ids import new_id
+    from thallo.contracts.models import Operator, Tenant
 
     made = []
     op = database.create_operator(Operator(id=new_id(database.clock), created_at=database.clock.now(), name="op"))
@@ -89,7 +89,7 @@ def tenants(database):
 
 @pytest.fixture
 def stores(database, tenants):
-    from cortex_operator.connections.pg import (
+    from thallo.connections.pg import (
         PostgresChannelAccountStore,
         PostgresConnectionStore,
         PostgresHealthState,
@@ -105,7 +105,7 @@ def stores(database, tenants):
 
 @pytest.fixture
 def vault(stores, clock):
-    from cortex_operator.connections import KeyRing, Vault
+    from thallo.connections import KeyRing, Vault
 
     return Vault(KeyRing(os.urandom(32)), stores["secrets"], clock)
 
@@ -124,7 +124,7 @@ def test_secret_round_trips_and_the_table_holds_no_plaintext(vault, admin, tenan
 
 
 def test_tenants_cannot_read_each_others_secrets(vault, stores, tenants):
-    from cortex_operator.connections import SecretNotFound
+    from thallo.connections import SecretNotFound
 
     a, b = tenants
     ref = vault.put(a, PLAIN)
@@ -137,7 +137,7 @@ def test_tenants_cannot_read_each_others_secrets(vault, stores, tenants):
 
 
 def test_a_ciphertext_copied_to_another_tenant_does_not_decrypt(vault, admin, tenants):
-    from cortex_operator.connections import SecretUnreadable
+    from thallo.connections import SecretUnreadable
 
     a, b = tenants
     ref = vault.put(a, PLAIN)
@@ -171,7 +171,7 @@ def test_replace_counts_versions_and_an_old_row_cannot_be_written_back(vault, st
 
 
 def test_editing_the_version_column_breaks_decryption(vault, admin, tenants):
-    from cortex_operator.connections import SecretUnreadable
+    from thallo.connections import SecretUnreadable
 
     a, _ = tenants
     ref = vault.put(a, PLAIN)
@@ -186,7 +186,7 @@ def test_editing_the_version_column_breaks_decryption(vault, admin, tenants):
 
 
 def test_rotation_over_postgres(stores, clock, tenants):
-    from cortex_operator.connections import KeyRing, Vault
+    from thallo.connections import KeyRing, Vault
 
     a, b = tenants
     old, new = os.urandom(32), os.urandom(32)
@@ -201,8 +201,8 @@ def test_rotation_over_postgres(stores, clock, tenants):
 
 
 def test_vault_store_without_a_tenant_list_refuses_to_guess(database, clock):
-    from cortex_operator.connections import KeyRing, Vault, VaultError
-    from cortex_operator.connections.pg import PostgresSecretStore
+    from thallo.connections import KeyRing, Vault, VaultError
+    from thallo.connections.pg import PostgresSecretStore
 
     with pytest.raises(VaultError):
         Vault(KeyRing(os.urandom(32)), PostgresSecretStore(database), clock).rewrap_all()
@@ -211,7 +211,7 @@ def test_vault_store_without_a_tenant_list_refuses_to_guess(database, clock):
 # ---------------------------------------------------------------- connections
 
 def _registry(stores, clock, vault):
-    from cortex_operator.connections import ConnectionRegistry, ProviderRegistry
+    from thallo.connections import ConnectionRegistry, ProviderRegistry
 
     return ConnectionRegistry(clock=clock, providers=ProviderRegistry.with_discovered(),
                               connections=stores["connections"], vault=vault, health=stores["health"],
@@ -219,7 +219,7 @@ def _registry(stores, clock, vault):
 
 
 def test_registry_on_postgres_resolves_and_isolates_tenants(stores, clock, vault, tenants):
-    from cortex_operator.contracts.enums import Capability
+    from thallo.contracts.enums import Capability
 
     a, b = tenants
     reg = _registry(stores, clock, vault)
@@ -231,8 +231,8 @@ def test_registry_on_postgres_resolves_and_isolates_tenants(stores, clock, vault
 
 
 def test_secret_on_a_connection_lands_in_the_vault_table_only(stores, clock, vault, admin, tenants):
-    from cortex_operator.contracts.enums import Capability, ConnectionMode
-    from cortex_operator.contracts.testing.mocks import MockProvider
+    from thallo.contracts.enums import Capability, ConnectionMode
+    from thallo.contracts.testing.mocks import MockProvider
 
     a, _ = tenants
     reg = _registry(stores, clock, vault)
@@ -247,8 +247,8 @@ def test_secret_on_a_connection_lands_in_the_vault_table_only(stores, clock, vau
 
 
 def test_set_order_is_atomic_on_postgres(stores, clock, vault, tenants):
-    from cortex_operator.connections import InvalidConnection, ManualRequired
-    from cortex_operator.contracts.enums import Capability
+    from thallo.connections import InvalidConnection, ManualRequired
+    from thallo.contracts.enums import Capability
 
     a, _ = tenants
     reg = _registry(stores, clock, vault)
@@ -262,11 +262,11 @@ def test_set_order_is_atomic_on_postgres(stores, clock, vault, tenants):
 # ---------------------------------------------------------------- health
 
 def test_health_check_state_survives_a_restart_on_postgres(stores, clock, vault, tenants):
-    from cortex_operator.connections import HealthMonitor, ListEventSink
-    from cortex_operator.contracts.enums import Capability, Channel
-    from cortex_operator.contracts.events import EventName
-    from cortex_operator.contracts.ids import new_id
-    from cortex_operator.contracts.models import ChannelAccount
+    from thallo.connections import HealthMonitor, ListEventSink
+    from thallo.contracts.enums import Capability, Channel
+    from thallo.contracts.events import EventName
+    from thallo.contracts.ids import new_id
+    from thallo.contracts.models import ChannelAccount
 
     a, b = tenants
     reg = _registry(stores, clock, vault)
@@ -292,7 +292,7 @@ def test_health_check_state_survives_a_restart_on_postgres(stores, clock, vault,
 # ---------------------------------------------------------------- the schema itself
 
 def test_new_tables_are_behind_row_level_security(admin):
-    from cortex_operator.store import audit_rls
+    from thallo.store import audit_rls
 
     assert audit_rls(admin) == []
     tables = {r[0] for r in admin.execute("SELECT relname FROM pg_class WHERE relrowsecurity").fetchall()}

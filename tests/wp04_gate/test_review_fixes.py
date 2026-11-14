@@ -6,9 +6,10 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.enums import ApprovalMethod, UserRole
-from cortex_operator.contracts.states import BundleState, VariantState
-from cortex_operator.gate import (
+from tests.wp04_gate.conftest import ident, make_world
+from thallo.contracts.enums import ApprovalMethod, UserRole
+from thallo.contracts.states import BundleState, VariantState
+from thallo.gate import (
     MAX_APPROVAL_TTL,
     ApprovalRefused,
     BlockReason,
@@ -18,9 +19,8 @@ from cortex_operator.gate import (
     check_publish,
     void_bundle_approvals,
 )
-from cortex_operator.gate.canonical import find_links
-from cortex_operator.trust.audit import AuditError
-from tests.wp04_gate.conftest import ident, make_world
+from thallo.gate.canonical import find_links
+from thallo.trust.audit import AuditError
 
 
 def vid0(w):

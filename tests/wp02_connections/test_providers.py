@@ -5,13 +5,13 @@ from decimal import Decimal
 
 import pytest
 
-from cortex_operator.connections import ProviderContext, ProviderRegistry
-from cortex_operator.contracts import connection as c
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import Capability, ConnectionMode, MessageChannel
-from cortex_operator.contracts.models import Connection
-from cortex_operator.contracts.testing.contract_suite import assert_provider_contract
-from cortex_operator.contracts.testing.samples import _id, sample_requests
+from thallo.connections import ProviderContext, ProviderRegistry
+from thallo.contracts import connection as c
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import Capability, ConnectionMode, MessageChannel
+from thallo.contracts.models import Connection
+from thallo.contracts.testing.contract_suite import assert_provider_contract
+from thallo.contracts.testing.samples import _id, sample_requests
 
 from .conftest import T1
 
@@ -150,7 +150,7 @@ def test_discover_skips_unknown_packages_and_registry_rejects_duplicates():
 
 
 def test_manual_media_uses_person_provenance_not_client_clip(providers):
-    from cortex_operator.contracts.enums import MediaProvenance as MP
+    from thallo.contracts.enums import MediaProvenance as MP
     assert _run(providers, Capability.VOICEOVER, sample_requests()[Capability.VOICEOVER][0]).output.provenance \
         is MP.PERSON_RECORDING
     assert _run(providers, Capability.VIDEO, sample_requests()[Capability.VIDEO][0]).output.provenance \

@@ -8,7 +8,7 @@ import pickle
 import pytest
 from pydantic import BaseModel
 
-from cortex_operator.connections import (
+from thallo.connections import (
     InMemorySecretStore,
     KeyRing,
     Secret,
@@ -18,8 +18,8 @@ from cortex_operator.connections import (
     VaultError,
     VaultKeyError,
 )
-from cortex_operator.connections.secret import REDACTED
-from cortex_operator.connections.stores import SealedSecret
+from thallo.connections.secret import REDACTED
+from thallo.connections.stores import SealedSecret
 
 from .conftest import T1, T2, b64, new_key
 

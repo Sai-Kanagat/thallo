@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import Language
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.models import Operator, Tenant
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import Language
+from thallo.contracts.ids import new_id
+from thallo.contracts.models import Operator, Tenant
 
 ROOT = Path(__file__).resolve().parents[2]
 URL = os.environ.get("DATABASE_URL")
@@ -76,7 +76,7 @@ def admin(urls):
 
 @pytest.fixture
 def database(urls, clock):
-    from cortex_operator.store import Database
+    from thallo.store import Database
 
     return Database(urls["app"], clock, admin_url=urls["admin"])
 

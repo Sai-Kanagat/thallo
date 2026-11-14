@@ -3,12 +3,12 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from cortex_operator.contracts import BrandSettings, Item, Status
-from cortex_operator.foresight import ForecastLedger
-from cortex_operator.publishing import MockPublisher, deliver, preflight
-from cortex_operator.taste import TasteLedger, edit_ratio
-from cortex_operator.truth import ClaimLedger, render
-from cortex_operator.workflow import Engine
+from thallo.contracts import BrandSettings, Item, Status
+from thallo.foresight import ForecastLedger
+from thallo.publishing import MockPublisher, deliver, preflight
+from thallo.taste import TasteLedger, edit_ratio
+from thallo.truth import ClaimLedger, render
+from thallo.workflow import Engine
 
 MONDAY = datetime(2026, 11, 16, 9)
 START = MONDAY - timedelta(days=10)

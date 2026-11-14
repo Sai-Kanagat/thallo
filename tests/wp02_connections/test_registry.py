@@ -4,20 +4,20 @@ from decimal import Decimal
 
 import pytest
 
-from cortex_operator.connections import (
+from thallo.connections import (
     InvalidConnection,
     ManualRequired,
     ProviderContext,
     ProviderUnavailable,
     UnknownProvider,
 )
-from cortex_operator.connections.stores import InMemoryHealthState
-from cortex_operator.contracts import connection as c
-from cortex_operator.contracts.clock import FAKE_EPOCH, FakeClock
-from cortex_operator.contracts.enums import Capability, ConnectionMode, TextRole
-from cortex_operator.contracts.testing.contract_suite import assert_provider_contract
-from cortex_operator.contracts.testing.mocks import MockProvider
-from cortex_operator.contracts.testing.samples import sample_requests
+from thallo.connections.stores import InMemoryHealthState
+from thallo.contracts import connection as c
+from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+from thallo.contracts.enums import Capability, ConnectionMode, TextRole
+from thallo.contracts.testing.contract_suite import assert_provider_contract
+from thallo.contracts.testing.mocks import MockProvider
+from thallo.contracts.testing.samples import sample_requests
 
 from .conftest import T1, T2
 
@@ -306,7 +306,7 @@ def test_run_falls_back_on_cost_cap_before_spending(registry, providers):
 
 
 def test_run_skips_connections_seen_unhealthy_but_never_manual(clock, providers, vault):
-    from cortex_operator.connections import ConnectionRegistry, InMemoryConnectionStore
+    from thallo.connections import ConnectionRegistry, InMemoryConnectionStore
     state = InMemoryHealthState()
     reg = ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(),
                              vault=vault, health=state)
@@ -340,8 +340,8 @@ def test_manual_at_tenant_scope_must_be_enabled_and_roleless(registry, kwargs):
 
 def test_a_bad_manual_row_in_the_store_never_becomes_the_floor(registry):
     """Rows written around add() (a bad import, an older version) must not break resolve."""
-    from cortex_operator.contracts.ids import new_id
-    from cortex_operator.contracts.models import Connection
+    from thallo.contracts.ids import new_id
+    from thallo.contracts.models import Connection
     for extra in ({"enabled": False}, {"role": TextRole.GRADE}):
         reg_rows = registry.connections
         reg_rows.put(Connection(id=new_id(registry.clock), created_at=registry.clock.now(), tenant_id=T2,
@@ -367,7 +367,7 @@ def test_mock_refused_for_a_real_tenant(registry):
 
 
 def test_mock_allowed_for_a_demo_tenant_and_by_env_flag(registry, clock, providers, vault):
-    from cortex_operator.connections import ConnectionRegistry, InMemoryConnectionStore
+    from thallo.connections import ConnectionRegistry, InMemoryConnectionStore
     registry.add(T1, TEXT, "mock")
     flagged = ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(),
                                  vault=vault, environ={"THALLO_ALLOW_MOCK": "1"})
@@ -379,8 +379,8 @@ def test_mock_allowed_for_a_demo_tenant_and_by_env_flag(registry, clock, provide
 
 
 def test_resolve_and_run_ignore_mock_rows_of_a_real_tenant(registry):
-    from cortex_operator.contracts.ids import new_id
-    from cortex_operator.contracts.models import Connection
+    from thallo.contracts.ids import new_id
+    from thallo.contracts.models import Connection
     registry.connections.put(Connection(id=new_id(registry.clock), created_at=registry.clock.now(), tenant_id=T2,
                                         capability=TEXT, provider="mock", mode=ConnectionMode.MOCK, priority=0))
     assert ids(registry, registry.resolve(T2, TEXT)) == ["manual"]

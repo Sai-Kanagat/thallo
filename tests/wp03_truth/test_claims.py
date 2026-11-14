@@ -1,11 +1,12 @@
 import pytest
 
-from cortex_operator.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor
-from cortex_operator.contracts.enums import ClaimKind
-from cortex_operator.contracts.events import EventName
-from cortex_operator.contracts.ids import new_id
-from cortex_operator.contracts.states import ClaimState, IllegalTransition
-from cortex_operator.truth import (
+from tests.wp03_truth.conftest import DAY, SYSTEM
+from thallo.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor
+from thallo.contracts.enums import ClaimKind
+from thallo.contracts.events import EventName
+from thallo.contracts.ids import new_id
+from thallo.contracts.states import ClaimState, IllegalTransition
+from thallo.truth import (
     ClaimError,
     InMemoryClaimRepository,
     expire_due,
@@ -14,7 +15,6 @@ from cortex_operator.truth import (
     reject_claim,
     verify_claim,
 )
-from tests.wp03_truth.conftest import DAY, SYSTEM
 
 REPO = InMemoryClaimRepository()  # empty: every candidate here is the latest version
 

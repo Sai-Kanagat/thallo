@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from cortex_operator.store import Database
+from thallo.store import Database
 
 
 def test_times_read_back_in_utc_under_a_non_utc_session(urls, clock, tenants):

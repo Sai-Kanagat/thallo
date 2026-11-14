@@ -1,0 +1,217 @@
+"""Slot filling. The writer emits `{{C-0012}}`; code fills the value and unit in the right language.
+
+Filling is reached only through `compiler.build`, which compiles first and checks the output after.
+`_fill` is private on purpose: filling text that was never compiled would skip the gate.
+
+Precedence for each slot:
+1. The claim's approved wording for the language (`claim.languages[lang]`), used verbatim. A human
+   approved it when verifying, so it wins over any formatting below.
+2. NUMBER and PRICE: the canonical value formatted for the language (decimal separator, groups
+   of three) with the unit from `units.py`. A PRICE pads to its currency's ISO 4217 minor units
+   (JPY none, KWD three) and only INR uses Indian grouping (12,34,567), in every language.
+3. DATE: "5 January 2026", "5 gennaio 2026", "5 ஜனவரி 2026".
+4. NAME: the value verbatim. Names are not translated.
+5. QUOTE, CAPABILITY and OFFER: the value verbatim, only when the copy is in the tenant's default
+   language (the language the value was captured and verified in). Otherwise the fill refuses:
+   a model translation of a quote or capability would be an unverified claim.
+
+Any unknown or unusable claim refuses the whole fill. Nothing is ever partly filled.
+"""
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections.abc import Mapping
+from dataclasses import dataclass
+from decimal import Decimal
+
+from thallo.contracts.clock import Clock
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.contracts.models import Claim
+from thallo.truth.claims import parse_date_value, problem
+from thallo.truth.units import (
+    CURRENCY_SYMBOLS,
+    INDIAN_GROUPING,
+    PERCENT,
+    SYMBOL_UNITS,
+    UNITS,
+    minor_units,
+)
+
+SLOT = re.compile(r"\{\{(C-[0-9]{4,})\}\}")
+
+
+class FillError(ValueError):
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+class LibraryError(ValueError):
+    """The claims mapping is not this tenant's library: a claim of another tenant, or a key that
+    is not the claim's own code. A programming error, so it raises instead of reporting."""
+
+
+def check_library(claims: Mapping[str, Claim], tenant_id: str) -> None:
+    for code, claim in claims.items():
+        if claim.tenant_id != tenant_id:
+            raise LibraryError(f"{code}: claim belongs to another tenant")
+        if claim.code != code:
+            raise LibraryError(f"mapping key {code} holds claim {claim.code}")
+
+
+# ---------------------------------------------------------------- numbers
+
+SEPARATORS: dict[Language, tuple[str, str]] = {  # (decimal, group)
+    Language.EN: (".", ","),
+    Language.IT: (",", "."),
+    Language.TA: (".", ","),
+}
+
+
+def _group(digits: str, sep: str, indian: bool = False) -> str:
+    if len(digits) <= 3:
+        return digits
+    if indian:  # Indian grouping, INR only: 12,34,567
+        head, tail = digits[:-3], digits[-3:]
+        parts = []
+        while len(head) > 2:
+            parts.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            parts.insert(0, head)
+        return sep.join([*parts, tail])
+    parts = []
+    while digits:
+        parts.insert(0, digits[-3:])
+        digits = digits[:-3]
+    return sep.join(parts)
+
+
+def format_number(value: str, language: Language, *, indian: bool = False, decimals: int | None = None) -> str:
+    """Format a canonical decimal string ("1234.50") for a language, keeping every given digit.
+    `decimals` pads a fractional value to that many places (a currency's minor units); a whole
+    value stays whole. Groups of three, or Indian grouping when `indian` (INR only)."""
+    dec, grp = SEPARATORS[language]
+    sign = "-" if value.startswith("-") else ""
+    whole, _, frac = value.lstrip("-").partition(".")
+    if frac and decimals is not None:
+        frac = frac.ljust(decimals, "0")
+    out = _group(whole, grp, indian)
+    return f"{sign}{out}{dec}{frac}" if frac else f"{sign}{out}"
+
+
+def _with_unit(number: str, value: str, unit: str | None, language: Language) -> str:
+    if unit is None:
+        return number
+    if unit == PERCENT:
+        return f"{number}%"
+    if unit in SYMBOL_UNITS:
+        return f"{number} {unit}"
+    forms = UNITS.get(unit, {}).get(language)
+    if forms:
+        return f"{number} {forms[0] if Decimal(value) == 1 else forms[1]}"
+    raise FillError([f"no wording for unit {unit!r} in {language.value}"])
+
+
+def format_price(value: str, unit: str, language: Language) -> str:
+    """A price in its own currency: ISO 4217 minor units, Indian grouping only for INR."""
+    number = format_number(value, language, indian=unit in INDIAN_GROUPING, decimals=minor_units(unit))
+    symbol = CURRENCY_SYMBOLS.get(unit)
+    if language is Language.IT:
+        return f"{number} {symbol or unit}"
+    return f"{symbol}{number}" if symbol else f"{unit} {number}"
+
+
+# ---------------------------------------------------------------- dates
+
+MONTHS: dict[Language, tuple[str, ...]] = {
+    Language.EN: ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+                  "October", "November", "December"),
+    Language.IT: ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto",
+                  "settembre", "ottobre", "novembre", "dicembre"),
+    Language.TA: ("ஜனவரி", "பிப்ரவரி", "மார்ச்", "ஏப்ரல்", "மே", "ஜூன்", "ஜூலை", "ஆகஸ்ட்", "செப்டம்பர்",
+                  "அக்டோபர்", "நவம்பர்", "டிசம்பர்"),
+}
+
+
+def format_date(value: str, language: Language) -> str:
+    year, month, day = parse_date_value(value)
+    if month is None:
+        return str(year)
+    name = MONTHS[language][month - 1]
+    return f"{day} {name} {year}" if day is not None else f"{name} {year}"
+
+
+# ---------------------------------------------------------------- one claim
+
+def render_claim(claim: Claim, language: Language, *, default_language: Language) -> str:
+    """The wording one claim takes in one language. Pure; does not check that it is usable."""
+    approved = claim.languages.get(language.value)
+    if approved:
+        return unicodedata.normalize("NFC", approved)
+    kind = claim.kind
+    if kind is ClaimKind.NUMBER:
+        return _with_unit(format_number(claim.value, language), claim.value, claim.unit, language)
+    if kind is ClaimKind.PRICE:
+        return format_price(claim.value, claim.unit or "", language)
+    if kind is ClaimKind.DATE:
+        return format_date(claim.value, language)
+    if kind is ClaimKind.NAME:
+        return claim.value
+    if language is default_language:
+        return claim.value
+    raise FillError([f"{claim.code}: no approved {language.value} wording for this {kind.value}"])
+
+
+# ---------------------------------------------------------------- whole text
+
+@dataclass(frozen=True)
+class Filled:
+    text: str
+    codes: tuple[str, ...]  # in order of first use
+    claim_ids: tuple[str, ...]
+    slot_spans: tuple[tuple[int, int], ...]  # where each rendered slot sits in `text`
+
+
+def _fill(text: str, *, language: Language, claims: Mapping[str, Claim], clock: Clock,
+          default_language: Language, tenant_id: str) -> Filled:
+    check_library(claims, tenant_id)
+    text = unicodedata.normalize("NFC", text)
+    now = clock.now()
+    problems: list[str] = []
+    rendered: dict[str, str] = {}
+    order: list[str] = []
+    for code in SLOT.findall(text):
+        if code in order:
+            continue
+        order.append(code)
+        claim = claims.get(code)
+        why = problem(claim, now)
+        if why or claim is None:
+            problems.append(f"{code}: {why}")
+            continue
+        try:
+            rendered[code] = render_claim(claim, language, default_language=default_language)
+        except FillError as exc:
+            problems.extend(exc.problems)
+    if problems:
+        raise FillError(problems)
+    out: list[str] = []
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    length = 0
+    for m in SLOT.finditer(text):
+        out.append(text[pos:m.start()])
+        length += m.start() - pos
+        value = rendered[m.group(1)]
+        spans.append((length, length + len(value)))
+        out.append(value)
+        length += len(value)
+        pos = m.end()
+    out.append(text[pos:])
+    result = "".join(out)
+    if "{{" in result or "}}" in result:
+        raise FillError(["malformed slot left after filling"])
+    return Filled(text=result, codes=tuple(order), claim_ids=tuple(claims[c].id for c in order),
+                  slot_spans=tuple(spans))

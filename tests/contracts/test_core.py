@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from cortex_operator.contracts import Status
-from cortex_operator.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor, require_human
-from cortex_operator.contracts.clock import FAKE_EPOCH, Clock, FakeClock, SystemClock
-from cortex_operator.contracts.enums import Capability, HumanOnlyAction
-from cortex_operator.contracts.ids import is_id, new_id
-from cortex_operator.contracts.states import LEGACY_STATUS, MACHINES, VARIANT, IllegalTransition, VariantState
+from thallo.contracts import Status
+from thallo.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation, SystemActor, require_human
+from thallo.contracts.clock import FAKE_EPOCH, Clock, FakeClock, SystemClock
+from thallo.contracts.enums import Capability, HumanOnlyAction
+from thallo.contracts.ids import is_id, new_id
+from thallo.contracts.states import LEGACY_STATUS, MACHINES, VARIANT, IllegalTransition, VariantState
 
 
 def test_fake_clock_moves_forward_only():

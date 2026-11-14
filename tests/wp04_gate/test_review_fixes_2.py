@@ -7,14 +7,14 @@ from datetime import timedelta
 
 import pytest
 
-from cortex_operator.contracts.actors import HumanActor
-from cortex_operator.contracts.enums import ConsentScope, MediaKind
-from cortex_operator.gate import ApprovalRefused, BlockReason, check_publish, decide, load_bundle
-from cortex_operator.gate.canonical import find_links, find_unresolved_links
-from cortex_operator.gate.decision import ApprovalEvidence
-from cortex_operator.gate.signing import ENV_KEY, GateSigner
-from cortex_operator.trust.audit import compute_entry_hash
 from tests.wp04_gate.conftest import ident
+from thallo.contracts.actors import HumanActor
+from thallo.contracts.enums import ConsentScope, MediaKind
+from thallo.gate import ApprovalRefused, BlockReason, check_publish, decide, load_bundle
+from thallo.gate.canonical import find_links, find_unresolved_links
+from thallo.gate.decision import ApprovalEvidence
+from thallo.gate.signing import ENV_KEY, GateSigner
+from thallo.trust.audit import compute_entry_hash
 
 
 def vid0(w):
@@ -120,7 +120,7 @@ def test_hidden_link_cannot_be_approved(world, text):
 
 
 def test_prose_shape_counts_while_the_tld_list_is_partial():
-    from cortex_operator.gate.canonical import TLD_LIST_COMPLETE
+    from thallo.gate.canonical import TLD_LIST_COMPLETE
     assert bool(find_links("Il Dr.Rossi risponde")) is (not TLD_LIST_COMPLETE)
 
 
@@ -355,7 +355,7 @@ def test_key_never_shows_in_repr(world):
 def test_payload_that_differs_from_the_hashed_leaf_blocks(world, monkeypatch):
     import dataclasses
 
-    from cortex_operator.gate import canonical
+    from thallo.gate import canonical
 
     a = world.approve()
     real = canonical.Snapshot.payload
@@ -367,7 +367,7 @@ def test_payload_that_differs_from_the_hashed_leaf_blocks(world, monkeypatch):
 # ---------------------------------------------------------------- 6. a void is bound into the chain
 
 def test_a_signed_void_in_the_chain_blocks_even_if_the_row_says_live(world):
-    from cortex_operator.gate import void_bundle_approvals
+    from thallo.gate import void_bundle_approvals
 
     a = world.approve()
     change = void_bundle_approvals(world.bundle, tuple(world.variants.values()), (a,), reason="withdrawn",
@@ -398,8 +398,8 @@ def test_supersede_voids_are_signed(world):
 # ---------------------------------------------------------------- 7. FLAG verdicts must be acknowledged
 
 def _flag(world, vid=None):
-    from cortex_operator.contracts.enums import CheckLayer, CheckVerdict
-    from cortex_operator.contracts.models import CheckResult
+    from thallo.contracts.enums import CheckLayer, CheckVerdict
+    from thallo.contracts.models import CheckResult
     r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
                     variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name="universal_claim",
                     verdict=CheckVerdict.FLAG, reason="'always' is a universal claim")
@@ -438,7 +438,7 @@ def test_a_flag_raised_after_approval_voids_nothing_but_text_changes_still_do(wo
 
 
 def test_a_newer_pass_closes_an_older_flag(world):
-    from cortex_operator.contracts.enums import CheckVerdict
+    from thallo.contracts.enums import CheckVerdict
     _flag(world)
     old = world.checks[-1]
     world.checks.append(old.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2}))
@@ -446,7 +446,7 @@ def test_a_newer_pass_closes_an_older_flag(world):
 
 
 def test_earliest_host_wins_and_allowlist_cannot_vouch_for_hosts():
-    from cortex_operator.gate.canonical import find_links, valid_non_links
+    from thallo.gate.canonical import find_links, valid_non_links
 
     assert find_links("vai su evil.com/1.2.3.4") == find_links("vai su evil.com/1.2.3.4")[:1]
     assert "evil.com" in find_links("vai su evil.com/1.2.3.4")[0]

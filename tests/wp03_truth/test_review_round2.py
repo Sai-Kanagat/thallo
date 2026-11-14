@@ -1,8 +1,8 @@
 """Automated findings on the review fix: one-shot claim iterators, overlong words, names vs exceptions."""
 import pytest
 
-from cortex_operator.contracts.enums import ClaimKind, Language
-from cortex_operator.truth import AllowedTermError, FindingKind, build
+from thallo.contracts.enums import ClaimKind, Language
+from thallo.truth import AllowedTermError, FindingKind, build
 
 EN, IT, TA = Language.EN, Language.IT, Language.TA
 
@@ -17,7 +17,7 @@ def test_build_accepts_a_one_shot_iterator(make, clock, tenant):
 
 
 def test_build_fills_from_the_rows_it_compiled(make, clock, tenant, human, verifier, repo):
-    from cortex_operator.truth import CompileFailed, change_claim
+    from thallo.truth import CompileFailed, change_claim
     old = make("C-0001", ClaimKind.NUMBER, "3", "t")
     ch = change_claim(old, actor=human, verifier=verifier, clock=clock, repo=repo, value="4")
     rows = iter([old, ch.current])  # the newer row is a candidate: compile must refuse, fill never runs
