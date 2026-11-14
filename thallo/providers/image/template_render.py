@@ -4,13 +4,17 @@ Serves `ImageRequest(purpose="template_render")`. The result's sha256 is of the 
 actually written, so the gate hashes real bytes. Every render passes the design lint first; a
 failing render raises `RenderRejected` carrying the FAIL report, and no file is kept.
 
-Settings (all optional): `brand_dir` (default: the fictional demo brand), `templates_dir`,
-`output_dir` (default: the per-user `~/.cache/thallo/renders`, mode 0o700), `photo_dirs`,
-`language` (used when the request has no `_lang`), `chromium` (path to the browser).
+Settings: `brand_dir` (required for a real tenant; without it only a mock tenant gets the
+fictional demo brand), `templates_dir`, `output_dir` (default: the per-user
+`~/.cache/thallo/renders`, mode 0o700), `photo_dirs`, `language` (used when the request has no
+`_lang`), `chromium` (path to the browser).
 
-The provider is registered only on a machine where a Chromium binary is found (see
-`find_chromium`), because the shared contract test runs every registered provider. Where there
-is none, a connection naming it fails loudly as an unknown provider.
+A brand marked `fictional` is refused unless the tenant is a mock tenant, by the registry's own
+rule (`mock_tenants`, or THALLO_ALLOW_MOCK=1). The factory only sees the environment half of it;
+a caller holding the `ConnectionRegistry` passes `mock_tenants` to the constructor.
+
+The provider is always registered. On a machine with no Chromium, `health()` and `estimate()`
+report it unavailable, so the registry skips it and the chain falls through to manual.
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ import logging
 import os
 import stat
 import tempfile
+from collections.abc import Collection, Mapping
 from decimal import Decimal
 from pathlib import Path
 
@@ -27,12 +32,19 @@ from pydantic import BaseModel, ConfigDict
 from thallo.brand.templates import TemplateBook, default_templates, load_templates
 from thallo.brand.tokens import DEMO_BRAND_DIR, Brand, TokenError, load_brand
 from thallo.connections.errors import ProviderUnavailable
-from thallo.connections.registry import ProviderContext, ProviderRegistry
+from thallo.connections.registry import ALLOW_MOCK_ENV, ProviderContext, ProviderRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import Capability, ConnectionMode, Language, MediaKind, MediaProvenance
 from thallo.contracts.testing.mocks import MockProvider
-from thallo.media.lint import RenderRejected, lint_layout, lint_static, parse_layout, request_failure
+from thallo.media.lint import (
+    RenderRejected,
+    lint_layout,
+    lint_output_fonts,
+    lint_static,
+    parse_layout,
+    request_failure,
+)
 from thallo.media.render import (
     ChromiumRenderer,
     PlanError,
@@ -66,18 +78,38 @@ class TemplateRender:
     name = NAME
 
     def __init__(self, clock: Clock, settings: TemplateRenderSettings | None = None,
-                 renderer: Renderer | None = None) -> None:
+                 renderer: Renderer | None = None, *, tenant_id: str | None = None,
+                 mock_tenants: Collection[str] = (), environ: Mapping[str, str] | None = None) -> None:
+        """`tenant_id` is the connection's tenant (what `health()` judges); `mock_tenants` and
+        `environ` are the registry's mock rule, the same arguments `ConnectionRegistry` takes."""
         self.clock = clock
         self.settings = settings or TemplateRenderSettings()
         self.renderer = renderer
+        self.tenant_id = tenant_id
+        self.mock_tenants = frozenset(mock_tenants)
+        self._allow_mock_everywhere = (os.environ if environ is None else environ).get(ALLOW_MOCK_ENV) == "1"
         s = self.settings
         self.output_dir = Path(s.output_dir) if s.output_dir else default_output_dir()
-        self.brand_dir = Path(s.brand_dir) if s.brand_dir else DEMO_BRAND_DIR
+        self.brand_dir = Path(s.brand_dir) if s.brand_dir else None
+
+    def mock_allowed(self, tenant_id: str | None) -> bool:
+        """`ConnectionRegistry.mock_allowed`, applied to the brand."""
+        return self._allow_mock_everywhere or (tenant_id is not None and tenant_id in self.mock_tenants)
 
     # ------------------------------------------------------------------ loading
 
-    def _brand(self) -> Brand:
-        return load_brand(self.brand_dir)
+    def _brand(self, tenant_id: str | None) -> Brand:
+        """The tenant's brand. A real tenant must name its `brand_dir`, and may never render a
+        brand marked fictional: a real post must not silently carry the demo brand."""
+        mock = self.mock_allowed(tenant_id)
+        if self.brand_dir is None:
+            if not mock:
+                raise BrandMisconfigured("no brand_dir set for this tenant; the demo brand is only for mock tenants")
+            return load_brand(DEMO_BRAND_DIR)
+        brand = load_brand(self.brand_dir)
+        if brand.tokens.fictional and not mock:
+            raise BrandMisconfigured(f"brand {brand.tokens.brand!r} is marked fictional; only a mock tenant may use it")
+        return brand
 
     def _book(self) -> TemplateBook:
         return load_templates(self.settings.templates_dir) if self.settings.templates_dir else default_templates()
@@ -97,8 +129,10 @@ class TemplateRender:
         if self.renderer is None:
             return c.Health(connected=False, checked_at=self.clock.now(), detail="no headless Chromium found")
         try:
-            self._brand()
+            self._brand(self.tenant_id)
             self._book()
+        except BrandMisconfigured as exc:
+            return c.Health(connected=False, checked_at=self.clock.now(), detail=f"misconfigured: {exc}")
         except TokenError as exc:
             return c.Health(connected=False, checked_at=self.clock.now(), detail=f"brand or templates: {exc}")
         return c.Health(connected=True, checked_at=self.clock.now(), detail=self.renderer.version())
@@ -110,6 +144,12 @@ class TemplateRender:
             raise ProviderUnavailable("template_render only renders templates")
         if self.renderer is None:
             raise ProviderUnavailable("no headless Chromium on this machine")
+        try:
+            self._brand(request.tenant_id)
+        except BrandMisconfigured as exc:
+            raise ProviderUnavailable(f"misconfigured: {exc}") from None
+        except TokenError:
+            pass  # a broken brand file is reported by run() as a design.request FAIL
         return c.Estimate(cost_eur=Decimal(0), seconds=ESTIMATE_SECONDS)
 
     def run(self, request: c.Request) -> c.RunResult:
@@ -117,7 +157,8 @@ class TemplateRender:
         c.check_cap(self.estimate(request), request)
         assert isinstance(request, c.ImageRequest) and self.renderer is not None
         try:
-            brand, book = self._brand(), self._book()
+            brand = self._brand(request.tenant_id)  # BrandMisconfigured is not caught: it is no lint verdict
+            book = self._book()
             photo_roots = [Path(p) for p in self.settings.photo_dirs] + [brand.root]
             job = plan_job(request, brand=brand, book=book, default_language=self.settings.language,
                            photo_roots=photo_roots)
@@ -131,7 +172,11 @@ class TemplateRender:
         report = report.merged(lint_layout(job, layout))
         if report.failed:
             raise RenderRejected(report)
-        data = render_bytes(self.renderer, job, document)
+        rendered = render_bytes(self.renderer, job, document)
+        report = report.merged(lint_output_fonts(job, rendered.fonts))
+        if report.failed:
+            raise RenderRejected(report)  # the bytes are dropped; nothing was written
+        data = rendered.data
         sha = hashlib.sha256(data).hexdigest()
         path = self._write(sha, job.output, data)
         pdf = job.output == "pdf"
@@ -184,6 +229,11 @@ class TemplateRender:
         return final
 
 
+class BrandMisconfigured(ProviderUnavailable):
+    """No brand for a real tenant, or a fictional brand for one. Raised from `run()`, it stops
+    the chain like any other error from inside a provider's run."""
+
+
 class RenderOutputError(RuntimeError):
     """The output folder or file is not safe to use. Nothing is returned for the gate to hash."""
 
@@ -229,11 +279,10 @@ def create(ctx: ProviderContext) -> TemplateRender:
     settings = TemplateRenderSettings.model_validate(ctx.connection.settings or {})
     binary = Path(settings.chromium) if settings.chromium else find_chromium()
     renderer = ChromiumRenderer(binary) if binary and binary.is_file() else None
-    return TemplateRender(ctx.clock, settings, renderer)
+    if renderer is None:
+        log.info("template_render: no headless Chromium found (set THALLO_CHROMIUM); reporting unavailable")
+    return TemplateRender(ctx.clock, settings, renderer, tenant_id=ctx.tenant_id)
 
 
 def register(registry: ProviderRegistry) -> None:
-    if find_chromium() is None:
-        log.info("template_render not registered: no headless Chromium found (set THALLO_CHROMIUM)")
-        return
     registry.register(CAPABILITY, NAME, ConnectionMode.LOCAL, create, settings_schema=TemplateRenderSettings)

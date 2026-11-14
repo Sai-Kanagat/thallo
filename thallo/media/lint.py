@@ -223,6 +223,23 @@ def parse_layout(data: dict) -> Layout:
 # ---------------------------------------------------------------------- colour
 
 _RGB_RE = re.compile(r"^rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$")
+_SRGB_RE = re.compile(r"^color\(\s*srgb\s+([-\d.e]+%?)\s+([-\d.e]+%?)\s+([-\d.e]+%?)(?:\s*/\s*([\d.]+%?))?\s*\)$")
+
+
+class ColorError(ValueError):
+    """A computed colour this lint cannot read. The contrast check records it as a FAIL."""
+
+
+def _unit(v: str) -> float:
+    """A `color(srgb ...)` channel: 0..1, or a percentage."""
+    x = float(v[:-1]) / 100 if v.endswith("%") else float(v)
+    return min(max(x, 0.0), 1.0)
+
+
+def _alpha(a: str | None) -> float:
+    if a is None:
+        return 1.0
+    return min(max(float(a[:-1]) / 100 if a.endswith("%") else float(a), 0.0), 1.0)
 
 
 def parse_color(value: str) -> RGBA:
@@ -231,12 +248,14 @@ def parse_color(value: str) -> RGBA:
         return (0.0, 0.0, 0.0, 0.0)
     if re.fullmatch(r"#[0-9a-f]{6}", v):
         return (int(v[1:3], 16), int(v[3:5], 16), int(v[5:7], 16), 1.0)
-    m = _RGB_RE.match(v)
-    if not m:
-        raise ValueError(f"cannot read colour {value!r}")
-    a = m[4]
-    alpha = 1.0 if a is None else (float(a[:-1]) / 100 if a.endswith("%") else float(a))
-    return (float(m[1]), float(m[2]), float(m[3]), alpha)
+    try:
+        if m := _RGB_RE.match(v):
+            return (float(m[1]), float(m[2]), float(m[3]), _alpha(m[4]))
+        if m := _SRGB_RE.match(v):
+            return (_unit(m[1]) * 255, _unit(m[2]) * 255, _unit(m[3]) * 255, _alpha(m[4]))
+    except ValueError:
+        pass
+    raise ColorError(f"cannot read colour {value!r}")
 
 
 def over(top: RGBA, base: RGBA) -> RGBA:
@@ -318,9 +337,13 @@ def _lint_text(job: Job, b: Box, n: int | None, frame: tuple[float, ...] | None,
     else:
         large = (b.font_px or 0) >= tokens.contrast.large_text_px * job.scale
         need = tokens.contrast.large if large else tokens.contrast.normal
-        ratio = worst_contrast(b.color, b.stacks)
-        if ratio + 1e-9 < need:
-            found.append(_fail("design.contrast", f"{b.name} contrast {ratio:.2f}, needs {need:g}", n))
+        try:
+            ratio = worst_contrast(b.color, b.stacks)
+        except ColorError as exc:
+            found.append(_fail("design.contrast", f"{b.name}: {exc}", n))
+        else:
+            if ratio + 1e-9 < need:
+                found.append(_fail("design.contrast", f"{b.name} contrast {ratio:.2f}, needs {need:g}", n))
     if not _inside(b.rect, safe_area):
         found.append(_fail("design.safe_zone", f"{b.name} is outside the safe zone", n))
     return found
@@ -376,6 +399,21 @@ def lint_layout(job: Job, layout: Layout, slide_indexes: Iterable[int] | None = 
         if not any(f.check == check for f in found):
             found.append(_ok(check))
     return LintReport(findings=tuple(found))
+
+
+def lint_output_fonts(job: Job, fonts: dict[str, bool] | None) -> LintReport:
+    """The fonts as loaded in the browser run that wrote the shipped bytes. The layout lint
+    reads the measuring run; this one holds the output run to the same rule. No report from
+    that run, or a font that fell back, is a FAIL and the bytes are not kept."""
+    st = job.script
+    aliases = {font_alias(st.script, role): face.family for role, face in st.fonts.items()}
+    if fonts is None:
+        return LintReport(findings=(_fail("design.font_loaded", "the output run did not report its fonts"),))
+    missing = [fam for alias, fam in aliases.items() if not fonts.get(alias, False)]
+    if missing:
+        return LintReport(findings=(_fail("design.font_loaded",
+                                          f"fonts fell back in the output run: {sorted(missing)}"),))
+    return LintReport(findings=(_ok("design.font_loaded"),))
 
 
 # ====================================================================== rows

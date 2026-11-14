@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import glob
+import hashlib
 import html
 import json
 import os
@@ -45,6 +46,7 @@ LANDSCAPE_REF_HEIGHT = 756  # 0.7 of 1080: below this height, type scales with h
 _CAROUSEL_KEY = re.compile(r"^s(?P<n>[1-9]\d?)\.(?P<slot>[a-z_]+)$")
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-z0-9_]+)\s*\}\}")
 _LAYOUT_MARK = "thallo-layout"
+_FONTS_MARK = "thallo-fonts"
 
 Output = Literal["png", "pdf"]
 
@@ -270,7 +272,8 @@ def _slide_html(job: Job, slide: SlideSpec, index: int) -> str:
 
 MEASURE_JS = r"""
 (async () => {
-  if (location.hash !== '#measure') return;
+  const mode = location.hash;
+  if (mode !== '#measure' && mode !== '#output') return;
   const fonts = {};
   for (const f of JSON.parse(document.body.dataset.fonts)) {
     try { const r = await document.fonts.load('16px "' + f + '"', 'a');
@@ -278,6 +281,13 @@ MEASURE_JS = r"""
     catch (e) { fonts[f] = false; }
   }
   await document.fonts.ready;
+  const mark = (name, obj) => { const m = document.createElement('meta'); m.name = name;
+    m.content = btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); document.head.appendChild(m); };
+  if (mode === '#output') {
+    for (const f of document.fonts) { if (f.status !== 'loaded') fonts[f.family.replace(/^["']|["']$/g, '')] = false; }
+    mark('__FONTS__', fonts);  // the page itself is left as it is: this run writes the bytes
+    return;
+  }
   const px = v => parseFloat(v) || 0;
   const slides = [];
   for (const s of document.querySelectorAll('.slide')) {
@@ -318,13 +328,10 @@ MEASURE_JS = r"""
     slides.push({index: +s.dataset.slide, number: +s.dataset.number, script: s.dataset.script,
                  rect: [0, 0, o.width, o.height], boxes, regions});
   }
-  const json = JSON.stringify({fonts, slides});
   document.body.innerHTML = '';
-  const m = document.createElement('meta'); m.name = '__MARK__';
-  m.content = btoa(unescape(encodeURIComponent(json)));
-  document.head.appendChild(m);
+  mark('__MARK__', {fonts, slides});
 })();
-""".replace("__MARK__", _LAYOUT_MARK)
+""".replace("__MARK__", _LAYOUT_MARK).replace("__FONTS__", _FONTS_MARK)
 
 CSP = ("default-src 'none'; img-src file: data:; style-src 'unsafe-inline'; font-src file: data:; "
        "script-src 'unsafe-inline'")
@@ -362,13 +369,22 @@ def batch_viewport(jobs: Sequence[Job]) -> tuple[int, int]:
 
 # ====================================================================== rendering
 
+@dataclass(frozen=True)
+class Rendered:
+    """The bytes of one output run, and the fonts as that same run loaded them (alias -> loaded).
+    `fonts` is None when the run did not report them; the lint treats that as a FAIL."""
+
+    data: bytes
+    fonts: dict[str, bool] | None
+
+
 class Renderer(Protocol):
     name: str
 
     def version(self) -> str: ...
     def measure(self, document: str, width: int, height: int) -> dict: ...
-    def png(self, document: str, width: int, height: int) -> bytes: ...
-    def pdf(self, document: str, width: int, height: int) -> bytes: ...
+    def png(self, document: str, width: int, height: int) -> Rendered: ...
+    def pdf(self, document: str, width: int, height: int) -> Rendered: ...
 
 
 def _candidates(environ: Mapping[str, str]) -> list[str]:
@@ -439,29 +455,107 @@ class ChromiumRenderer:
     def measure(self, document: str, width: int, height: int) -> dict:
         out, work = self._run(document, width, height, ["--dump-dom"], "#measure")
         shutil.rmtree(work, ignore_errors=True)
-        m = re.search(rf'<meta name="{_LAYOUT_MARK}" content="([A-Za-z0-9+/=]+)"', out)
-        if not m:
+        data = _marked(out, _LAYOUT_MARK)
+        if data is None:
             raise RendererUnavailable("chromium returned no layout")
-        return json.loads(base64.b64decode(m[1]).decode("utf-8"))
+        return data
 
-    def _file(self, document: str, width: int, height: int, action: list[str], name: str) -> bytes:
-        _, work = self._run(document, width, height, [a.replace("{out}", name) for a in action])
+    def _file(self, document: str, width: int, height: int, action: list[str], name: str) -> Rendered:
+        """One Chromium run writes the file and dumps the DOM, so the font report comes from the
+        very run whose bytes are shipped, not from the measuring run."""
+        out, work = self._run(document, width, height, ["--dump-dom", *(a.replace("{out}", name) for a in action)],
+                              "#output")
         try:
             target = work / name
             if not target.is_file():
                 raise RendererUnavailable(f"chromium wrote no {name}")
-            return target.read_bytes()
+            fonts = _marked(out, _FONTS_MARK)
+            ok = isinstance(fonts, dict) and all(isinstance(v, bool) for v in fonts.values())
+            return Rendered(target.read_bytes(), fonts if ok else None)
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-    def png(self, document: str, width: int, height: int) -> bytes:
+    def png(self, document: str, width: int, height: int) -> Rendered:
         return self._file(document, width, height, ["--screenshot={out}"], "out.png")
 
-    def pdf(self, document: str, width: int, height: int) -> bytes:
+    def pdf(self, document: str, width: int, height: int) -> Rendered:
         return self._file(document, width, height, ["--print-to-pdf={out}", "--no-pdf-header-footer"], "out.pdf")
 
 
-def render_bytes(renderer: Renderer, job: Job, document: str) -> bytes:
+def _marked(dom: str, name: str) -> dict | None:
+    m = re.search(rf'<meta name="{name}" content="([A-Za-z0-9+/=]+)"', dom)
+    if not m:
+        return None
+    try:
+        data = json.loads(base64.b64decode(m[1]).decode("utf-8"))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+# ---------------------------------------------------------------------- PDF determinism
+
+PDF_EPOCH_DIGITS = b"20000101000000"  # fixed, never the wall clock or the injected clock
+_PDF_DATE = re.compile(rb"(/(?:CreationDate|ModDate)\s*\(D:)(\d{4,14})([^)]*)(\))")
+_XMP_EPOCH = b"2000-01-01T00:00:00.000000"
+_XMP_PACKET = re.compile(rb"<x:xmpmeta.*?</x:xmpmeta>", re.S)
+_XMP_DATE = re.compile(rb"\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?")
+_XMP_UUID = re.compile(rb"(uuid:)([0-9a-fA-F-]{8,})")
+_PDF_ID = re.compile(rb"(/ID\s*\[\s*<)([0-9a-fA-F]*)(>\s*<)([0-9a-fA-F]*)(>\s*\])")
+
+
+class PdfNotDeterministic(RendererUnavailable):
+    """The PDF holds metadata this code cannot rewrite in place (for example a compressed XMP
+    stream). Refused rather than shipped with a time-dependent hash."""
+
+
+def _same_len(value: bytes, fill: bytes) -> bytes:
+    return (fill * (len(value) // len(fill) + 1))[:len(value)]
+
+
+def _zero_tz(tz: bytes) -> bytes:
+    return re.sub(rb"\d", b"0", tz).replace(b"-", b"+")
+
+
+def deterministic_pdf(data: bytes) -> bytes:
+    """Make PDF bytes independent of when they were written. Every rewrite keeps the byte
+    length, so the cross-reference offsets stay valid.
+
+    - `/CreationDate` and `/ModDate`: set to a fixed epoch (2000-01-01 00:00 UTC).
+    - XMP metadata, when stored as plain text: dates to the same epoch, uuids to a digest.
+    - The trailer `/ID`: a digest of the normalised bytes, so it depends on content only."""
+    if not data.startswith(b"%PDF"):
+        return data
+
+    def date(m: re.Match[bytes]) -> bytes:
+        return m[1] + PDF_EPOCH_DIGITS[:len(m[2])] + _zero_tz(m[3]) + m[4]
+
+    out = _PDF_DATE.sub(date, data)
+
+    def xmp_date(d: re.Match[bytes]) -> bytes:
+        return bytes(t if chr(ch).isdigit() and chr(t).isdigit() else (48 if chr(ch).isdigit() else ch)
+                     for ch, t in zip(d[0], _XMP_EPOCH.ljust(len(d[0]), b"0")[:len(d[0])], strict=True))
+
+    def xmp(m: re.Match[bytes]) -> bytes:
+        packet = _XMP_DATE.sub(xmp_date, m[0])
+        return _XMP_UUID.sub(lambda u: u[1] + re.sub(rb"[0-9a-fA-F]", b"0", u[2]), packet)
+
+    out = _XMP_PACKET.sub(xmp, out)
+    if b"/Metadata" in out and not _XMP_PACKET.search(out):
+        raise PdfNotDeterministic("the PDF carries XMP metadata this renderer cannot normalise")
+    blank = _PDF_ID.sub(lambda m: m[1] + b"0" * len(m[2]) + m[3] + b"0" * len(m[4]) + m[5], out)
+    if blank != out:
+        digest = hashlib.sha256(blank).hexdigest().encode()
+        out = _PDF_ID.sub(lambda m: m[1] + _same_len(m[2], digest) + m[3] + _same_len(m[4], digest) + m[5], blank)
+    if len(out) != len(data):  # pragma: no cover - every substitution above keeps length
+        raise PdfNotDeterministic("PDF normalisation changed the byte length")
+    return out
+
+
+def render_bytes(renderer: Renderer, job: Job, document: str) -> Rendered:
+    """The output run. A PDF is normalised so its bytes, and so its sha256, do not depend on
+    the wall clock: a later re-render of an approved request gives the same hash."""
     if job.output == "pdf":
-        return renderer.pdf(document, job.width, job.height)
+        r = renderer.pdf(document, job.width, job.height)
+        return Rendered(deterministic_pdf(r.data), r.fonts)
     return renderer.png(document, job.width, job.height)

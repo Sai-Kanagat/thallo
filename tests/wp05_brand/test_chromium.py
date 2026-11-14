@@ -21,7 +21,7 @@ from thallo.media.lint import RenderRejected, lint_layout, lint_static, parse_la
 from thallo.media.render import batch_viewport, compose, plan_job
 from thallo.providers.image.template_render import TemplateRender, TemplateRenderSettings
 
-from .conftest import req
+from .conftest import DEMO, req
 
 
 def _png_size(data: bytes) -> tuple[int, int]:
@@ -35,7 +35,8 @@ def _file(result) -> bytes:
 
 @pytest.fixture
 def provider(chromium, tmp_path):
-    return TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(output_dir=str(tmp_path / "out")), chromium)
+    return TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(output_dir=str(tmp_path / "out")), chromium,
+                          **DEMO)
 
 
 def _lint_batch(chromium, brand, book, requests):
@@ -136,7 +137,7 @@ def test_real_low_contrast_fails(chromium, tmp_path):
     data["colors"]["muted"] = "#E8E0D4"  # nearly the paper colour
     (d / "demo.brand.json").write_text(json.dumps(data))
     p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(brand_dir=str(d), output_dir=str(tmp_path / "o")),
-                       chromium)
+                       chromium, **DEMO)
     with pytest.raises(RenderRejected, match="design.contrast") as exc:
         p.run(req("quote-01", quote="Hello", attribution="Someone"))
     assert "attribution" in str(exc.value)
@@ -150,7 +151,7 @@ def test_real_missing_font_fails(chromium, tmp_path):
     data["fonts"]["body"]["local"] = ["No Such Font Thallo"]
     path.write_text(json.dumps(data))
     p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(brand_dir=str(d), output_dir=str(tmp_path / "o")),
-                       chromium)
+                       chromium, **DEMO)
     with pytest.raises(RenderRejected, match="design.font_loaded"):
         p.run(req("quote-01", _lang="ta"))
 
@@ -158,3 +159,40 @@ def test_real_missing_font_fails(chromium, tmp_path):
 def test_contract_suite_with_default_sample(provider):
     """The shared sample (quote-01, no slots) is a template preview."""
     assert_provider_contract(provider, FakeClock(FAKE_EPOCH))
+
+
+@pytest.mark.parametrize("slots", [
+    {"_output": "pdf"},
+    {"s1.headline": "First", "s2.headline": "Second", "s3.headline": "Third", "_output": "pdf"},
+], ids=["single", "carousel"])
+def test_pdf_hash_survives_a_later_re_render(chromium, tmp_path, slots):
+    """Chromium stamps PDFs with the wall-clock time. A re-render later, with the wall clock and
+    the injected clock both moved on, must give the same bytes, so an approved hash holds."""
+    import time
+    from datetime import timedelta
+    clock = FakeClock(FAKE_EPOCH)
+    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(tmp_path / "o")), chromium, **DEMO)
+    ref = "carousel-02" if "s1.headline" in slots else "offer-01"
+    first = p.run(req(ref, **slots))
+    time.sleep(1.2)  # Chromium's PDF dates have one-second resolution
+    clock.advance(timedelta(days=3))
+    second = p.run(req(ref, **slots))
+    assert first.output.sha256 == second.output.sha256
+    data = _file(second)
+    assert b"(D:20000101000000" in data and hashlib.sha256(data).hexdigest() == second.output.sha256
+
+
+def test_output_run_reports_its_own_fonts(chromium, brand, book, tmp_path):
+    """The run that writes the bytes reports the fonts it loaded; a font that is not on the
+    machine shows as fallen back in that same run."""
+    job = plan_job(req("quote-01", _lang="ta"), brand=brand, book=book)
+    out = chromium.png(compose([job]), job.width, job.height)
+    assert out.data.startswith(b"\x89PNG") and out.fonts and all(out.fonts.values())
+    d = _brand_copy(tmp_path)
+    path = d / "script" / "tamil.json"
+    data = json.loads(path.read_text())
+    data["fonts"]["body"]["local"] = ["No Such Font Thallo"]
+    path.write_text(json.dumps(data))
+    broken = plan_job(req("quote-01", _lang="ta"), brand=load_brand(d), book=book)
+    fonts = chromium.pdf(compose([broken]), broken.width, broken.height).fonts
+    assert fonts is not None and fonts["thallo-tamil-body"] is False

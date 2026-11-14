@@ -26,7 +26,7 @@ from thallo.providers.image.template_render import (
     private_dir,
 )
 
-from .conftest import FakeRenderer, T, V, req
+from .conftest import DEMO, FakeRenderer, T, V, req
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def out(tmp_path):
 
 @pytest.fixture
 def provider(clock, out):
-    return TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer())
+    return TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(), **DEMO)
 
 
 def test_contract_suite_with_fake_renderer(provider, clock):
@@ -85,7 +85,7 @@ def test_layout_failure_raises_and_writes_nothing(clock, out):
     def no_fonts(layout):
         layout["fonts"] = dict.fromkeys(layout["fonts"], False)
         return layout
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(no_fonts))
+    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(no_fonts), **DEMO)
     with pytest.raises(RenderRejected, match="design.font_loaded"):
         p.run(req("quote-01", quote="Hello", attribution="A"))
     assert p.renderer.calls == ["measure"]
@@ -98,17 +98,17 @@ def test_bad_request_is_a_fail_not_a_crash(provider):
 
 
 def test_unavailable_without_a_browser_or_for_other_purposes(clock, out):
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), None)
+    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), None, **DEMO)
     assert p.health().connected is False
     with pytest.raises(ProviderUnavailable):
         p.estimate(req())
     gen = c.ImageRequest(tenant_id=T, purpose="background", prompt="x", width=10, height=10)
     with pytest.raises(ProviderUnavailable):
-        TemplateRender(clock, renderer=FakeRenderer()).estimate(gen)
+        TemplateRender(clock, renderer=FakeRenderer(), **DEMO).estimate(gen)
 
 
 def test_health_reports_bad_brand(clock, tmp_path):
-    p = TemplateRender(clock, TemplateRenderSettings(brand_dir=str(tmp_path)), FakeRenderer())
+    p = TemplateRender(clock, TemplateRenderSettings(brand_dir=str(tmp_path)), FakeRenderer(), **DEMO)
     h = p.health()
     assert h.connected is False and "brand" in h.detail
 
@@ -133,7 +133,7 @@ def test_output_dir_symlink_refused(clock, tmp_path):
     real.mkdir(mode=0o700)
     link = tmp_path / "link"
     link.symlink_to(real)
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(link)), FakeRenderer())
+    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(link)), FakeRenderer(), **DEMO)
     with pytest.raises(RenderOutputError, match="symlink"):
         p.run(req("quote-01"))
 
@@ -181,18 +181,90 @@ def test_no_temp_files_left_behind(provider, out):
 
 # ---------------------------------------------------------------------- registration
 
-def test_registered_only_where_a_browser_exists(monkeypatch, tmp_path):
-    fake = tmp_path / "chrome"
-    fake.write_text("#!/bin/sh\n")
-    fake.chmod(0o755)
-    monkeypatch.setenv("THALLO_CHROMIUM", str(fake))
-    reg = ProviderRegistry()
-    tr.register(reg)
-    assert reg.get(Capability.IMAGE, "template_render").mode is ConnectionMode.LOCAL
+def test_registered_with_or_without_a_browser(monkeypatch, tmp_path, clock):
     monkeypatch.setenv("THALLO_CHROMIUM", str(tmp_path / "missing"))
     reg = ProviderRegistry()
     tr.register(reg)
-    assert "template_render" not in reg.names(Capability.IMAGE)
+    entry = reg.get(Capability.IMAGE, "template_render")
+    assert entry.mode is ConnectionMode.LOCAL
+    row = Connection(id=_id(99), created_at=clock.now(), tenant_id=T, capability=Capability.IMAGE,
+                     provider="template_render", mode=ConnectionMode.LOCAL)
+    p = entry.factory(ProviderContext(T, row, clock))
+    assert p.renderer is None and p.health().connected is False
+    with pytest.raises(ProviderUnavailable):
+        p.estimate(req())
+
+
+def _registry(clock, mock_tenants=()):
+    from thallo.connections import ConnectionRegistry, InMemoryConnectionStore
+    return ConnectionRegistry(clock=clock, providers=ProviderRegistry.with_discovered(),
+                              connections=InMemoryConnectionStore(), mock_tenants=mock_tenants, environ={})
+
+
+REAL = "0190f3a0-0000-7000-8000-000000000002"
+
+
+def _image(tenant):
+    return c.ImageRequest(tenant_id=tenant, purpose="template_render", template_ref="quote-01", width=1080,
+                          height=1350, idempotency_key="k-fallback")
+
+
+def test_no_browser_falls_back_to_manual(monkeypatch, tmp_path, clock):
+    monkeypatch.setenv("THALLO_CHROMIUM", str(tmp_path / "missing"))
+    registry = _registry(clock)
+    row = registry.add(REAL, Capability.IMAGE, "template_render")  # nothing is written either way
+    served = registry.run(REAL, _image(REAL))
+    assert served.provider == "manual" and served.mode is ConnectionMode.MANUAL
+    assert served.skipped == ((row.id, "unavailable"),)
+    assert served.result.output.storage_uri.startswith("manual://pending/")
+
+
+def test_real_tenant_without_brand_dir_falls_back_to_manual(monkeypatch, tmp_path, clock):
+    fake = tmp_path / "chrome"
+    fake.write_text("#!/bin/sh\nexit 1\n")  # never run: the brand check comes first
+    fake.chmod(0o755)
+    monkeypatch.setenv("THALLO_CHROMIUM", str(fake))
+    registry = _registry(clock)
+    row = registry.add(REAL, Capability.IMAGE, "template_render")  # nothing is written either way
+    served = registry.run(REAL, _image(REAL))
+    assert served.provider == "manual" and served.skipped == ((row.id, "unavailable"),)
+
+
+def test_fictional_brand_refused_for_a_real_tenant(clock, out):
+    from thallo.brand.tokens import DEMO_BRAND_DIR
+    for settings in (TemplateRenderSettings(output_dir=str(out)),
+                     TemplateRenderSettings(output_dir=str(out), brand_dir=str(DEMO_BRAND_DIR))):
+        p = TemplateRender(clock, settings, FakeRenderer(), tenant_id=REAL, mock_tenants={T}, environ={})
+        h = p.health()
+        assert h.connected is False and "misconfigured" in h.detail
+        with pytest.raises(ProviderUnavailable, match="misconfigured"):
+            p.run(_image(REAL))
+        assert p.renderer.calls == []
+    assert not out.exists() or not any(out.iterdir())
+
+
+def test_fictional_brand_allowed_by_the_mock_rule(clock, out):
+    by_list = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
+                             tenant_id=T, mock_tenants={T}, environ={})
+    assert by_list.health().connected and by_list.run(_image(T)).provenance.settings["fictional_brand"]
+    by_env = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
+                            tenant_id=REAL, environ={"THALLO_ALLOW_MOCK": "1"})
+    assert by_env.health().connected and by_env.run(_image(REAL)).output.sha256
+    not_one = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
+                             tenant_id=REAL, environ={"THALLO_ALLOW_MOCK": "0"})
+    assert not not_one.health().connected
+
+
+def test_font_fallback_in_the_output_run_fails_and_keeps_nothing(clock, out):
+    def fell_back(fonts):
+        return dict.fromkeys(fonts, False)
+    for patch in (fell_back, lambda fonts: None):
+        p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)),
+                           FakeRenderer(output_fonts=patch), **DEMO)
+        with pytest.raises(RenderRejected, match="design.font_loaded"):
+            p.run(req("quote-01", quote="Hello", attribution="A"))
+        assert p.renderer.calls == ["measure", "png"]
+    assert not out.exists() or not any(out.iterdir())
 
 
 def test_factory_reads_settings(monkeypatch, tmp_path, clock):
@@ -204,3 +276,31 @@ def test_factory_reads_settings(monkeypatch, tmp_path, clock):
     assert p.renderer is None and p.output_dir == tmp_path / "o"
     with pytest.raises(ValueError):
         TemplateRenderSettings.model_validate({"api_key": "x"})
+
+
+# ---------------------------------------------------------------------- PDF determinism (no browser)
+
+def _pdf(stamp: str, uuid: str, ident: str) -> bytes:
+    xmp = (f'<x:xmpmeta xmlns:x="adobe:ns:meta/"><xmp:CreateDate>{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T'
+           f'{stamp[8:10]}:{stamp[10:12]}:{stamp[12:14]}+02:00</xmp:CreateDate>'
+           f'<xmpMM:DocumentID>uuid:{uuid}</xmpMM:DocumentID></x:xmpmeta>')
+    return (f"%PDF-1.4\n1 0 obj <</Creator (Chromium) /CreationDate (D:{stamp}+02'00') "
+            f"/ModDate (D:{stamp}Z)>> endobj\n2 0 obj <</Type /Metadata>> stream\n{xmp}\nendstream\n"
+            f"trailer <</ID [<{ident}> <{ident}>]>>\n%%EOF").encode()
+
+
+def test_pdf_bytes_do_not_depend_on_time():
+    from thallo.media.render import deterministic_pdf
+    a = _pdf("20261114160419", "1b4e28ba-2fa1-11d2-883f-0016d3cca427", "a1" * 16)
+    b = _pdf("20271231235959", "9f0e28ba-2fa1-11d2-883f-0016d3cca999", "ff" * 16)
+    na, nb = deterministic_pdf(a), deterministic_pdf(b)
+    assert na == nb and len(na) == len(a)
+    assert b"(D:20000101000000+00'00')" in na and b"(D:20000101000000Z)" in na
+    assert b"2000-01-01T00:00:00+00:00" in na and b"2026" not in na
+    assert deterministic_pdf(na) == na
+
+
+def test_pdf_with_unreadable_metadata_is_refused():
+    from thallo.media.render import PdfNotDeterministic, deterministic_pdf
+    with pytest.raises(PdfNotDeterministic):
+        deterministic_pdf(b"%PDF-1.4\n1 0 obj <</Type /Metadata /Filter /FlateDecode>> stream\nx\x9c\nendstream")

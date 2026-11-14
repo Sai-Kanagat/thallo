@@ -236,6 +236,34 @@ def test_colour_maths():
     assert worst_contrast("rgb(255, 255, 255)", [[Layer(c="transparent", img=True)]]) == pytest.approx(1.0)
 
 
+def test_srgb_colours_are_read():
+    assert parse_color("color(srgb 1 0.5 0)") == pytest.approx((255, 127.5, 0, 1.0))
+    assert parse_color("color(srgb 0 0 0 / 0.25)") == pytest.approx((0, 0, 0, 0.25))
+    assert parse_color("color(srgb 100% 0% 50% / 50%)") == pytest.approx((255, 0, 127.5, 0.5))
+
+
+@pytest.mark.parametrize(("override", "fail"), [
+    ({"color": "color(srgb 0.12 0.1 0.09)"}, False),
+    ({"color": "color(srgb 0.86 0.84 0.8)"}, True),  # light text on paper
+    ({"color": "color(display-p3 0 0 0)"}, True),
+    ({"color": "oklch(0.2 0.01 40)"}, True),
+    ({"stacks": [[{"c": "color(display-p3 1 1 1)"}]]}, True),
+])
+def test_unreadable_or_srgb_colour_is_a_row_not_a_crash(job, override, fail):
+    rep = lint_layout(job, parse_layout(layout_for(job, **override)))
+    assert bool(fails(rep, "design.contrast")) is fail, rep.failures()
+    assert only_pass_or_fail(rep)
+
+
+def test_output_run_fonts(job):
+    from thallo.media.lint import lint_output_fonts
+    fonts = {f"thallo-{s}-{r}": True for s in ("latin", "tamil") for r in ("display", "body")}
+    assert not lint_output_fonts(job, fonts).failed
+    assert fails(lint_output_fonts(job, {**fonts, "thallo-latin-body": False}), "design.font_loaded")
+    assert fails(lint_output_fonts(job, {}), "design.font_loaded")
+    assert fails(lint_output_fonts(job, None), "design.font_loaded")
+
+
 # ---------------------------------------------------------------------- rows
 
 def test_check_result_rows(job, clock):
