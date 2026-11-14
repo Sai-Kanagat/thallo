@@ -1,6 +1,6 @@
 # Status (13 Nov 2026, stopped at the usage cap: week at 94%)
 
-Product: Thallo, "Grown, not generated." Package is `thallo` (renamed from `cortex_operator`). Contracts 2.3.0 (`docs/contracts.md`). Models: AGENTS.md. Run everything: `bash scripts/ci.sh` (Docker must be running; 1316 tests green on main).
+Product: Thallo, "Grown, not generated." Package is `thallo` (renamed from `cortex_operator`). Contracts 2.4.0 (`docs/contracts.md`). Models: AGENTS.md. Run everything: `bash scripts/ci.sh` (Docker must be running; 1,958 tests green on main, 14 Nov).
 
 ## Wave 1: complete and merged
 WP-00 contracts, WP-01 data layer, WP-02 connections and vault, WP-03 truth library, WP-04 gate. The Supabase database is live with migrations 0001, 0002, 0003, 0010, 0011, 0012, 0020 and two restricted logins (`scripts/provision_db.py`). `0001_core.sql` is frozen: schema changes are new numbered migrations with `added("NNNN")` in models.py.

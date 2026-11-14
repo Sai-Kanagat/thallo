@@ -3,7 +3,7 @@
 Read this after your own package brief. Where the two disagree, this file wins: the briefs were written before wave 1 existed.
 
 ## What exists now
-- Contracts 2.2.0: `docs/contracts.md`. `0001_core.sql` is frozen and deployed. A new column is `added("NNNN")` in `models.py` plus a migration; ask the lead for anything on a shared table.
+- Contracts 2.4.0: `docs/contracts.md`. `0001_core.sql` is frozen and deployed. A new column is `added("NNNN")` in `models.py` plus a migration; ask the lead for anything on a shared table.
 - Store (WP-01): `Database(app_url, clock).tenant(tenant_id)` gives a `TenantRepo` (`insert`, `get`, `list`, `update`, `delete`, `count`, `execute`). Every new tenant table calls `SELECT app_enable_tenant_rls('table');`. Tests that need Postgres copy the per-run role fixture in `tests/wp01_store/conftest.py`. Tenants need `operator_id` and `currency`.
 - Connections (WP-02): add a provider as one file `providers/<capability>/<name>.py` with `register(registry)`. Resolve and run through `ConnectionRegistry.run(tenant, request, ...)`; every request needs an `idempotency_key`. Secrets come from `ctx.secret()`, never from settings. Mock providers work only for tenants in `mock_tenants` or with `THALLO_ALLOW_MOCK=1`.
 - Truth (WP-03): the writer emits `{{C-0012}}` and never types a number, sign or name. `build(text, tenant_id=, language=, claims=, clock=, ...)` returns the filled text with `slot_spans`, or raises `CompileFailed` with findings. FAIL findings block. FLAG findings become `check_result` rows with verdict FLAG.
