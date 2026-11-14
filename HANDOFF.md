@@ -62,6 +62,7 @@ See `docs/BUILD_PLAN.md` section 4.6 for the list per wave. Before wave 1: a Sup
 Must land before WP-09 exposes connection settings to tenants:
 1. HIGH. `thallo/providers/image/template_render.py`: the `chromium` binary path is a connection setting. Remove it from `TemplateRenderSettings`; resolve the binary only from operator configuration (`THALLO_CHROMIUM` or `find_chromium()`).
 2. MEDIUM. Same file: `brand_dir`, `templates_dir`, `output_dir`, `photo_dirs` are connection settings. Derive them from an operator base directory keyed by tenant id, or require each resolved path to sit inside that tenant's operator-assigned root.
+3. SHOULD FIX (review of the WP-05 and WP-06 fix commits, 14 Nov, nothing blocking). `CostOverCapAfterRun` subclasses `CostCapExceeded`, so a caller that catches only the parent, or lets it propagate, drops a call that was billed. `thallo/copy/produce.py` handles it correctly today and is the only caller. Before a second caller exists (image path, WP-07 graders): the registry writes the ledger row itself, or the exception stops being a `CostCapExceeded`. Also `_grade` in `produce.py` catches `Exception`, so a grader that calls the registry needs a cost contract first.
 Rule for every provider from here on: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
 
 ## Lead ruling: check results are bound to content (contracts 2.5.0, to build)
