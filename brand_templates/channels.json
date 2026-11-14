@@ -1,0 +1,52 @@
+{
+  "note": "Starting values, not yet checked against each platform's current documentation. min_font_px is at a 1080 px wide canvas; safe is top, right, bottom, left as a share of the side.",
+  "default": {"min_font_px": 24, "safe": [0.05, 0.05, 0.05, 0.05]},
+  "channels": {
+    "instagram": {"min_font_px": 24, "safe": [0.05, 0.05, 0.05, 0.05], "sizes": [
+      {"w": 1080, "h": 1350, "use": "feed portrait"},
+      {"w": 1080, "h": 1080, "use": "feed square"},
+      {"w": 1080, "h": 1920, "use": "story and reel cover", "safe": [0.13, 0.06, 0.18, 0.06]}
+    ]},
+    "facebook": {"min_font_px": 24, "safe": [0.05, 0.05, 0.05, 0.05], "sizes": [
+      {"w": 1080, "h": 1350, "use": "feed portrait"},
+      {"w": 1080, "h": 1080, "use": "feed square"},
+      {"w": 1200, "h": 630, "use": "link share"},
+      {"w": 1080, "h": 1920, "use": "story", "safe": [0.13, 0.06, 0.18, 0.06]}
+    ]},
+    "linkedin_company": {"min_font_px": 24, "safe": [0.05, 0.05, 0.05, 0.05], "sizes": [
+      {"w": 1200, "h": 627, "use": "single image landscape"},
+      {"w": 1080, "h": 1080, "use": "single image square"},
+      {"w": 1080, "h": 1350, "use": "portrait and document carousel page"}
+    ]},
+    "linkedin_personal": {"min_font_px": 24, "safe": [0.05, 0.05, 0.05, 0.05], "sizes": [
+      {"w": 1200, "h": 627, "use": "single image landscape"},
+      {"w": 1080, "h": 1080, "use": "single image square"},
+      {"w": 1080, "h": 1350, "use": "portrait and document carousel page"}
+    ]},
+    "google_business_profile": {"min_font_px": 24, "safe": [0.08, 0.08, 0.08, 0.08], "sizes": [
+      {"w": 1200, "h": 900, "use": "post image, cropped to 4:3"}
+    ]},
+    "whatsapp": {"min_font_px": 26, "safe": [0.06, 0.06, 0.06, 0.06], "sizes": [
+      {"w": 1080, "h": 1080, "use": "chat image"},
+      {"w": 1080, "h": 1920, "use": "status", "safe": [0.12, 0.06, 0.16, 0.06]}
+    ]},
+    "youtube": {"min_font_px": 26, "safe": [0.06, 0.06, 0.12, 0.06], "sizes": [
+      {"w": 1280, "h": 720, "use": "thumbnail"},
+      {"w": 1080, "h": 1920, "use": "short frame", "safe": [0.12, 0.12, 0.2, 0.06]}
+    ]},
+    "email": {"min_font_px": 22, "safe": [0.04, 0.04, 0.04, 0.04], "sizes": [
+      {"w": 1200, "h": 600, "use": "header image"}
+    ]},
+    "newsletter": {"min_font_px": 22, "safe": [0.04, 0.04, 0.04, 0.04], "sizes": [
+      {"w": 1200, "h": 600, "use": "header image"}
+    ]},
+    "website": {"min_font_px": 20, "safe": [0.05, 0.05, 0.05, 0.05], "sizes": [
+      {"w": 1200, "h": 630, "use": "share preview image"}
+    ]},
+    "social_ads": {"min_font_px": 24, "safe": [0.06, 0.06, 0.06, 0.06], "sizes": [
+      {"w": 1080, "h": 1080, "use": "square ad"},
+      {"w": 1080, "h": 1350, "use": "portrait ad"},
+      {"w": 1080, "h": 1920, "use": "story ad", "safe": [0.14, 0.06, 0.2, 0.06]}
+    ]}
+  }
+}

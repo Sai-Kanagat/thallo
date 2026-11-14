@@ -1,0 +1,21 @@
+{
+  "brand": "forno-finto",
+  "name": "Forno Finto (fictional demo bakery)",
+  "fictional": true,
+  "colors": {
+    "ink": "#1F1A17",
+    "paper": "#FBF6EE",
+    "muted": "#5E554D",
+    "accent": "#A63A17",
+    "on_accent": "#FFFFFF",
+    "scrim": "rgba(20, 16, 14, 0.62)",
+    "on_scrim": "#FFFFFF"
+  },
+  "type_scale": {"display": 104, "h1": 76, "h2": 56, "body": 38, "small": 34},
+  "spacing": {"margin": 88, "gap": 32},
+  "radii": {"card": 24},
+  "logo": {"file": "logo.svg", "file_on_dark": "logo-on-dark.svg", "aspect": 4, "width": 200, "min_width": 120,
+           "clear_space": 0.5},
+  "photo_scrim": "scrim",
+  "contrast": {"normal": 4.5, "large": 3.0, "large_text_px": 64}
+}

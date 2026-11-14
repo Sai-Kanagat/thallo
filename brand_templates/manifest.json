@@ -1,0 +1,156 @@
+{
+  "note": "Six format families, eight layouts each. Template ref is <family>-NN, NN being the layout position. Specimen copy is for template previews only; the Tamil specimen still needs a native speaker's check.",
+  "families": {
+    "single": {
+      "fragment": "families/single.html",
+      "max_words_per_slide": 45,
+      "slots": {
+        "headline": {"max_chars": 70, "max_words": 12, "required": true},
+        "body": {"max_chars": 160, "max_words": 30},
+        "cta": {"max_chars": 28, "max_words": 5},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"headline": "Sample headline for a preview", "body": "This is sample text that shows how the body sits.", "cta": "Learn more"},
+        "it": {"headline": "Titolo di prova per l'anteprima", "body": "Questo testo di prova mostra come si dispone il corpo.", "cta": "Scopri di più"},
+        "ta": {"headline": "மாதிரி தலைப்பு", "body": "இது ஒரு மாதிரி உரை.", "cta": "மேலும் அறிக"}
+      },
+      "layouts": [
+        {"classes": "bg-paper v-center h-start logo-br deco-bar"},
+        {"classes": "bg-ink v-bottom h-start logo-tl big"},
+        {"classes": "bg-accent v-center h-center logo-bl"},
+        {"classes": "bg-photo v-bottom h-start logo-tr", "photo": "full"},
+        {"classes": "bg-paper split-left v-center h-start logo-br", "photo": "split"},
+        {"classes": "bg-paper v-top h-start logo-bl deco-rule big"},
+        {"classes": "bg-ink split-top v-top h-center logo-br", "photo": "split"},
+        {"classes": "bg-paper v-bottom h-end logo-tl deco-frame"}
+      ]
+    },
+    "carousel": {
+      "fragment": "families/carousel.html",
+      "carousel": true,
+      "min_slides": 2,
+      "max_words_per_slide": 45,
+      "slots": {
+        "headline": {"max_chars": 70, "max_words": 12, "required": true},
+        "body": {"max_chars": 220, "max_words": 40},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"s1.headline": "Sample carousel cover", "s2.headline": "A second slide", "s2.body": "Sample text for the inside of the carousel.", "s3.headline": "The closing slide"},
+        "it": {"s1.headline": "Copertina di prova", "s2.headline": "Una seconda slide", "s2.body": "Testo di prova per l'interno del carosello.", "s3.headline": "La slide finale"},
+        "ta": {"s1.headline": "மாதிரி அட்டை", "s2.headline": "இரண்டாவது பக்கம்", "s2.body": "இது ஒரு மாதிரி உரை.", "s3.headline": "கடைசி பக்கம்"}
+      },
+      "layouts": [
+        {"classes": "bg-paper v-center h-start logo-br deco-bar"},
+        {"classes": "bg-ink v-center h-start logo-bl deco-rule"},
+        {"classes": "bg-accent v-bottom h-start logo-tr big"},
+        {"classes": "bg-paper v-top h-center logo-bl"},
+        {"classes": "bg-photo v-bottom h-start logo-tl", "photo": "full"},
+        {"classes": "bg-paper split-top v-top h-start logo-br", "photo": "split"},
+        {"classes": "bg-ink v-center h-center logo-br deco-frame"},
+        {"classes": "bg-paper split-left v-bottom h-start logo-tr", "photo": "split"}
+      ]
+    },
+    "quote": {
+      "fragment": "families/quote.html",
+      "max_words_per_slide": 45,
+      "slots": {
+        "quote": {"max_chars": 200, "max_words": 36, "required": true},
+        "attribution": {"max_chars": 48, "max_words": 8, "required": true},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"quote": "This is a sample quote for the template preview.", "attribution": "Sample name"},
+        "it": {"quote": "Questa è una citazione di prova per l'anteprima.", "attribution": "Nome di prova"},
+        "ta": {"quote": "இது ஒரு மாதிரி மேற்கோள்.", "attribution": "மாதிரி பெயர்"}
+      },
+      "layouts": [
+        {"classes": "bg-paper v-center h-start logo-br deco-mark"},
+        {"classes": "bg-ink v-center h-center logo-bl deco-mark"},
+        {"classes": "bg-accent v-bottom h-start logo-tr deco-mark"},
+        {"classes": "bg-photo v-center h-start logo-bl deco-rule", "photo": "full"},
+        {"classes": "bg-paper v-top h-start logo-br deco-rule"},
+        {"classes": "bg-paper split-left v-center h-start logo-br deco-mark", "photo": "split"},
+        {"classes": "bg-ink v-bottom h-end logo-tl"},
+        {"classes": "bg-paper v-center h-center logo-bl deco-frame"}
+      ]
+    },
+    "proof": {
+      "fragment": "families/proof.html",
+      "max_words_per_slide": 45,
+      "slots": {
+        "figure": {"max_chars": 24, "max_words": 4, "required": true},
+        "headline": {"max_chars": 60, "max_words": 10, "required": true},
+        "detail": {"max_chars": 140, "max_words": 26},
+        "source": {"max_chars": 60, "max_words": 10, "required": true},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"figure": "Sample figure", "headline": "Sample proof headline", "detail": "Sample detail about the result.", "source": "Sample source"},
+        "it": {"figure": "Cifra di prova", "headline": "Titolo di prova", "detail": "Dettaglio di prova sul risultato.", "source": "Fonte di prova"},
+        "ta": {"figure": "மாதிரி", "headline": "மாதிரி தலைப்பு", "detail": "இது ஒரு மாதிரி உரை.", "source": "மாதிரி ஆதாரம்"}
+      },
+      "layouts": [
+        {"classes": "bg-paper v-center h-start logo-br deco-bar"},
+        {"classes": "bg-accent v-center h-center logo-bl"},
+        {"classes": "bg-ink v-bottom h-start logo-tr deco-rule"},
+        {"classes": "bg-paper split-left v-center h-start logo-br", "photo": "split"},
+        {"classes": "bg-photo v-bottom h-start logo-tl", "photo": "full"},
+        {"classes": "bg-paper v-top h-center logo-bl deco-frame"},
+        {"classes": "bg-ink v-center h-end logo-tl"},
+        {"classes": "bg-paper split-top v-top h-start logo-br", "photo": "split"}
+      ]
+    },
+    "offer": {
+      "fragment": "families/offer.html",
+      "max_words_per_slide": 50,
+      "slots": {
+        "headline": {"max_chars": 60, "max_words": 10, "required": true},
+        "offer": {"max_chars": 40, "max_words": 7, "required": true},
+        "cta": {"max_chars": 28, "max_words": 5},
+        "terms": {"max_chars": 140, "max_words": 28, "required": true},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"headline": "Sample offer headline", "offer": "Sample offer", "cta": "Book now", "terms": "Sample terms. Conditions apply."},
+        "it": {"headline": "Titolo dell'offerta", "offer": "Offerta di prova", "cta": "Prenota ora", "terms": "Termini di prova. Si applicano condizioni."},
+        "ta": {"headline": "மாதிரி தலைப்பு", "offer": "மாதிரி சலுகை", "cta": "முன்பதிவு", "terms": "நிபந்தனைகள் பொருந்தும்."}
+      },
+      "layouts": [
+        {"classes": "bg-accent v-center h-start logo-br"},
+        {"classes": "bg-paper v-center h-center logo-bl deco-frame"},
+        {"classes": "bg-ink v-bottom h-start logo-tr deco-bar"},
+        {"classes": "bg-photo v-bottom h-start logo-tl", "photo": "full"},
+        {"classes": "bg-paper split-left v-center h-start logo-br deco-rule", "photo": "split"},
+        {"classes": "bg-accent v-top h-center logo-bl"},
+        {"classes": "bg-paper v-bottom h-end logo-tl deco-bar"},
+        {"classes": "bg-ink split-top v-top h-start logo-br", "photo": "split"}
+      ]
+    },
+    "video_frame": {
+      "fragment": "families/video_frame.html",
+      "max_words_per_slide": 20,
+      "slots": {
+        "kicker": {"max_chars": 32, "max_words": 5},
+        "caption": {"max_chars": 80, "max_words": 14, "required": true},
+        "photo": {"role": "photo"}
+      },
+      "specimen": {
+        "en": {"kicker": "Sample", "caption": "Sample caption for a video frame"},
+        "it": {"kicker": "Prova", "caption": "Didascalia di prova per il video"},
+        "ta": {"kicker": "மாதிரி", "caption": "மாதிரி காட்சி உரை"}
+      },
+      "layouts": [
+        {"classes": "bg-photo v-bottom h-start logo-tl", "photo": "full"},
+        {"classes": "bg-photo v-center h-center logo-bl", "photo": "full"},
+        {"classes": "bg-ink v-bottom h-start logo-tr deco-bar"},
+        {"classes": "bg-accent v-center h-start logo-br big"},
+        {"classes": "bg-paper split-top v-top h-start logo-br", "photo": "split"},
+        {"classes": "bg-photo v-top h-start logo-br deco-rule", "photo": "full"},
+        {"classes": "bg-ink v-center h-center logo-bl deco-frame"},
+        {"classes": "bg-paper v-bottom h-end logo-tl big"}
+      ]
+    }
+  }
+}
