@@ -1,6 +1,6 @@
 # Status (13 Nov 2026, stopped at the usage cap: week at 94%)
 
-Product: Thallo, "Grown, not generated." Package is `thallo` (renamed from `cortex_operator`). Contracts 2.3.0 (`docs/contracts.md`). Models: AGENTS.md. Run everything: `bash scripts/ci.sh` (Docker must be running; 1316 tests green on main).
+Product: Thallo, "Grown, not generated." Package is `thallo` (renamed from `cortex_operator`). Contracts 2.4.0 (`docs/contracts.md`). Models: AGENTS.md. Run everything: `bash scripts/ci.sh` (Docker must be running; 1,958 tests green on main, 14 Nov).
 
 ## Wave 1: complete and merged
 WP-00 contracts, WP-01 data layer, WP-02 connections and vault, WP-03 truth library, WP-04 gate. The Supabase database is live with migrations 0001, 0002, 0003, 0010, 0011, 0012, 0020 and two restricted logins (`scripts/provision_db.py`). `0001_core.sql` is frozen: schema changes are new numbered migrations with `added("NNNN")` in models.py.
@@ -57,3 +57,21 @@ Start with WP-00 and show me the contract list before you write it.
 # Waiting on Sai
 
 See `docs/BUILD_PLAN.md` section 4.6 for the list per wave. Before wave 1: a Supabase project with keys in `.env`, written consent from each pilot business, and access applications for WhatsApp Cloud, Google Ads and Business Profile.
+
+## Open security fixes (14 Nov, lead)
+Must land before WP-09 exposes connection settings to tenants:
+1. HIGH. `thallo/providers/image/template_render.py`: the `chromium` binary path is a connection setting. Remove it from `TemplateRenderSettings`; resolve the binary only from operator configuration (`THALLO_CHROMIUM` or `find_chromium()`).
+2. MEDIUM. Same file: `brand_dir`, `templates_dir`, `output_dir`, `photo_dirs` are connection settings. Derive them from an operator base directory keyed by tenant id, or require each resolved path to sit inside that tenant's operator-assigned root.
+3. SHOULD FIX (review of the WP-05 and WP-06 fix commits, 14 Nov, nothing blocking). `CostOverCapAfterRun` subclasses `CostCapExceeded`, so a caller that catches only the parent, or lets it propagate, drops a call that was billed. `thallo/copy/produce.py` handles it correctly today and is the only caller. Before a second caller exists (image path, WP-07 graders): the registry writes the ledger row itself, or the exception stops being a `CostCapExceeded`. Also `_grade` in `produce.py` catches `Exception`, so a grader that calls the registry needs a cost contract first.
+Rule for every provider from here on: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+
+## Lead ruling: check results are bound to content (contracts 2.5.0, to build)
+Why: the gate fix on branch `worktree-agent-af29c4c07c8cfae8c` (commit ded0f2a) refuses a grant on a latest FAIL, but review showed a FAIL can never be superseded (the compiler writes FAIL under `truth.compile.<kind>` and a clean rerun writes PASS under `truth.compile`), and nothing ties a check row to the content it checked. Do not merge ded0f2a alone.
+
+Design:
+1. `check_result.content_sha256` (new column, NOT NULL, `added("0021")` plus migration `0021_check_content_hash.sql`): the per-variant canonical hash the gate uses in the approval root, computed by the same gate function. Every writer sets it (truth `to_check_results`, copy production, design lint).
+2. The gate reads only rows whose `content_sha256` equals the variant's current hash. Rows for older content are ignored, so fixing the content is what clears a FAIL. Among matching rows, per `(variant_id, layer, check_name)` take the highest attempt: any FAIL there refuses the grant; every FLAG there must be acknowledged.
+3. Coverage: a variant with no matching CODE-layer row is "not checked" and the grant is refused. The truth compiler always writes at least a PASS row.
+4. `check_result` becomes append-only for the app role (no UPDATE, no DELETE), in the same migration, following the pattern in `0010_wp01_rls.sql`. `attempt` is `ge=1` in the model and a CHECK in the migration.
+5. `check_publish` re-reads check results for the payload's content hash and blocks on any FAIL, on missing coverage, and if the read raises.
+Consequence: rows written while drafting stop counting once media or text changes; the WP-07 check stack reruns the code checks on the finished variant.

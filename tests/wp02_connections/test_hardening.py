@@ -152,4 +152,9 @@ def test_every_discovered_provider_passes_the_contract(providers):
             entry = providers.get(cap, name)
             row = Connection(id=_id(98), created_at=clock.now(), tenant_id=T1, capability=cap, provider=name,
                              mode=entry.mode)
-            assert_provider_contract(entry.factory(ProviderContext(T1, row, clock)), clock)
+            prov = entry.factory(ProviderContext(T1, row, clock))
+            from .test_providers import _assert_reports_unavailable, _is_unavailable
+            if _is_unavailable(prov, cap):  # must say so in a way the registry skips
+                _assert_reports_unavailable(prov, clock)
+                continue
+            assert_provider_contract(prov, clock)

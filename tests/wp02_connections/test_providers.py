@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from thallo.connections import ProviderContext, ProviderRegistry
+from thallo.connections import ProviderContext, ProviderRegistry, ProviderUnavailable
 from thallo.contracts import connection as c
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import Capability, ConnectionMode, MessageChannel
@@ -44,10 +44,44 @@ def test_provider_passes_contract(providers, cap, name):
     clock = FakeClock(FAKE_EPOCH)
     entry = providers.get(cap, name)
     prov = entry.factory(_ctx(cap, name, entry.mode, clock))
+    if _is_unavailable(prov, cap):
+        _assert_reports_unavailable(prov, clock)
+        return  # its package's tests run the full contract against a configured connection
     assert_provider_contract(prov, clock)
     assert prov.describe().mode is entry.mode
     if entry.mode in (ConnectionMode.MANUAL, ConnectionMode.MOCK):
         assert not prov.describe().sends_externally
+
+
+def _assert_reports_unavailable(prov, clock):
+    """A provider built with empty settings may be unusable on this machine or for this tenant
+    (no local browser, no brand configured). It must then say so in a way the registry skips:
+    health() not connected, and estimate() and run() raise ProviderUnavailable for every sample.
+    The manual and mock providers never take this path. Its own package tests the full contract."""
+    assert prov.describe().mode not in (ConnectionMode.MANUAL, ConnectionMode.MOCK)
+    health = prov.health()
+    assert health.connected is False and health.checked_at.tzinfo is not None and health.detail
+    for req in sample_requests()[prov.capability]:
+        for call in (prov.estimate, prov.run):
+            with pytest.raises(ProviderUnavailable):
+                call(req)
+    wrong = next(r for k, rs in sample_requests().items() if k is not prov.capability for r in rs)
+    for call in (prov.estimate, prov.run):
+        with pytest.raises(c.CapabilityMismatch):
+            call(wrong)
+    double = prov.mock()
+    assert double.capability is prov.capability and double.describe().mode is ConnectionMode.MOCK
+
+
+def _is_unavailable(prov, cap) -> bool:
+    """Unusable with empty settings: health says not connected, or estimate refuses."""
+    if not prov.health().connected:
+        return True
+    try:
+        prov.estimate(sample_requests()[cap][0])
+    except ProviderUnavailable:
+        return True
+    return False
 
 
 @pytest.mark.parametrize("cap", list(Capability))
