@@ -50,6 +50,16 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", boom)
 
 
+ALLOWED_ORIGIN = "https://api.example.invalid"  # the fixtures' OpenAI-compatible endpoint
+
+
+@pytest.fixture(autouse=True)
+def operator_origins(monkeypatch):
+    """The operator allows the fixtures' endpoint, as THALLO_OPENAI_COMPATIBLE_ORIGINS would in
+    production. Tests about hostile endpoints pass their own `environ`."""
+    monkeypatch.setenv("THALLO_OPENAI_COMPATIBLE_ORIGINS", ALLOWED_ORIGIN)
+
+
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock(FAKE_EPOCH)

@@ -22,21 +22,20 @@ from thallo.providers.image.template_render import (
     RenderOutputError,
     TemplateRender,
     TemplateRenderSettings,
-    default_output_dir,
     private_dir,
 )
 
-from .conftest import DEMO, FakeRenderer, T, V, req
+from .conftest import FakeRenderer, T, V, demo, req
 
 
 @pytest.fixture
-def out(tmp_path):
-    return tmp_path / "renders"  # created by the provider, mode 0o700
+def out(brand_root):
+    return brand_root / T / "renders"  # created by the provider, mode 0o700
 
 
 @pytest.fixture
-def provider(clock, out):
-    return TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(), **DEMO)
+def provider(clock, brand_root):
+    return TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(), **demo(brand_root))
 
 
 def test_contract_suite_with_fake_renderer(provider, clock):
@@ -81,11 +80,11 @@ def test_static_failure_raises_and_writes_nothing(provider, out, clock):
     assert all(r.verdict is not CheckVerdict.FLAG for r in rows)
 
 
-def test_layout_failure_raises_and_writes_nothing(clock, out):
+def test_layout_failure_raises_and_writes_nothing(clock, out, brand_root):
     def no_fonts(layout):
         layout["fonts"] = dict.fromkeys(layout["fonts"], False)
         return layout
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(no_fonts), **DEMO)
+    p = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(no_fonts), **demo(brand_root))
     with pytest.raises(RenderRejected, match="design.font_loaded"):
         p.run(req("quote-01", quote="Hello", attribution="A"))
     assert p.renderer.calls == ["measure"]
@@ -97,30 +96,27 @@ def test_bad_request_is_a_fail_not_a_crash(provider):
         provider.run(req("nope-01"))
 
 
-def test_unavailable_without_a_browser_or_for_other_purposes(clock, out):
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), None, **DEMO)
+def test_unavailable_without_a_browser_or_for_other_purposes(clock, brand_root):
+    p = TemplateRender(clock, TemplateRenderSettings(), None, **demo(brand_root))
     assert p.health().connected is False
     with pytest.raises(ProviderUnavailable):
         p.estimate(req())
     gen = c.ImageRequest(tenant_id=T, purpose="background", prompt="x", width=10, height=10)
     with pytest.raises(ProviderUnavailable):
-        TemplateRender(clock, renderer=FakeRenderer(), **DEMO).estimate(gen)
+        TemplateRender(clock, renderer=FakeRenderer(), **demo(brand_root)).estimate(gen)
 
 
-def test_health_reports_bad_brand(clock, tmp_path):
-    p = TemplateRender(clock, TemplateRenderSettings(brand_dir=str(tmp_path)), FakeRenderer(), **DEMO)
+def test_health_reports_bad_brand(clock, brand_root):
+    (brand_root / T / "brand").mkdir(parents=True)  # a brand folder with no tokens in it
+    p = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(), **demo(brand_root))
     h = p.health()
     assert h.connected is False and "brand" in h.detail
 
 
 # ---------------------------------------------------------------------- output folder
 
-def test_default_output_dir_is_per_user_not_shared_tmp(monkeypatch, tmp_path):
-    import tempfile
-    d = default_output_dir({})
-    assert not d.is_relative_to(Path(tempfile.gettempdir()))
-    assert d.is_relative_to(Path.home())
-    assert default_output_dir({"XDG_CACHE_HOME": str(tmp_path)}) == tmp_path / "thallo" / "renders"
+def test_output_dir_is_the_tenants_folder_under_the_operator_root(provider, brand_root):
+    assert provider.output_dir == brand_root.resolve() / T / "renders"
 
 
 def test_output_dir_created_private(provider, out):
@@ -128,12 +124,12 @@ def test_output_dir_created_private(provider, out):
     assert out.stat().st_mode & 0o777 == 0o700
 
 
-def test_output_dir_symlink_refused(clock, tmp_path):
+def test_output_dir_symlink_refused(clock, tmp_path, brand_root):
     real = tmp_path / "real"
     real.mkdir(mode=0o700)
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(link)), FakeRenderer(), **DEMO)
+    (brand_root / T).mkdir()
+    (brand_root / T / "renders").symlink_to(real)
+    p = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(), **demo(brand_root))
     with pytest.raises(RenderOutputError, match="symlink"):
         p.run(req("quote-01"))
 
@@ -230,11 +226,17 @@ def test_real_tenant_without_brand_dir_falls_back_to_manual(monkeypatch, tmp_pat
     assert served.provider == "manual" and served.skipped == ((row.id, "unavailable"),)
 
 
-def test_fictional_brand_refused_for_a_real_tenant(clock, out):
+def test_fictional_brand_refused_for_a_real_tenant(clock, brand_root):
+    import shutil
+
     from thallo.brand.tokens import DEMO_BRAND_DIR
-    for settings in (TemplateRenderSettings(output_dir=str(out)),
-                     TemplateRenderSettings(output_dir=str(out), brand_dir=str(DEMO_BRAND_DIR))):
-        p = TemplateRender(clock, settings, FakeRenderer(), tenant_id=REAL, mock_tenants={T}, environ={})
+    env = {"THALLO_BRAND_ROOT": str(brand_root)}
+    out = brand_root / REAL / "renders"
+    for copy_demo in (False, True):  # no brand folder (demo fallback), then the demo copied in as its brand
+        if copy_demo:
+            shutil.copytree(DEMO_BRAND_DIR, brand_root / REAL / "brand")
+        p = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(), tenant_id=REAL, mock_tenants={T},
+                           environ=env)
         h = p.health()
         assert h.connected is False and "misconfigured" in h.detail
         with pytest.raises(ProviderUnavailable, match="misconfigured"):
@@ -243,39 +245,44 @@ def test_fictional_brand_refused_for_a_real_tenant(clock, out):
     assert not out.exists() or not any(out.iterdir())
 
 
-def test_fictional_brand_allowed_by_the_mock_rule(clock, out):
-    by_list = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
-                             tenant_id=T, mock_tenants={T}, environ={})
+def test_fictional_brand_allowed_by_the_mock_rule(clock, brand_root):
+    env = {"THALLO_BRAND_ROOT": str(brand_root)}
+    by_list = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(),
+                             tenant_id=T, mock_tenants={T}, environ=env)
     assert by_list.health().connected and by_list.run(_image(T)).provenance.settings["fictional_brand"]
-    by_env = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
-                            tenant_id=REAL, environ={"THALLO_ALLOW_MOCK": "1"})
+    by_env = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(),
+                            tenant_id=REAL, environ={**env, "THALLO_ALLOW_MOCK": "1"})
     assert by_env.health().connected and by_env.run(_image(REAL)).output.sha256
-    not_one = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)), FakeRenderer(),
-                             tenant_id=REAL, environ={"THALLO_ALLOW_MOCK": "0"})
+    not_one = TemplateRender(clock, TemplateRenderSettings(), FakeRenderer(),
+                             tenant_id=REAL, environ={**env, "THALLO_ALLOW_MOCK": "0"})
     assert not not_one.health().connected
 
 
-def test_font_fallback_in_the_output_run_fails_and_keeps_nothing(clock, out):
+def test_font_fallback_in_the_output_run_fails_and_keeps_nothing(clock, out, brand_root):
     def fell_back(fonts):
         return dict.fromkeys(fonts, False)
     for patch in (fell_back, lambda fonts: None):
-        p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(out)),
-                           FakeRenderer(output_fonts=patch), **DEMO)
+        p = TemplateRender(clock, TemplateRenderSettings(),
+                           FakeRenderer(output_fonts=patch), **demo(brand_root))
         with pytest.raises(RenderRejected, match="design.font_loaded"):
             p.run(req("quote-01", quote="Hello", attribution="A"))
         assert p.renderer.calls == ["measure", "png"]
     assert not out.exists() or not any(out.iterdir())
 
 
-def test_factory_reads_settings(monkeypatch, tmp_path, clock):
+def test_factory_reads_settings(monkeypatch, tmp_path, clock, brand_root):
     monkeypatch.setenv("THALLO_CHROMIUM", str(tmp_path / "missing"))
+    monkeypatch.setenv("THALLO_BRAND_ROOT", str(brand_root))
     row = Connection(id=_id(99), created_at=clock.now(), tenant_id=T, capability=Capability.IMAGE,
-                     provider="template_render", mode=ConnectionMode.LOCAL,
-                     settings={"output_dir": str(tmp_path / "o"), "language": "ta"})
+                     provider="template_render", mode=ConnectionMode.LOCAL, settings={"language": "ta"})
     p = tr.create(ProviderContext(T, row, clock))
-    assert p.renderer is None and p.output_dir == tmp_path / "o"
+    assert p.renderer is None and p.problem is None and p.settings.language.value == "ta"
+    assert p.output_dir == brand_root.resolve() / T / "renders"
     with pytest.raises(ValueError):
         TemplateRenderSettings.model_validate({"api_key": "x"})
+    for key in ("chromium", "brand_dir", "templates_dir", "output_dir", "photo_dirs"):
+        with pytest.raises(ValueError):
+            TemplateRenderSettings.model_validate({key: "/x"})
 
 
 # ---------------------------------------------------------------------- PDF determinism (no browser)

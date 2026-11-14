@@ -35,12 +35,14 @@ from thallo.providers.text.base import (
     HttpCall,
     HttpReply,
     HttpTextProvider,
+    Origin,
     Parsed,
     PricedSettings,
     TextProviderError,
     Transport,
     check_local,
     need,
+    parse_origin,
     system_text,
     tokens,
     user_text,
@@ -88,6 +90,10 @@ class LocalText(HttpTextProvider):
 
     def problem(self) -> str | None:
         return self._operator_problem or super().problem()
+
+    def allowed_origins(self) -> frozenset[Origin]:
+        """The operator's one loopback endpoint; nothing else, and no secret goes there anyway."""
+        return frozenset({parse_origin(self.base_url, schemes=self.schemes())}) if self.base_url else frozenset()
 
     def auth(self, secret: Secret) -> Auth:  # pragma: no cover - needs_secret is False
         raise TextProviderError("the local endpoint takes no secret")

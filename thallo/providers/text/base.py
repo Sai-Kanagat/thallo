@@ -9,6 +9,12 @@ they share:
 - `Auth`: the secret travels to the transport as a `Secret` and is revealed only inside the
   transport, at the moment the header is built. It never sits in a URL, a body, provenance,
   settings or an error message.
+- Origin binding: connection settings are tenant-writable, so they never decide where a secret
+  goes. Each provider has `allowed_origins()`, fixed by the operator (a constant in code for
+  Claude and Gemini, operator environment for the OpenAI-compatible and local providers).
+  `problem()` makes the provider unavailable when its endpoint is not one of them, and `_send`
+  refuses any call to another origin before the transport sees it. Origins compare as
+  (scheme, host, port) after a strict parse (`parse_origin`), never by prefix or substring.
 - Prompt framing. `TextRequest.instructions` goes only in the vendor's system slot. Untrusted
   text (`TextRequest.untrusted_data`) goes only in the user turn, as one JSON array of strings,
   so quoting cannot be broken by the data itself.
@@ -294,6 +300,50 @@ def check_https(url: str) -> str:
     return url.rstrip("/")
 
 
+Origin = tuple[str, str, int]  # (scheme, host, port), as `parse_origin` returns it
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def parse_origin(url: str, *, schemes: tuple[str, ...] = ("https",)) -> Origin:
+    """The (scheme, host, port) a URL sends to, parsed strictly; raises ValueError.
+
+    Nothing is normalised into a match: the URL must already be in canonical form, so a
+    mixed-case host, a trailing dot, credentials or an `@` anywhere in the authority, a
+    backslash, whitespace, control or non-ASCII characters are refused rather than folded.
+    The port is the explicit one or the scheme's default."""
+    if not url.isascii() or any(ch.isspace() or ord(ch) < 0x21 or ch == "\\" for ch in url):
+        raise ValueError("the URL has characters an endpoint URL never needs")
+    parts = urlsplit(url)
+    if parts.scheme not in schemes or not url.startswith(f"{parts.scheme}://"):
+        raise ValueError(f"the URL must start with {' or '.join(s + '://' for s in schemes)}")
+    if "@" in parts.netloc or parts.username is not None or parts.password is not None:
+        raise ValueError("the URL may not carry credentials")
+    host = parts.hostname or ""
+    if not host or host.endswith(".") or ".." in host:
+        raise ValueError("the URL has no usable host")
+    try:
+        port = parts.port
+    except ValueError:
+        raise ValueError("the URL's port is not a number") from None
+    shown = f"[{host}]" if ":" in host else host
+    if parts.netloc not in (shown, f"{shown}:{port}"):
+        raise ValueError("the URL's host must be written in lower case, exactly")
+    return parts.scheme, host, port if port is not None else _DEFAULT_PORTS[parts.scheme]
+
+
+def parse_origin_list(value: str) -> frozenset[Origin]:
+    """An operator's comma-separated list of origins (scheme://host[:port], no path); raises
+    ValueError on any entry that is not exactly an origin."""
+    found: set[Origin] = set()
+    for entry in (e.strip() for e in value.split(",")):
+        if not entry:
+            continue
+        if urlsplit(entry).path not in ("", "/") or "?" in entry or "#" in entry:
+            raise ValueError("an allowed origin has no path, query or fragment")
+        found.add(parse_origin(entry))
+    return frozenset(found)
+
+
 def check_local(url: str) -> str:
     """The local provider's endpoint, from operator configuration only: loopback or localhost."""
     parts = urlsplit(url)
@@ -391,6 +441,15 @@ class HttpTextProvider:
     def auth(self, secret: Secret) -> Auth:
         raise NotImplementedError
 
+    def _base(self) -> str:
+        """The base URL every call is built on."""
+        raise NotImplementedError
+
+    def allowed_origins(self) -> frozenset[Origin]:
+        """The origins the operator fixed for this provider: a constant in code for a vendor
+        with one API host, operator environment otherwise. Never connection settings."""
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ configuration
 
     def problem(self) -> str | None:
@@ -402,7 +461,36 @@ class HttpTextProvider:
             return "the connection settings do not match this provider's schema"
         if self.needs_secret and (self.ctx.connection.secret_ref is None or self.ctx.vault is None):
             return "no secret is stored for this connection"
+        return self.origin_problem()
+
+    def origin_problem(self) -> str | None:
+        try:
+            allowed = self.allowed_origins()
+        except ValueError:
+            return "the operator's list of allowed endpoints is not a list of origins"
+        if not allowed:
+            return "the operator has not allowed any endpoint for this provider"
+        try:
+            here = parse_origin(self._base(), schemes=self.schemes())
+        except ValueError:
+            return "the endpoint is not a canonical URL"
+        if here not in allowed:
+            return "the endpoint is not one the operator allowed"
         return None
+
+    def schemes(self) -> tuple[str, ...]:
+        return ("https",) if self.address_policy is AddressPolicy.PUBLIC else ("http", "https")
+
+    def _send(self, call: HttpCall) -> HttpReply:
+        """The one way out to the transport. The secret is bound to the operator's origins: a
+        call to any other origin is refused here, before the transport sees it, whatever built it."""
+        try:
+            ok = parse_origin(call.url, schemes=self.schemes()) in self.allowed_origins()
+        except ValueError:
+            ok = False
+        if not ok:
+            raise TextProviderError("refused a call to an endpoint the operator did not allow")
+        return self.transport(call)
 
     def _auth(self) -> Auth | None:
         if not self.needs_secret:
@@ -432,7 +520,7 @@ class HttpTextProvider:
         if (issue := self.problem()) is not None:
             return c.Health(connected=False, checked_at=now, detail=issue)
         try:
-            reply = self.transport(self.health_call(self._auth()))
+            reply = self._send(self.health_call(self._auth()))
         except ConnectionsError as exc:
             return c.Health(connected=False, checked_at=now, detail=type(exc).__name__)
         ok = 200 <= reply.status < 300 and self.health_ok(reply)
@@ -464,7 +552,7 @@ class HttpTextProvider:
         assert isinstance(request, c.TextRequest)
         c.check_cap(self.estimate(request), request)  # raises ProviderUnavailable when not configured
         now = self.clock.now()
-        reply = self.transport(self.build_call(request, self._auth()))
+        reply = self._send(self.build_call(request, self._auth()))
         try:
             if not 200 <= reply.status < 300:
                 raise TextProviderError(f"{self.name} answered HTTP {status_class(reply.status)}")

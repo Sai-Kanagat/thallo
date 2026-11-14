@@ -10,10 +10,11 @@
 
 Shape from Google's REST reference as of Nov 2026; the test fixtures are written by hand from it,
 not captured. Thinking tokens are billed as output, so they are counted as output here.
+
+The API key goes only to `BASE_URL`, a constant: there is no base_url setting, and a connection
+row that still carries one does not parse, so the provider reports itself unconfigured.
 """
 from __future__ import annotations
-
-from pydantic import field_validator
 
 from thallo.connections.registry import ProviderContext, ProviderRegistry
 from thallo.connections.secret import Secret
@@ -24,29 +25,26 @@ from thallo.providers.text.base import (
     HttpCall,
     HttpReply,
     HttpTextProvider,
+    Origin,
     Parsed,
     PricedSettings,
     TextProviderError,
     Transport,
-    check_https,
     need,
+    parse_origin,
     system_text,
     tokens,
     user_text,
 )
 
 NAME = "gemini"
-DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+BASE_URL = "https://generativelanguage.googleapis.com"
+ORIGINS: frozenset[Origin] = frozenset({parse_origin(BASE_URL)})
 BLOCKED = frozenset({"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY"})
 
 
 class GeminiSettings(PricedSettings):
-    base_url: str = DEFAULT_BASE_URL
-
-    @field_validator("base_url")
-    @classmethod
-    def _https(cls, v: str) -> str:
-        return check_https(v)
+    """Prices and the timeout only: no endpoint, because settings are tenant-writable."""
 
 
 class GeminiText(HttpTextProvider):
@@ -58,9 +56,11 @@ class GeminiText(HttpTextProvider):
     def auth(self, secret: Secret) -> Auth:
         return Auth("x-goog-api-key", secret)
 
+    def allowed_origins(self) -> frozenset[Origin]:
+        return ORIGINS
+
     def _base(self) -> str:
-        assert isinstance(self.settings, GeminiSettings)
-        return f"{self.settings.base_url}/v1beta/models/{self.model}"
+        return f"{BASE_URL}/v1beta/models/{self.model}"
 
     def build_call(self, request: c.TextRequest, auth: Auth | None) -> HttpCall:
         assert self.settings is not None

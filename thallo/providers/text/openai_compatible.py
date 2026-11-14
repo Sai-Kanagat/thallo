@@ -8,14 +8,22 @@ OpenRouter, Together and similar), over plain HTTPS (no SDK is a dependency).
             usage={prompt_tokens, completion_tokens}
 
 `base_url` is required (it includes the version path, e.g. https://api.openai.com/v1) and must be
-https. Some endpoints want `max_completion_tokens` instead of `max_tokens`; `output_limit_field`
-says which (a name the registry's secret-key filter accepts). Shape from the OpenAI API reference
+https. It is a tenant-writable setting, so it never decides on its own where the key goes: the
+operator lists the origins the key may reach, in the environment,
+    THALLO_OPENAI_COMPATIBLE_ORIGINS   comma-separated origins, e.g. https://api.openai.com
+and the provider is unconfigured (no call, a pending task saying why) for a base_url whose
+(scheme, host, port) is not exactly one of them, or when the list is unset.
+
+Some endpoints want `max_completion_tokens` instead of `max_tokens`; `output_limit_field` says
+which (a name the registry's secret-key filter accepts). Shape from the OpenAI API reference
 as of Nov 2026; the test fixtures are written by hand from it, not captured, and compatible
 vendors differ in small ways nobody here has checked.
 """
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import field_validator
@@ -29,18 +37,21 @@ from thallo.providers.text.base import (
     HttpCall,
     HttpReply,
     HttpTextProvider,
+    Origin,
     Parsed,
     PricedSettings,
     TextProviderError,
     Transport,
     check_https,
     need,
+    parse_origin_list,
     system_text,
     tokens,
     user_text,
 )
 
 NAME = "openai_compatible"
+ORIGINS_ENV = "THALLO_OPENAI_COMPATIBLE_ORIGINS"
 
 
 class OpenAICompatibleSettings(PricedSettings):
@@ -96,6 +107,14 @@ class OpenAICompatibleText(HttpTextProvider):
     Settings = OpenAICompatibleSettings
     model_id = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")  # vendor/model ids; sent in the body only
 
+    def __init__(self, ctx: ProviderContext, *, transport: Transport | None = None,
+                 environ: Mapping[str, str] | None = None) -> None:
+        super().__init__(ctx, transport=transport)
+        self._origins_env = (os.environ if environ is None else environ).get(ORIGINS_ENV, "")
+
+    def allowed_origins(self) -> frozenset[Origin]:
+        return parse_origin_list(self._origins_env)
+
     def auth(self, secret: Secret) -> Auth:
         return Auth("authorization", secret, "Bearer ")
 
@@ -122,8 +141,9 @@ class OpenAICompatibleText(HttpTextProvider):
         return isinstance(data, list) and any(isinstance(m, dict) and m.get("id") == self.model for m in data)
 
 
-def create(ctx: ProviderContext, transport: Transport | None = None) -> OpenAICompatibleText:
-    return OpenAICompatibleText(ctx, transport=transport)
+def create(ctx: ProviderContext, transport: Transport | None = None,
+           environ: Mapping[str, str] | None = None) -> OpenAICompatibleText:
+    return OpenAICompatibleText(ctx, transport=transport, environ=environ)
 
 
 def register(registry: ProviderRegistry) -> None:
