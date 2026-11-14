@@ -8,8 +8,8 @@
 What it does, in order:
 1. Source or silence: no source material, no draft and no call.
 2. Three candidates, each from its own angle, written by the DRAFT role through the registry (the
-   model is the connection row's). Source material goes in `untrusted_data`, never in the
-   instructions.
+   model is the connection row's). Source material and every free-text brief field go in
+   `untrusted_data`, never in the instructions.
 3. Every candidate goes through `truth.build`. A `CompileFailed` (or a fill failure) is repaired by
    feeding the draft and the findings back as untrusted data: at most three repair loops, so
    attempts 1 to 4, counted on `check_result.attempt`.
@@ -191,7 +191,8 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                  format: str | None = None, candidates: int = CANDIDATES) -> CopyOutcome:  # noqa: A002
     """`claims` is `truth.library(repo, tenant.id)`. `sources` are the source spans the piece may use
     (owner answers, staff material); they are treated as untrusted. `voice_rules` are approved
-    brand rules and are trusted. Nothing is written: pass the outcome to `write_outcome`."""
+    brand rules; like every free-text brief field they travel as data, never as instructions.
+    Nothing is written: pass the outcome to `write_outcome`."""
     if brief.tenant_id != tenant.id:
         raise ValueError("the brief belongs to another tenant")
     cap = cost_cap_eur(length)
@@ -201,8 +202,8 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                            cap, Decimal(0))
     run = _Run(registry, tenant, brief, clock, cap, MAX_OUTPUT_TOKENS[length],
                {"brand_id": brand_id, "format": format})
-    shared = dict(brief=brief, channel=channel, language=brief.language, max_chars=max_chars,
-                  voice_rules=voice_rules, claims=claims)
+    shared = dict(brief=brief, channel=channel, language=brief.language, max_chars=max_chars, claims=claims)
+    brief_item = prompts.brief_data(brief=brief, language=brief.language, voice_rules=voice_rules, claims=claims)
     runs: list[CandidateRun] = []
     stop: _Stop | None = None
 
@@ -225,7 +226,8 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
         runs.append(cand)
         try:
             text, served = run.call(ref=f"copy:{brief.id}:c{i}:a1",
-                                    instructions=prompts.draft_instructions(angle=i, **shared), data=sources)
+                                    instructions=prompts.draft_instructions(angle=i, **shared),
+                                    data=[brief_item, *sources])
             for number in range(1, MAX_REPAIR_LOOPS + 2):
                 built, compiled, problems = check(text)
                 cand.attempts.append(Attempt(number, text, compiled, problems, served.connection_id, served.provider,
@@ -241,7 +243,8 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                     break
                 text, served = run.call(ref=f"copy:{brief.id}:c{i}:a{number + 1}",
                                         instructions=prompts.repair_instructions(**shared),
-                                        data=[prompts.findings_data(text, compiled, problems), *sources])
+                                        data=[brief_item, prompts.findings_data(text, compiled, problems),
+                                              *sources])
         except _Stop as s:
             if cand.status == "open":
                 cand.status = "stopped"

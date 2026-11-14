@@ -131,17 +131,21 @@ def test_numbers_only_as_slots_and_sources_only_as_data(produce):
     for i in range(3):
         system = script.system(i)
         assert "IGNORE PREVIOUS INSTRUCTIONS" not in system and "at four every morning" not in system
-        assert script.data(i) == [SOURCE]
-        assert "{{C-0001}}: price, reads like: ## EUR" in system and "12 EUR" not in system  # value masked
+        item = json.loads(script.data(i)[0])
+        assert script.data(i)[1:] == [SOURCE]
+        assert "{{C-0001}}" in system and "reads like" not in system and "12 EUR" not in system
+        assert item["claims"] == [{"slot": "{{C-0001}}", "stands_for": "price, reads like: ## EUR"}]  # masked
+        assert "12" not in script.data(i)[0]
     assert out.status is CopyStatus.READY_FOR_CHECKS
 
 
 def test_repair_feeds_findings_back_as_data(produce):
     out, script = produce(DIGIT, CLEAN, candidates=1)
     assert out.status is CopyStatus.READY_FOR_CHECKS and len(script.calls) == 2
-    previous = json.loads(script.data(1)[0])
+    assert json.loads(script.data(1)[0])["item"] == "brief"
+    previous = json.loads(script.data(1)[1])
     assert previous["previous_draft"] == DIGIT and previous["findings"][0]["kind"] == "digit"
-    assert DIGIT not in script.system(1) and script.data(1)[1:] == [SOURCE]
+    assert DIGIT not in script.system(1) and script.data(1)[2:] == [SOURCE]
     assert script.calls[1].body["messages"][0]["content"][0]["text"].count("12 euros") == 1
     rows = verdicts(out)
     assert (1, "truth.compile.digit", CheckVerdict.FAIL) in rows
