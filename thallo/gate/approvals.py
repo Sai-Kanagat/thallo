@@ -67,15 +67,29 @@ class GateChange:
     bundle_hash: BundleHash | None = None
 
 
-def open_flag_ids(results: Sequence[CheckResult]) -> frozenset[str]:
-    """FLAG verdicts still open: for each (variant, layer, check), the latest attempt is a FLAG."""
-    latest: dict[tuple[str, str, str], CheckResult] = {}
+def _latest_attempt_rows(results: Sequence[CheckResult]) -> list[CheckResult]:
+    """Every row at the latest attempt of its (variant, layer, check). One check may emit several
+    rows per attempt (one per finding); none of them is hidden behind another. Older attempts
+    are superseded."""
+    by_key: dict[tuple[str, str, str], list[CheckResult]] = {}
     for r in results:
-        key = (r.variant_id, r.layer.value, r.check_name)
-        if key not in latest or (r.attempt, r.created_at, r.id) > (latest[key].attempt, latest[key].created_at,
-                                                                   latest[key].id):
-            latest[key] = r
-    return frozenset(r.id for r in latest.values() if r.verdict is CheckVerdict.FLAG)
+        by_key.setdefault((r.variant_id, r.layer.value, r.check_name), []).append(r)
+    out: list[CheckResult] = []
+    for rows in by_key.values():
+        top = max(r.attempt for r in rows)
+        out += [r for r in rows if r.attempt == top]
+    return out
+
+
+def open_flag_ids(results: Sequence[CheckResult]) -> frozenset[str]:
+    """FLAG verdicts still open: every FLAG row at the latest attempt of its (variant, layer, check)."""
+    return frozenset(r.id for r in _latest_attempt_rows(results) if r.verdict is CheckVerdict.FLAG)
+
+
+def failing_check_ids(results: Sequence[CheckResult]) -> frozenset[str]:
+    """FAIL verdicts that block: every FAIL row at the latest attempt of its (variant, layer, check).
+    A FAIL can never be acknowledged away; only a newer attempt supersedes it."""
+    return frozenset(r.id for r in _latest_attempt_rows(results) if r.verdict is CheckVerdict.FAIL)
 
 
 def approver_problem(user: AppUser | None, approver_id: str, tenant_id: str) -> str | None:
@@ -154,8 +168,10 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
         raise ApprovalRefused("no gate signing key: approvals cannot be signed")
     now = clock.now()
     current = {vc.variant.id for vc in content.variants}
-    flags = open_flag_ids([r for r in check_results if r.variant_id in current
-                           and r.tenant_id == bundle.tenant_id])
+    mine = [r for r in check_results if r.variant_id in current and r.tenant_id == bundle.tenant_id]
+    if failing := failing_check_ids(mine):
+        raise ApprovalRefused(f"{len(failing)} check(s) FAIL at the latest attempt: {sorted(failing)}")
+    flags = open_flag_ids(mine)
     acked = frozenset(acknowledged_flag_ids)
     if unknown := acked - flags:
         raise ApprovalRefused(f"acknowledged ids are not open flags on this bundle: {sorted(unknown)}")
