@@ -92,11 +92,17 @@ class GeminiText(HttpTextProvider):
         need(isinstance(parts, list), NAME, "parts")
         texts = [p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")]
         need(bool(texts), NAME, "no text part")
-        usage = b.get("usageMetadata") if isinstance(b.get("usageMetadata"), dict) else {}
-        out = tokens(usage.get("candidatesTokenCount")) + tokens(usage.get("thoughtsTokenCount"))
-        return Parsed("".join(texts).strip(), tokens(usage.get("promptTokenCount")), out,
+        tin, tout = self.usage(reply) or (0, 0)
+        return Parsed("".join(texts).strip(), tin, tout,
                       b.get("responseId") if isinstance(b.get("responseId"), str) else None,
                       b.get("modelVersion") if isinstance(b.get("modelVersion"), str) else None)
+
+    def usage(self, reply: HttpReply) -> tuple[int, int] | None:
+        usage = reply.body.get("usageMetadata") if isinstance(reply.body, dict) else None
+        if not isinstance(usage, dict):
+            return None
+        out = tokens(usage.get("candidatesTokenCount")) + tokens(usage.get("thoughtsTokenCount"))
+        return tokens(usage.get("promptTokenCount")), out
 
     def health_call(self, auth: Auth | None) -> HttpCall:
         return HttpCall("GET", self._base(), {}, None, auth, 15.0)

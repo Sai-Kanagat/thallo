@@ -116,8 +116,14 @@ class LocalText(HttpTextProvider):
             raise TextProviderError("the local model stopped at num_predict; the output is cut")
         content = b["message"].get("content")
         need(isinstance(content, str), NAME, "content")
-        return Parsed(content.strip(), tokens(b.get("prompt_eval_count")), tokens(b.get("eval_count")),
-                      None, b.get("model") if isinstance(b.get("model"), str) else None)
+        tin, tout = self.usage(reply) or (0, 0)
+        return Parsed(content.strip(), tin, tout, None, b.get("model") if isinstance(b.get("model"), str) else None)
+
+    def usage(self, reply: HttpReply) -> tuple[int, int] | None:
+        b = reply.body
+        if not isinstance(b, dict) or ("prompt_eval_count" not in b and "eval_count" not in b):
+            return None
+        return tokens(b.get("prompt_eval_count")), tokens(b.get("eval_count"))
 
     def health_call(self, auth: Auth | None) -> HttpCall:
         return HttpCall("GET", f"{self._base()}/api/tags", {}, None, None, 5.0)

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from thallo.connections import ProviderContext, ProviderRegistry
+from thallo.connections import ProviderContext, ProviderRegistry, ProviderUnavailable
 from thallo.contracts import connection as c
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import Capability, ConnectionMode, MessageChannel
@@ -44,10 +44,29 @@ def test_provider_passes_contract(providers, cap, name):
     clock = FakeClock(FAKE_EPOCH)
     entry = providers.get(cap, name)
     prov = entry.factory(_ctx(cap, name, entry.mode, clock))
+    if _unavailable_when_empty(prov, cap):
+        assert entry.mode not in (ConnectionMode.MANUAL, ConnectionMode.MOCK)
+        return  # its package's tests run the full contract against a configured connection
     assert_provider_contract(prov, clock)
     assert prov.describe().mode is entry.mode
     if entry.mode in (ConnectionMode.MANUAL, ConnectionMode.MOCK):
         assert not prov.describe().sends_externally
+
+
+def _unavailable_when_empty(prov, cap) -> bool:
+    """A provider that needs settings may report itself unavailable on an empty connection. Then
+    estimate() and run() must both raise ProviderUnavailable (did nothing, so the chain moves on)."""
+    try:
+        prov.estimate(sample_requests()[cap][0])
+    except ProviderUnavailable:
+        pass
+    else:
+        return False
+    for req in sample_requests()[cap]:
+        for call in (prov.estimate, prov.run):
+            with pytest.raises(ProviderUnavailable):
+                call(req)
+    return True
 
 
 @pytest.mark.parametrize("cap", list(Capability))

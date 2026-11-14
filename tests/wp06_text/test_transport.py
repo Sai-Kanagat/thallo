@@ -192,3 +192,17 @@ def test_address_policy_accepts_public_ipv4_and_ipv6():
     assert address_allowed("93.184.216.34", AddressPolicy.PUBLIC)
     assert address_allowed("2606:2800:220:1::1", AddressPolicy.PUBLIC)
     assert not address_allowed("93.184.216.34", AddressPolicy.LOOPBACK)
+
+
+@pytest.mark.parametrize(("ip", "policy", "allowed"), [
+    ("64:ff9b::808:808", AddressPolicy.PUBLIC, True),  # well-known NAT64 to 8.8.8.8: unwrapped, public
+    ("64:ff9b::a00:1", AddressPolicy.PUBLIC, False),  # to 10.0.0.1
+    ("64:ff9b::7f00:1", AddressPolicy.PUBLIC, False),  # to 127.0.0.1
+    ("64:ff9b::a9fe:a9fe", AddressPolicy.PUBLIC, False),  # to 169.254.169.254
+    ("64:ff9b:1::808:808", AddressPolicy.PUBLIC, False),  # local-use NAT64: always refused
+    ("64:ff9b:1:abcd::1", AddressPolicy.PUBLIC, False),
+    ("64:ff9b::7f00:1", AddressPolicy.LOOPBACK, False),  # a NAT64 gateway is never this machine
+    ("64:ff9b:1::7f00:1", AddressPolicy.LOOPBACK, False),
+])
+def test_nat64_is_unwrapped_or_refused(ip, policy, allowed):
+    assert address_allowed(ip, policy) is allowed

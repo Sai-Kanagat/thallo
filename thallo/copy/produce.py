@@ -24,10 +24,17 @@ FAIL rows block, FLAG rows are kept with verdict FLAG, never dropped or downgrad
 attempt no longer raises a check an earlier one raised, a PASS row at the later attempt closes it,
 so "latest attempt per check" (the gate's rule for open flags) always describes the current text.
 
-Cost: each call's cost goes to `cost_ledger`. The piece has a cap (USD 0.50 short, USD 3 long,
-converted at `USD_TO_EUR`); before every call the first connection's estimate is checked against
-what is left, and the run stops before a call that would go over. The registry gets the remainder
-as `cost_cap_eur`, so it also refuses on its own.
+Cost: every call the vendor billed goes to `cost_ledger`, failures included (a reply cut at the
+token limit, a refusal or a safety block still carries usage, and a result the registry refuses
+after the call as over the cap was still paid for). A call that never reached a vendor (manual,
+or every connection unavailable) writes no row. The piece has a cap (USD 0.50 short, USD 3 long,
+converted at `USD_TO_EUR`); before every call the estimate of the first connection that can serve
+is checked against what is left, and the run stops before a call that would go over. The registry
+gets the remainder as `cost_cap_eur`, so it also refuses on its own.
+
+Errors after a call (a `LibraryError` from `truth.build`, a grader that raises) never lose the
+outcome: the candidate is recorded as failed with the check named, the run stops, and the
+outcome keeps every cost entry gathered so far.
 """
 from __future__ import annotations
 
@@ -37,8 +44,8 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal, Protocol
 
-from thallo.connections.errors import ConnectionsError
-from thallo.connections.registry import ConnectionRegistry, Served
+from thallo.connections.errors import ConnectionsError, ProviderUnavailable
+from thallo.connections.registry import ConnectionRegistry, CostOverCapAfterRun, Served
 from thallo.contracts import connection as c
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import Capability, Channel, CheckLayer, CheckVerdict, ConnectionMode, TextRole
@@ -47,8 +54,8 @@ from thallo.contracts.models import Asset, Brief, Bundle, CheckResult, Claim, Co
 from thallo.contracts.states import VARIANT, VariantState
 from thallo.copy import prompts
 from thallo.copy.slop import SlopHit, find_slop
-from thallo.providers.text.base import USD_TO_EUR
-from thallo.truth import Built, CompileFailed, CompileResult, FillError, build, to_check_results
+from thallo.providers.text.base import USD_TO_EUR, TextProviderError
+from thallo.truth import Built, CompileFailed, CompileResult, FillError, LibraryError, build, to_check_results
 
 CANDIDATES = 3
 MAX_REPAIR_LOOPS = 3
@@ -56,6 +63,8 @@ PieceLength = Literal["short", "long"]
 COST_CAP_USD: dict[str, Decimal] = {"short": Decimal("0.50"), "long": Decimal("3")}
 MAX_OUTPUT_TOKENS: dict[str, int] = {"short": 1500, "long": 4000}
 FILL_CHECK = "truth.fill"
+LIBRARY_CHECK = "truth.library"  # truth.build raised LibraryError: the claims library itself is wrong
+GRADER_CHECK = "copy.grader"  # the grader raised
 
 
 def cost_cap_eur(length: PieceLength) -> Decimal:
@@ -87,12 +96,16 @@ class Attempt:
     provider: str
     model: str | None
     cost_eur: Decimal
+    error_check: str | None = None  # a check that raised instead of answering; always a FAIL
 
     @property
     def failing_checks(self) -> list[str]:
-        if self.compiled is None:
-            return [FILL_CHECK]
-        return sorted({f"truth.compile.{f.kind.value}" for f in self.compiled.blocks})
+        names = {f"truth.compile.{f.kind.value}" for f in self.compiled.blocks} if self.compiled else set()
+        if self.error_check is not None:
+            names.add(self.error_check)
+        elif self.compiled is None:
+            names.add(FILL_CHECK)
+        return sorted(names)
 
 
 @dataclass
@@ -148,6 +161,40 @@ class _Run:
     spent: Decimal = Decimal(0)
     costs: list[CostEntry] = field(default_factory=list)
 
+    def first_estimate(self, req: c.TextRequest) -> Decimal | None:
+        """The estimate of the connection the registry would try first: like `registry.run`, a
+        connection last seen unhealthy or reporting itself unavailable is passed over."""
+        reg = self.registry
+        choice = reg.resolve(self.tenant.id, Capability.TEXT, role=req.role, **self.scope)
+        for cid in choice.ordered_connection_ids:
+            row = reg.connections.get(self.tenant.id, cid)
+            if row is None:
+                continue
+            if (row.mode is not ConnectionMode.MANUAL and reg.health is not None
+                    and reg.health.last_connected(self.tenant.id, cid) is False):
+                continue
+            try:
+                return reg.build(row).estimate(req).cost_eur
+            except ProviderUnavailable:
+                continue
+        return None
+
+    def record(self, *, ref: str, provider: str, model: str | None, units: int, cost: Decimal) -> None:
+        self.costs.append(CostEntry(
+            id=new_id(self.clock), created_at=self.clock.now(), tenant_id=self.tenant.id,
+            capability=Capability.TEXT, provider=provider, model=model, units=Decimal(units), cost_eur=cost,
+            run_ref=ref, subject_kind="brief", subject_id=self.brief.id, occurred_at=self.clock.now()))
+        self.spent += cost
+
+    def record_served(self, ref: str, served: Served) -> None:
+        if served.mode is ConnectionMode.MANUAL:
+            return  # a person, not a vendor: nothing was billed
+        result = served.result
+        out = result.output
+        used = out.input_tokens + out.output_tokens if isinstance(out, c.TextResult) else 0
+        self.record(ref=ref, provider=served.provider, model=result.provenance.model, units=used,
+                    cost=result.cost_eur)
+
     def call(self, *, ref: str, instructions: str, data: Sequence[str]) -> tuple[str, Served]:
         remaining = self.cap - self.spent
         if remaining <= 0:
@@ -155,28 +202,27 @@ class _Run:
         req = c.TextRequest(tenant_id=self.tenant.id, role=TextRole.DRAFT, instructions=instructions,
                             untrusted_data=tuple(data), language=self.brief.language,
                             max_output_tokens=self.max_tokens, idempotency_key=ref, cost_cap_eur=remaining)
-        first = next(iter(self.registry.estimate_chain(self.tenant.id, req, **self.scope)), None)
-        if first is not None and first[1] > remaining:
+        first = self.first_estimate(req)
+        if first is not None and first > remaining:
             raise _Stop(CopyStatus.STOPPED_COST_CAP,
-                        f"stopped before a call estimated at up to {first[1]} EUR: {remaining} EUR is left of the "
+                        f"stopped before a call estimated at up to {first} EUR: {remaining} EUR is left of the "
                         f"{self.cap} EUR cap")
         try:
             served = self.registry.run(self.tenant.id, req, **self.scope)
+        except CostOverCapAfterRun as exc:
+            self.record_served(ref, exc.served)  # the call was made and billed before the refusal
+            raise _Stop(CopyStatus.STOPPED_COST_CAP,
+                        f"the registry refused a result over the {self.cap} EUR cap after the call") from None
         except c.CostCapExceeded:
             raise _Stop(CopyStatus.STOPPED_COST_CAP,
                         f"the registry refused a call over the {self.cap} EUR cap") from None
         except ConnectionsError as exc:
+            if isinstance(exc, TextProviderError) and exc.cost_eur is not None:
+                self.record(ref=ref, provider=exc.provider or "unknown", model=exc.model,
+                            units=exc.input_tokens + exc.output_tokens, cost=exc.cost_eur)
             raise _Stop(CopyStatus.PROVIDER_ERROR, f"{type(exc).__name__}: {exc}") from None
         result = served.result
-        if served.mode is not ConnectionMode.MANUAL:
-            out = result.output
-            used = out.input_tokens + out.output_tokens if isinstance(out, c.TextResult) else 0
-            self.costs.append(CostEntry(
-                id=new_id(self.clock), created_at=self.clock.now(), tenant_id=self.tenant.id,
-                capability=Capability.TEXT, provider=served.provider, model=result.provenance.model,
-                units=Decimal(used), cost_eur=result.cost_eur, run_ref=ref, subject_kind="brief",
-                subject_id=self.brief.id, occurred_at=self.clock.now()))
-            self.spent += result.cost_eur
+        self.record_served(ref, served)
         if result.status == "pending_person":
             raise _Stop(CopyStatus.PENDING_PERSON, result.task or "a person must write this piece")
         assert isinstance(result.output, c.TextResult)
@@ -207,19 +253,22 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
     runs: list[CandidateRun] = []
     stop: _Stop | None = None
 
-    def check(text: str) -> tuple[Built | None, CompileResult | None, tuple[str, ...]]:
+    def check(text: str) -> tuple[Built | None, CompileResult | None, tuple[str, ...], str | None]:
+        """(built, compiled, problems, error_check). A LibraryError is named, never passed."""
         if not text:
-            return None, None, ("the writer returned no text",)
+            return None, None, ("the writer returned no text",), None
         try:
             built = build(text, tenant_id=tenant.id, language=brief.language, claims=claims, clock=clock,
                           default_language=tenant.default_language, allowed_claim_ids=brief.allowed_claim_ids,
                           protected_names=protected_names, allowed_terms=allowed_terms,
                           tenant_currency=tenant.currency)
         except CompileFailed as exc:
-            return None, exc.result, ()
+            return None, exc.result, (), None
         except FillError as exc:
-            return None, None, tuple(exc.problems)
-        return built, built.compiled, ()
+            return None, None, tuple(exc.problems), None
+        except LibraryError as exc:
+            return None, None, (f"the claims library is not usable: {exc}",), LIBRARY_CHECK
+        return built, built.compiled, (), None
 
     for i in range(candidates):
         cand = CandidateRun(i)
@@ -229,14 +278,18 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                                     instructions=prompts.draft_instructions(angle=i, **shared),
                                     data=[brief_item, *sources])
             for number in range(1, MAX_REPAIR_LOOPS + 2):
-                built, compiled, problems = check(text)
-                cand.attempts.append(Attempt(number, text, compiled, problems, served.connection_id, served.provider,
-                                             served.result.provenance.model, served.result.cost_eur))
+                built, compiled, problems, error_check = check(text)
+                attempt = Attempt(number, text, compiled, problems, served.connection_id, served.provider,
+                                  served.result.provenance.model, served.result.cost_eur, error_check)
+                cand.attempts.append(attempt)
+                if error_check is not None:  # repeats on every draft: stop spending
+                    cand.status = "failed"
+                    raise _Stop(CopyStatus.NEEDS_HUMAN, f"{error_check} failed: {problems[0]}")
                 if built is not None:
-                    cand.built, cand.status = built, "built"
                     cand.slop = find_slop(text, brief.language, extra_slop)
                     if grader is not None:
-                        cand.grade = grader.grade(built.filled.text, brief)
+                        _grade(cand, attempt, grader, built, brief)
+                    cand.built, cand.status = built, "built"
                     break
                 if number > MAX_REPAIR_LOOPS:
                     cand.status = "failed"
@@ -253,6 +306,17 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
 
     return _finish(runs, stop, run, tenant=tenant, brief=brief, channel=channel, rule_version=rule_version,
                    task_type=task_type, max_chars=max_chars, clock=clock)
+
+
+def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief) -> None:
+    """A grader that raises fails the candidate with the check named; it never counts as a pass."""
+    try:
+        cand.grade = grader.grade(built.filled.text, brief)
+    except Exception as exc:  # noqa: BLE001 - any grader failure is a FAIL
+        attempt.error_check = GRADER_CHECK
+        attempt.fill_problems = (f"the grader raised {type(exc).__name__}",)
+        cand.status = "failed"
+        raise _Stop(CopyStatus.NEEDS_HUMAN, f"{GRADER_CHECK} failed: the grader raised {type(exc).__name__}") from None
 
 
 # ---------------------------------------------------------------------------- selection
@@ -305,12 +369,13 @@ def _check_rows(cand: CandidateRun, variant_id: str, tenant_id: str, clock: Cloc
     rows: list[CheckResult] = []
     seen: set[str] = set()
     for a in cand.attempts:
-        if a.compiled is not None:
-            new = to_check_results(a.compiled, variant_id=variant_id, clock=clock, attempt=a.number, model_id=a.model)
-        else:
-            new = [CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id, variant_id=variant_id,
-                               layer=CheckLayer.CODE, check_name=FILL_CHECK, verdict=CheckVerdict.FAIL,
-                               reason="; ".join(a.fill_problems), attempt=a.number, model_id=a.model)]
+        new = [] if a.compiled is None else to_check_results(a.compiled, variant_id=variant_id, clock=clock,
+                                                             attempt=a.number, model_id=a.model)
+        if a.compiled is None or a.error_check is not None:
+            new.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id,
+                                   variant_id=variant_id, layer=CheckLayer.CODE,
+                                   check_name=a.error_check or FILL_CHECK, verdict=CheckVerdict.FAIL,
+                                   reason="; ".join(a.fill_problems), attempt=a.number, model_id=a.model))
         names = {r.check_name for r in new}
         rows += [CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id, variant_id=variant_id,
                              layer=CheckLayer.CODE, check_name=name, verdict=CheckVerdict.PASS,

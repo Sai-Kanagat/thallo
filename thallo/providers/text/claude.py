@@ -87,12 +87,18 @@ class ClaudeText(HttpTextProvider):
             raise TextProviderError("claude stopped at max_tokens; the output is cut")
         texts = [blk.get("text", "") for blk in b["content"] if isinstance(blk, dict) and blk.get("type") == "text"]
         need(bool(texts), NAME, "no text block")
-        usage = b.get("usage") if isinstance(b.get("usage"), dict) else {}
-        tin = (tokens(usage.get("input_tokens")) + tokens(usage.get("cache_creation_input_tokens"))
-               + tokens(usage.get("cache_read_input_tokens")))
-        return Parsed("".join(texts).strip(), tin, tokens(usage.get("output_tokens")),
+        tin, tout = self.usage(reply) or (0, 0)
+        return Parsed("".join(texts).strip(), tin, tout,
                       b.get("id") if isinstance(b.get("id"), str) else None,
                       b.get("model") if isinstance(b.get("model"), str) else None)
+
+    def usage(self, reply: HttpReply) -> tuple[int, int] | None:
+        usage = reply.body.get("usage") if isinstance(reply.body, dict) else None
+        if not isinstance(usage, dict):
+            return None
+        tin = (tokens(usage.get("input_tokens")) + tokens(usage.get("cache_creation_input_tokens"))
+               + tokens(usage.get("cache_read_input_tokens")))
+        return tin, tokens(usage.get("output_tokens"))
 
     def health_call(self, auth: Auth | None) -> HttpCall:
         return HttpCall("GET", f"{self._base()}/v1/models/{self.model}", {"anthropic-version": API_VERSION},

@@ -18,8 +18,13 @@ they share:
 - The model comes from the connection row (`Connection.model`), never from code.
 
 A connection that is not configured (no model, settings that do not parse, or no secret where
-one is needed) makes no outside call: health reports it down, the estimate is zero and a run
-returns a `pending_person` task saying what is missing.
+one is needed) makes no outside call: health reports it down, and `estimate()` (so `run()` too)
+raises `ProviderUnavailable` saying what is missing, so the registry skips it and tries the next
+connection. The chain's manual floor gives the person their task when nothing else can serve.
+
+A reply the vendor bills but this code rejects (cut at the token limit, a refusal, a safety
+block, JSON that does not parse) raises `TextProviderError` carrying the reply's usage and cost,
+so the caller can still write the spend to the ledger.
 """
 from __future__ import annotations
 
@@ -32,13 +37,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_UP, Decimal
 from enum import StrEnum
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from thallo.connections.errors import ConnectionsError, InvalidConnection
+from thallo.connections.errors import ConnectionsError, InvalidConnection, ProviderUnavailable
 from thallo.connections.registry import ProviderContext
 from thallo.connections.secret import Secret
 from thallo.contracts import connection as c
@@ -62,7 +67,23 @@ NO_DATA = "No data was supplied. Follow the system instructions."
 
 class TextProviderError(ConnectionsError):
     """The vendor answered with an error, refused, or cut the output. Messages never carry a secret
-    or the vendor's raw body."""
+    or the vendor's raw body.
+
+    When the reply carried usage, the vendor billed it: `cost_eur` is then set (with the token
+    counts, provider and model), so the spend reaches the cost ledger even though the call failed.
+    `cost_eur` is None when no usage came back (nothing known to be billed)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.provider: str | None = None
+        self.model: str | None = None
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cost_eur: Decimal | None = None
+
+    @property
+    def billed(self) -> bool:
+        return self.cost_eur is not None
 
 
 def to_eur(usd: Decimal) -> Decimal:
@@ -114,8 +135,19 @@ def system_resolver(host: str, port: int) -> list[str]:
     return [str(info[4][0]) for info in infos]
 
 
+NAT64_WELL_KNOWN = ip_network("64:ff9b::/96")  # RFC 6052: the IPv4 address is the last 32 bits
+NAT64_LOCAL = ip_network("64:ff9b:1::/48")  # RFC 8215: local use, embedding not fixed, so refused
+
+
 def _normal(ip: str) -> IPv4Address | IPv6Address:
+    """IPv4-mapped, 6to4 and well-known NAT64 IPv6 addresses are unwrapped to the IPv4 address
+    they reach; local-use NAT64 raises ValueError (refused). This does not rely on the Python
+    version's `is_global` table for either prefix."""
     addr = ip_address(ip.split("%", 1)[0])
+    if isinstance(addr, IPv6Address) and addr in NAT64_LOCAL:
+        raise ValueError("local-use NAT64 addresses are refused")
+    if isinstance(addr, IPv6Address) and addr in NAT64_WELL_KNOWN:
+        return IPv4Address(int(addr) & 0xFFFF_FFFF)
     if isinstance(addr, IPv6Address) and addr.ipv4_mapped is not None:
         return addr.ipv4_mapped
     if isinstance(addr, IPv6Address) and addr.sixtofour is not None:
@@ -128,8 +160,8 @@ def address_allowed(ip: str, policy: AddressPolicy) -> bool:
         addr = _normal(ip)
     except ValueError:
         return False
-    if policy is AddressPolicy.LOOPBACK:
-        return addr.is_loopback
+    if policy is AddressPolicy.LOOPBACK:  # a NAT64 address goes to a gateway, never to this machine
+        return addr.is_loopback and ip_address(ip.split("%", 1)[0]) not in NAT64_WELL_KNOWN
     return addr.is_global and not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
                                    or addr.is_multicast or addr.is_unspecified)
 
@@ -174,7 +206,8 @@ class HttpTransport:
       raises. The secret is attached to this one request only, so it cannot travel to a second host.
     - SSRF: the host name is resolved once (resolver injectable for tests), every address it
       returns must pass the policy (PUBLIC: globally routable, so no private, loopback,
-      link-local, reserved, multicast or unspecified address, IPv4-mapped and 6to4 IPv6 unwrapped;
+      link-local, reserved, multicast or unspecified address; IPv4-mapped, 6to4 and NAT64 IPv6
+      unwrapped, local-use NAT64 refused;
       LOOPBACK: this machine only), and the socket connects to that validated address, so a
       second DNS answer cannot swap it. TLS still verifies the original host name.
     - Errors carry a status class or an error type, never a raw body or an address.
@@ -348,6 +381,10 @@ class HttpTextProvider:
     def parse(self, reply: HttpReply) -> Parsed:
         raise NotImplementedError
 
+    def usage(self, reply: HttpReply) -> tuple[int, int] | None:
+        """(input, output) tokens the reply says were billed, or None when it carries no usage."""
+        raise NotImplementedError
+
     def health_call(self, auth: Auth | None) -> HttpCall:
         raise NotImplementedError
 
@@ -409,8 +446,8 @@ class HttpTextProvider:
         c.check_request(self, request)
         self._check_tenant(request)
         assert isinstance(request, c.TextRequest)
-        if self.problem() is not None or self.settings is None:
-            return c.Estimate(cost_eur=Decimal(0), seconds=0.0)
+        if (issue := self.problem()) is not None or self.settings is None:
+            raise ProviderUnavailable(f"the {self.name} connection is not configured: {issue}")
         tokens_in = len((system_text(request) + user_text(request)).encode()) + PROMPT_OVERHEAD_TOKENS
         return c.Estimate(cost_eur=self._cost(tokens_in, request.max_output_tokens),
                           seconds=1.0 + request.max_output_tokens / 50)
@@ -425,23 +462,18 @@ class HttpTextProvider:
         c.check_request(self, request)
         self._check_tenant(request)
         assert isinstance(request, c.TextRequest)
-        c.check_cap(self.estimate(request), request)
+        c.check_cap(self.estimate(request), request)  # raises ProviderUnavailable when not configured
         now = self.clock.now()
-        if (issue := self.problem()) is not None:
-            return c.RunResult(
-                output=c.TextResult(text="", data={"awaiting": "configuration", "role": request.role.value}),
-                status="pending_person", cost_eur=Decimal(0),
-                task=(f"The {self.name} connection is not configured: {issue}. Configure it, or write the "
-                      f"{request.role.value} copy yourself."),
-                provenance=c.Provenance(made_by="person", provider=self.name, mode=self.mode, made_at=now,
-                                        settings={"unconfigured": issue}))
         reply = self.transport(self.build_call(request, self._auth()))
-        if not 200 <= reply.status < 300:
-            raise TextProviderError(f"{self.name} answered HTTP {status_class(reply.status)}")
-        parsed = self.parse(reply)
-        data = parse_json_output(parsed.text) if request.output_schema is not None else None
-        if request.output_schema is not None and data is None:
-            raise TextProviderError(f"{self.name} did not return the JSON object the request asked for")
+        try:
+            if not 200 <= reply.status < 300:
+                raise TextProviderError(f"{self.name} answered HTTP {status_class(reply.status)}")
+            parsed = self.parse(reply)
+            data = parse_json_output(parsed.text) if request.output_schema is not None else None
+            if request.output_schema is not None and data is None:
+                raise TextProviderError(f"{self.name} did not return the JSON object the request asked for")
+        except TextProviderError as exc:
+            raise self._billed(exc, reply) from None
         return c.RunResult(
             output=c.TextResult(text=parsed.text, data=data, input_tokens=parsed.input_tokens,
                                 output_tokens=parsed.output_tokens),
@@ -452,6 +484,18 @@ class HttpTextProvider:
                                     settings={"role": request.role.value, "served_model": parsed.served_model,
                                               "max_output_tokens": request.max_output_tokens}),
             external_ids={"response_id": parsed.response_id} if parsed.response_id else {})
+
+    def _billed(self, exc: TextProviderError, reply: HttpReply) -> TextProviderError:
+        """Attach the reply's usage and cost to a rejected reply, when the reply had usage."""
+        exc.provider, exc.model = self.name, self.model
+        try:
+            used = self.usage(reply)
+        except Exception:  # noqa: BLE001 - a malformed body has no usable usage; the error stands
+            used = None
+        if used is not None and self.settings is not None:
+            exc.input_tokens, exc.output_tokens = used
+            exc.cost_eur = self._cost(*used)
+        return exc
 
     def mock(self) -> MockProvider:
         return MockProvider(self.capability, self.clock, name=f"mock-{self.name}")

@@ -133,6 +133,15 @@ class Served:
     skipped: tuple[tuple[str, str], ...] = ()  # (connection id, reason)
 
 
+class CostOverCapAfterRun(c.CostCapExceeded):
+    """The provider ran and then reported a cost over the cap. The call was made and billed, so
+    the served result travels with the refusal for the caller's cost ledger."""
+
+    def __init__(self, message: str, served: Served) -> None:
+        super().__init__(message)
+        self.served = served
+
+
 class ConnectionRegistry:
     def __init__(self, *, clock: Clock, providers: ProviderRegistry, connections: ConnectionStore,
                  vault: Vault | None = None, health: HealthState | None = None,
@@ -324,9 +333,10 @@ class ConnectionRegistry:
                 skipped.append((cid, "over_cost_cap"))
                 continue
             result = provider.run(request)
+            served = Served(cid, row.provider, row.mode, result, tuple(skipped))
             if request.cost_cap_eur is not None and result.cost_eur > request.cost_cap_eur:
-                raise c.CostCapExceeded(f"connection {cid} reported a cost over the cap")
-            return Served(cid, row.provider, row.mode, result, tuple(skipped))
+                raise CostOverCapAfterRun(f"connection {cid} reported a cost over the cap", served)
+            return served
         raise NoConnection(f"no connection could serve {request.capability.value}: {skipped}")
 
     def estimate_chain(self, tenant_id: str, request: c.Request, **scope: str | None) -> Iterable[tuple[str, Decimal]]:
