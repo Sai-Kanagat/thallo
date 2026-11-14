@@ -149,7 +149,7 @@ def table_ddl(model: type[Row]) -> str:
                 checks.append(f"{col} >= {meta.ge}")
             if isinstance(meta, annotated_types.Le):
                 checks.append(f"{col} <= {meta.le}")
-        if checks:
+        if checks and "checks_since" not in extra:  # a bound added later lives in its own migration
             parts.append(f"CHECK ({' AND '.join(checks)})")
         cols.append(" ".join(parts))
         if extra.get("index") or ("fk" in extra and col != "tenant_id"):

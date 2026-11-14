@@ -65,6 +65,12 @@ def added(migration: str, **kw: Any) -> Any:
     return Field(json_schema_extra={"since": migration}, **kw)
 
 
+def tightened(migration: str, **kw: Any) -> Any:
+    """A column of 0001 whose bound (ge, le) was added later. 0001 renders it without the CHECK;
+    the named migration adds the CHECK."""
+    return Field(json_schema_extra={"checks_since": migration}, **kw)
+
+
 def unique(**kw: Any) -> Any:
     return Field(json_schema_extra={"unique": True}, **kw)
 
@@ -410,13 +416,19 @@ class VariantMedia(TenantRow):
 
 
 class CheckResult(TenantRow, ModelMade):
+    """Append-only for the app role (migration 0021). Bound to the content it checked:
+    `content_sha256` is the variant's leaf hash in the bundle root (`gate.variant_hash`, or
+    `gate.content_hashes` from a repository). The gate counts only rows whose hash is the variant's
+    current one, so a row about older content never blocks and never clears anything."""
+
     __table__ = "check_result"
     variant_id: Id = fk("variant")
     layer: CheckLayer
     check_name: str
     verdict: CheckVerdict
     reason: str | None = None
-    attempt: int = 1
+    attempt: int = tightened("0021", default=1, ge=1)
+    content_sha256: str = added("0021", pattern=r"^[0-9a-f]{64}$")
 
 
 class Approval(TenantRow):
