@@ -58,12 +58,16 @@ Start with WP-00 and show me the contract list before you write it.
 
 See `docs/BUILD_PLAN.md` section 4.6 for the list per wave. Before wave 1: a Supabase project with keys in `.env`, written consent from each pilot business, and access applications for WhatsApp Cloud, Google Ads and Business Profile.
 
-## Open security fixes (14 Nov, lead)
-Must land before WP-09 exposes connection settings to tenants:
-1. HIGH. `thallo/providers/image/template_render.py`: the `chromium` binary path is a connection setting. Remove it from `TemplateRenderSettings`; resolve the binary only from operator configuration (`THALLO_CHROMIUM` or `find_chromium()`).
-2. MEDIUM. Same file: `brand_dir`, `templates_dir`, `output_dir`, `photo_dirs` are connection settings. Derive them from an operator base directory keyed by tenant id, or require each resolved path to sit inside that tenant's operator-assigned root.
-3. SHOULD FIX (review of the WP-05 and WP-06 fix commits, 14 Nov, nothing blocking). `CostOverCapAfterRun` subclasses `CostCapExceeded`, so a caller that catches only the parent, or lets it propagate, drops a call that was billed. `thallo/copy/produce.py` handles it correctly today and is the only caller. Before a second caller exists (image path, WP-07 graders): the registry writes the ledger row itself, or the exception stops being a `CostCapExceeded`. Also `_grade` in `produce.py` catches `Exception`, so a grader that calls the registry needs a cost contract first.
-Rule for every provider from here on: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+## Security fixes merged 14 Nov (renderer settings, key origin, over-cap error)
+Merged after an independent security review, nothing blocking, CI 2,044 passed. The Chromium binary and all folders are out of tenant settings; a text provider's key goes only to a constant origin (Claude, Gemini) or an operator-listed one; `CostOverCapAfterRun` is no longer a `CostCapExceeded`.
+New operator env vars (Sai adds them to `.env`): `THALLO_BRAND_ROOT` (one folder per tenant id holding `brand/`, `templates/`, `photos/`, `renders/`; unset means the renderer is unavailable for everyone) and `THALLO_OPENAI_COMPATIBLE_ORIGINS` (comma-separated origins, no path).
+Rule for every provider: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+
+Still open from that review, must land before tenants can upload template files (WP-09 or any upload path):
+1. SHOULD FIX. Templates now live in the tenant's own folder, and the render page still allows inline script and `file:` images and fonts (`thallo/media/render.py`, `thallo/brand/templates.py`). A tenant-written template can render another tenant's images or any local image or font into its own output. Fix: only operator-owned templates until the page policy confines `file:` to the tenant folder (or assets are inlined as data URLs and `file:` is dropped).
+2. NOTE. `base.css`, `manifest.json`, `channels.json`, `brand.json`, `script/*.json` are opened without the inside-the-folder check; folders are checked once then used later. Both matter only if an upload path can create symlinks: the upload path must refuse symlinks.
+3. NOTE. The tenant-id pattern in `template_render.py` uses `$`, which accepts a trailing newline; use `\Z` or `fullmatch`.
+4. NOTE. `_grade` in `thallo/copy/produce.py` catches `Exception`; a grader that calls the registry needs a cost contract first (WP-07).
 
 ## Lead ruling: check results are bound to content (contracts 2.5.0, to build)
 Why: the gate fix on branch `worktree-agent-af29c4c07c8cfae8c` (commit ded0f2a) refuses a grant on a latest FAIL, but review showed a FAIL can never be superseded (the compiler writes FAIL under `truth.compile.<kind>` and a clean rerun writes PASS under `truth.compile`), and nothing ties a check row to the content it checked. Do not merge ded0f2a alone.
