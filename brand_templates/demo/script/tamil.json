@@ -1,0 +1,11 @@
+{
+  "script": "tamil",
+  "languages": ["ta"],
+  "fonts": {
+    "display": {"family": "Tamil Sangam MN", "local": ["Tamil Sangam MN", "Noto Sans Tamil", "Noto Serif Tamil", "Latha"], "weight": 700},
+    "body": {"family": "Tamil Sangam MN", "local": ["Tamil Sangam MN", "Tamil MN", "Noto Sans Tamil", "Latha"]}
+  },
+  "line_height": 1.4,
+  "size_factor": 1.0,
+  "char_factor": 1.6
+}

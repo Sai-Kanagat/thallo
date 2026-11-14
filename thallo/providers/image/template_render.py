@@ -5,7 +5,7 @@ actually written, so the gate hashes real bytes. Every render passes the design 
 failing render raises `RenderRejected` carrying the FAIL report, and no file is kept.
 
 Settings (all optional): `brand_dir` (default: the fictional demo brand), `templates_dir`,
-`output_dir` (default: a `thallo-renders` folder in the system temp directory), `photo_dirs`,
+`output_dir` (default: the per-user `~/.cache/thallo/renders`, mode 0o700), `photo_dirs`,
 `language` (used when the request has no `_lang`), `chromium` (path to the browser).
 
 The provider is registered only on a machine where a Chromium binary is found (see
@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import stat
 import tempfile
 from decimal import Decimal
 from pathlib import Path
@@ -70,7 +71,7 @@ class TemplateRender:
         self.settings = settings or TemplateRenderSettings()
         self.renderer = renderer
         s = self.settings
-        self.output_dir = Path(s.output_dir) if s.output_dir else Path(tempfile.gettempdir()) / "thallo-renders"
+        self.output_dir = Path(s.output_dir) if s.output_dir else default_output_dir()
         self.brand_dir = Path(s.brand_dir) if s.brand_dir else DEMO_BRAND_DIR
 
     # ------------------------------------------------------------------ loading
@@ -154,12 +155,74 @@ class TemplateRender:
     # ------------------------------------------------------------------ internals
 
     def _write(self, sha: str, ext: str, data: bytes) -> Path:
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        final = self.output_dir / f"{sha}.{ext}"
-        tmp = self.output_dir / f".{sha}.{os.getpid()}.tmp"
-        tmp.write_bytes(data)
-        os.replace(tmp, final)
+        """Content-addressed write into a private folder. The temp file is created exclusively
+        inside that folder, the final name must not be a symlink, and the final file is read back
+        and re-hashed: the gate trusts the sha256 returned in MediaResult."""
+        folder = private_dir(self.output_dir)
+        final = folder / f"{sha}.{ext}"
+        if final.is_symlink():
+            raise RenderOutputError(f"refusing to write over a symlink: {final.name}")
+        with tempfile.NamedTemporaryFile(dir=folder, prefix=".render-", suffix=".tmp", delete=False) as fh:
+            tmp = Path(fh.name)
+            try:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+        try:
+            if final.is_symlink():
+                raise RenderOutputError(f"refusing to write over a symlink: {final.name}")
+            os.replace(tmp, final)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        if read_sha256(final) != sha:
+            final.unlink(missing_ok=True)
+            raise RenderOutputError(f"{final.name} does not hash to the bytes rendered; removed")
         return final
+
+
+class RenderOutputError(RuntimeError):
+    """The output folder or file is not safe to use. Nothing is returned for the gate to hash."""
+
+
+def default_output_dir(environ: dict[str, str] | None = None) -> Path:
+    """A per-user private folder, never a predictable path under the shared temp dir."""
+    env = os.environ if environ is None else environ
+    base = Path(env["XDG_CACHE_HOME"]) if env.get("XDG_CACHE_HOME") else Path.home() / ".cache"
+    return base / "thallo" / "renders"
+
+
+def private_dir(path: Path) -> Path:
+    """Create `path` with mode 0o700 if missing; refuse a symlink, a folder owned by someone
+    else, or one that group or others can open."""
+    path = Path(path)
+    if path.is_symlink():
+        raise RenderOutputError(f"output folder {path} is a symlink")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise RenderOutputError(f"output folder {path} is not a plain directory")
+    if st.st_uid != os.getuid():
+        raise RenderOutputError(f"output folder {path} is not owned by the current user")
+    if st.st_mode & 0o077:
+        raise RenderOutputError(f"output folder {path} is open to other users (mode {st.st_mode & 0o777:o})")
+    return path
+
+
+def read_sha256(path: Path) -> str:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    h = hashlib.sha256()
+    with os.fdopen(fd, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def create(ctx: ProviderContext) -> TemplateRender:

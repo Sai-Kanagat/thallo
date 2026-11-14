@@ -1,0 +1,11 @@
+{
+  "script": "latin",
+  "languages": ["en", "it"],
+  "fonts": {
+    "display": {"family": "Georgia", "local": ["Georgia", "DejaVu Serif", "Liberation Serif"], "weight": 700},
+    "body": {"family": "Helvetica Neue", "local": ["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans"]}
+  },
+  "line_height": 1.25,
+  "size_factor": 1.0,
+  "char_factor": 1.0
+}

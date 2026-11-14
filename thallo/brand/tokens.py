@@ -2,13 +2,13 @@
 
 A brand lives in one directory, outside this repository for real clients:
 
-    <brand_dir>/brand.json          colours, type scale, spacing, radii, logo rules, photo treatment
+    <brand_dir>/brand.json          colours, type scale, spacing, radii, logo rules, photo scrim
     <brand_dir>/script/latin.json   fonts and setting for en and it
     <brand_dir>/script/tamil.json   fonts and setting for ta
     <brand_dir>/<logo file>         the logo the brand supplied
 
 Type sizes and spacing are pixels at a 1080 px wide canvas; the renderer scales them by width.
-The only brand in the repository is the fictional demo under `brand_templates/brands/demo`.
+The only brand in the repository is the fictional demo under `brand_templates/demo`.
 """
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from thallo.contracts.enums import Language
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = REPO_ROOT / "brand_templates"
-DEMO_BRAND_DIR = TEMPLATES_DIR / "brands" / "demo"
+DEMO_BRAND_DIR = TEMPLATES_DIR / "demo"
+BRAND_FILE = "brand.json"
+DEMO_BRAND_FILE = "demo.brand.json"
 
 Script = Literal["latin", "tamil"]
 SCRIPT_FOR_LANGUAGE: dict[Language, Script] = {Language.EN: "latin", Language.IT: "latin", Language.TA: "tamil"}
@@ -171,9 +173,16 @@ def _read(path: Path) -> dict:
 
 
 def load_brand(brand_dir: str | Path) -> Brand:
+    """Reads `brand.json` (git-ignored in this repo, so a client's tokens never get committed).
+    The repo's own fixture is `demo.brand.json`, accepted only when it says `fictional: true`."""
     root = Path(brand_dir).resolve()
     try:
-        tokens = BrandTokens.model_validate(_read(root / "brand.json"))
+        if (root / BRAND_FILE).is_file():
+            tokens = BrandTokens.model_validate(_read(root / BRAND_FILE))
+        else:
+            tokens = BrandTokens.model_validate(_read(root / DEMO_BRAND_FILE))
+            if not tokens.fictional:
+                raise TokenError(f"{DEMO_BRAND_FILE} is only for fictional demo brands")
         scripts: dict[str, ScriptTokens] = {}
         for f in sorted((root / "script").glob("*.json")):
             st = ScriptTokens.model_validate(_read(f))
