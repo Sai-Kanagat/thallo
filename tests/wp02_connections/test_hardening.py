@@ -14,7 +14,7 @@ from thallo.connections import (
     VaultError,
     VaultKeyError,
 )
-from thallo.contracts.enums import Capability
+from thallo.contracts.enums import Capability, ConnectionMode
 
 from .conftest import T1, b64, new_key
 from .test_registry import TEXT, ids, register
@@ -138,11 +138,11 @@ def test_no_vault_secret_when_the_connection_store_fails(registry, providers, se
 
 def test_every_discovered_provider_passes_the_contract(providers):
     """Parametrised over what discovery finds, so a new provider file is covered with no test edit."""
-    from thallo.connections import ProviderContext
+    from thallo.connections import ProviderContext, ProviderUnavailable
     from thallo.contracts.clock import FAKE_EPOCH, FakeClock
     from thallo.contracts.models import Connection
     from thallo.contracts.testing.contract_suite import assert_provider_contract
-    from thallo.contracts.testing.samples import _id
+    from thallo.contracts.testing.samples import _id, sample_requests
 
     clock = FakeClock(FAKE_EPOCH)
     for cap in Capability:
@@ -153,8 +153,8 @@ def test_every_discovered_provider_passes_the_contract(providers):
             row = Connection(id=_id(98), created_at=clock.now(), tenant_id=T1, capability=cap, provider=name,
                              mode=entry.mode)
             prov = entry.factory(ProviderContext(T1, row, clock))
-            if prov.health().connected:
-                assert_provider_contract(prov, clock)
-            else:  # unusable here (no local browser, no brand): must say so the registry skips it
-                from .test_providers import _assert_reports_unavailable
+            from .test_providers import _assert_reports_unavailable, _is_unavailable
+            if _is_unavailable(prov, cap):  # must say so in a way the registry skips
                 _assert_reports_unavailable(prov, clock)
+                continue
+            assert_provider_contract(prov, clock)

@@ -5,8 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from thallo.connections import ProviderContext, ProviderRegistry
-from thallo.connections.errors import ProviderUnavailable
+from thallo.connections import ProviderContext, ProviderRegistry, ProviderUnavailable
 from thallo.contracts import connection as c
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import Capability, ConnectionMode, MessageChannel
@@ -45,10 +44,10 @@ def test_provider_passes_contract(providers, cap, name):
     clock = FakeClock(FAKE_EPOCH)
     entry = providers.get(cap, name)
     prov = entry.factory(_ctx(cap, name, entry.mode, clock))
-    if prov.health().connected:
-        assert_provider_contract(prov, clock)
-    else:
+    if _is_unavailable(prov, cap):
         _assert_reports_unavailable(prov, clock)
+        return  # its package's tests run the full contract against a configured connection
+    assert_provider_contract(prov, clock)
     assert prov.describe().mode is entry.mode
     if entry.mode in (ConnectionMode.MANUAL, ConnectionMode.MOCK):
         assert not prov.describe().sends_externally
@@ -72,6 +71,17 @@ def _assert_reports_unavailable(prov, clock):
             call(wrong)
     double = prov.mock()
     assert double.capability is prov.capability and double.describe().mode is ConnectionMode.MOCK
+
+
+def _is_unavailable(prov, cap) -> bool:
+    """Unusable with empty settings: health says not connected, or estimate refuses."""
+    if not prov.health().connected:
+        return True
+    try:
+        prov.estimate(sample_requests()[cap][0])
+    except ProviderUnavailable:
+        return True
+    return False
 
 
 @pytest.mark.parametrize("cap", list(Capability))
