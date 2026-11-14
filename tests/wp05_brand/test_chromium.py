@@ -21,7 +21,7 @@ from thallo.media.lint import RenderRejected, lint_layout, lint_static, parse_la
 from thallo.media.render import batch_viewport, compose, plan_job
 from thallo.providers.image.template_render import TemplateRender, TemplateRenderSettings
 
-from .conftest import DEMO, req
+from .conftest import T, demo, req
 
 
 def _png_size(data: bytes) -> tuple[int, int]:
@@ -34,9 +34,8 @@ def _file(result) -> bytes:
 
 
 @pytest.fixture
-def provider(chromium, tmp_path):
-    return TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(output_dir=str(tmp_path / "out")), chromium,
-                          **DEMO)
+def provider(chromium, brand_root):
+    return TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(), chromium, **demo(brand_root))
 
 
 def _lint_batch(chromium, brand, book, requests):
@@ -125,33 +124,31 @@ def test_real_overflow_fails(provider):
         provider.run(req("single-02", 1080, 1080, headline="Precipitevolissimevolmente"))
 
 
-def _brand_copy(tmp_path):
-    d = tmp_path / "brand"
+def _brand_copy(brand_root):
+    d = brand_root / T / "brand"  # the mock tenant's own brand folder under the operator root
     shutil.copytree(DEMO_BRAND_DIR, d)
     return d
 
 
-def test_real_low_contrast_fails(chromium, tmp_path):
-    d = _brand_copy(tmp_path)
+def test_real_low_contrast_fails(chromium, brand_root):
+    d = _brand_copy(brand_root)
     data = json.loads((d / "demo.brand.json").read_text())
     data["colors"]["muted"] = "#E8E0D4"  # nearly the paper colour
     (d / "demo.brand.json").write_text(json.dumps(data))
-    p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(brand_dir=str(d), output_dir=str(tmp_path / "o")),
-                       chromium, **DEMO)
+    p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(), chromium, **demo(brand_root))
     with pytest.raises(RenderRejected, match="design.contrast") as exc:
         p.run(req("quote-01", quote="Hello", attribution="Someone"))
     assert "attribution" in str(exc.value)
     assert load_brand(d).tokens.fictional
 
 
-def test_real_missing_font_fails(chromium, tmp_path):
-    d = _brand_copy(tmp_path)
+def test_real_missing_font_fails(chromium, brand_root):
+    d = _brand_copy(brand_root)
     path = d / "script" / "tamil.json"
     data = json.loads(path.read_text())
     data["fonts"]["body"]["local"] = ["No Such Font Thallo"]
     path.write_text(json.dumps(data))
-    p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(brand_dir=str(d), output_dir=str(tmp_path / "o")),
-                       chromium, **DEMO)
+    p = TemplateRender(FakeClock(FAKE_EPOCH), TemplateRenderSettings(), chromium, **demo(brand_root))
     with pytest.raises(RenderRejected, match="design.font_loaded"):
         p.run(req("quote-01", _lang="ta"))
 
@@ -165,13 +162,13 @@ def test_contract_suite_with_default_sample(provider):
     {"_output": "pdf"},
     {"s1.headline": "First", "s2.headline": "Second", "s3.headline": "Third", "_output": "pdf"},
 ], ids=["single", "carousel"])
-def test_pdf_hash_survives_a_later_re_render(chromium, tmp_path, slots):
+def test_pdf_hash_survives_a_later_re_render(chromium, brand_root, slots):
     """Chromium stamps PDFs with the wall-clock time. A re-render later, with the wall clock and
     the injected clock both moved on, must give the same bytes, so an approved hash holds."""
     import time
     from datetime import timedelta
     clock = FakeClock(FAKE_EPOCH)
-    p = TemplateRender(clock, TemplateRenderSettings(output_dir=str(tmp_path / "o")), chromium, **DEMO)
+    p = TemplateRender(clock, TemplateRenderSettings(), chromium, **demo(brand_root))
     ref = "carousel-02" if "s1.headline" in slots else "offer-01"
     first = p.run(req(ref, **slots))
     time.sleep(1.2)  # Chromium's PDF dates have one-second resolution

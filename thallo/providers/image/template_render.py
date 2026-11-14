@@ -4,14 +4,31 @@ Serves `ImageRequest(purpose="template_render")`. The result's sha256 is of the 
 actually written, so the gate hashes real bytes. Every render passes the design lint first; a
 failing render raises `RenderRejected` carrying the FAIL report, and no file is kept.
 
-Settings: `brand_dir` (required for a real tenant; without it only a mock tenant gets the
-fictional demo brand), `templates_dir`, `output_dir` (default: the per-user
-`~/.cache/thallo/renders`, mode 0o700), `photo_dirs`, `language` (used when the request has no
-`_lang`), `chromium` (path to the browser).
+Connection settings are tenant-writable (the connections screen exposes them), so they name no
+binary, no path and no host. The one setting is `language` (used when the request has no `_lang`).
+
+Operator configuration, in the environment only:
+    THALLO_CHROMIUM     the browser binary; without it `find_chromium()` looks on this machine
+    THALLO_BRAND_ROOT   an absolute directory the operator owns, one folder per tenant id:
+        <root>/<tenant_id>/brand/       the tenant's brand (tokens, script tokens, logo, fonts)
+        <root>/<tenant_id>/templates/   optional; the repository templates when absent
+        <root>/<tenant_id>/photos/      optional; photos a request may name
+        <root>/<tenant_id>/renders/     the output, created with mode 0o700
+Each of those is resolved (symlinks followed) and must sit inside that tenant's own folder, and
+the tenant folder itself must be a plain directory directly under the root. A tenant id that is
+not a plain folder name is refused. With THALLO_BRAND_ROOT unset or unusable, the provider is
+unavailable for every tenant, so the chain falls through to manual.
+
+A connection row that still carries a removed setting (`chromium`, `brand_dir`, `templates_dir`,
+`output_dir`, `photo_dirs`) is never used: the factory logs a warning and the provider reports
+itself unavailable.
 
 A brand marked `fictional` is refused unless the tenant is a mock tenant, by the registry's own
-rule (`mock_tenants`, or THALLO_ALLOW_MOCK=1). The factory only sees the environment half of it;
-a caller holding the `ConnectionRegistry` passes `mock_tenants` to the constructor.
+rule (`mock_tenants`, or THALLO_ALLOW_MOCK=1). A mock tenant with no brand folder gets the
+fictional demo brand. The `fictional` flag is read from the brand's own tokens file; that file is
+operator data, because every brand folder now sits under the operator's root and no tenant
+setting can point elsewhere. The factory only sees the environment half of the mock rule; a
+caller holding the `ConnectionRegistry` passes `mock_tenants` to the constructor.
 
 The provider is always registered. On a machine with no Chromium, `health()` and `estimate()`
 report it unavailable, so the registry skips it and the chain falls through to manual.
@@ -21,17 +38,19 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Collection, Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from thallo.brand.templates import TemplateBook, default_templates, load_templates
 from thallo.brand.tokens import DEMO_BRAND_DIR, Brand, TokenError, load_brand
-from thallo.connections.errors import ProviderUnavailable
+from thallo.connections.errors import InvalidConnection, ProviderUnavailable
 from thallo.connections.registry import ALLOW_MOCK_ENV, ProviderContext, ProviderRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.clock import Clock
@@ -60,17 +79,60 @@ log = logging.getLogger(__name__)
 NAME = "template_render"
 CAPABILITY = Capability.IMAGE
 ESTIMATE_SECONDS = 2.0
+BRAND_ROOT_ENV = "THALLO_BRAND_ROOT"
+CHROMIUM_ENV = "THALLO_CHROMIUM"
+REMOVED_SETTINGS = frozenset({"chromium", "brand_dir", "templates_dir", "output_dir", "photo_dirs"})
+TENANT_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")  # one plain folder name, never . or ..
 
 
 class TemplateRenderSettings(BaseModel):
+    """Tenant-writable: nothing here may name a binary, a path or a host."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    brand_dir: str | None = None
-    templates_dir: str | None = None
-    output_dir: str | None = None
-    photo_dirs: tuple[str, ...] = ()
     language: Language = Language.EN
-    chromium: str | None = None
+
+
+@dataclass(frozen=True)
+class TenantPaths:
+    """One tenant's folders under the operator's root, each resolved and inside `root`."""
+
+    root: Path
+    brand: Path | None
+    templates: Path | None
+    photos: Path | None
+    output: Path
+
+
+def tenant_paths(tenant_id: str | None, environ: Mapping[str, str]) -> TenantPaths:
+    """The tenant's folders under THALLO_BRAND_ROOT. Raises `BrandMisconfigured` (so the
+    provider is unavailable) when the root is unset or unusable, the tenant id is not a plain
+    folder name, the tenant folder is not a plain directory directly under the root, or a
+    sub-folder resolves outside the tenant's folder."""
+    raw = environ.get(BRAND_ROOT_ENV, "")
+    if not raw:
+        raise BrandMisconfigured(f"{BRAND_ROOT_ENV} is not set; the operator gives each tenant a brand folder")
+    base = Path(raw)
+    if not base.is_absolute() or not base.is_dir():
+        raise BrandMisconfigured(f"{BRAND_ROOT_ENV} must be an absolute path to an existing directory")
+    base = base.resolve()
+    if tenant_id is None or not TENANT_SEGMENT.match(tenant_id):
+        raise BrandMisconfigured("the tenant id is not a plain folder name")
+    root = base / tenant_id
+    if os.path.lexists(root) and (root.is_symlink() or not root.is_dir() or root.resolve() != root):
+        raise BrandMisconfigured("the tenant folder must be a plain directory directly under the brand root")
+
+    def inside(name: str) -> Path | None:
+        p = root / name
+        if not os.path.lexists(p):
+            return None
+        real = p.resolve()
+        if not real.is_relative_to(root) or not real.is_dir():
+            raise BrandMisconfigured(f"the tenant's {name} folder resolves outside the tenant folder")
+        return real
+
+    return TenantPaths(root=root, brand=inside("brand"), templates=inside("templates"), photos=inside("photos"),
+                       output=root / "renders")
 
 
 class TemplateRender:
@@ -79,40 +141,58 @@ class TemplateRender:
 
     def __init__(self, clock: Clock, settings: TemplateRenderSettings | None = None,
                  renderer: Renderer | None = None, *, tenant_id: str | None = None,
-                 mock_tenants: Collection[str] = (), environ: Mapping[str, str] | None = None) -> None:
-        """`tenant_id` is the connection's tenant (what `health()` judges); `mock_tenants` and
-        `environ` are the registry's mock rule, the same arguments `ConnectionRegistry` takes."""
+                 mock_tenants: Collection[str] = (), environ: Mapping[str, str] | None = None,
+                 problem: str | None = None) -> None:
+        """`tenant_id` is the connection's tenant: what `health()` judges, and the only tenant
+        this provider serves. `mock_tenants` and `environ` are the registry's mock rule, the same
+        arguments `ConnectionRegistry` takes; `environ` also carries THALLO_BRAND_ROOT.
+        `problem`, when set, makes the provider unavailable (settings the factory refused)."""
         self.clock = clock
         self.settings = settings or TemplateRenderSettings()
         self.renderer = renderer
         self.tenant_id = tenant_id
         self.mock_tenants = frozenset(mock_tenants)
-        self._allow_mock_everywhere = (os.environ if environ is None else environ).get(ALLOW_MOCK_ENV) == "1"
-        s = self.settings
-        self.output_dir = Path(s.output_dir) if s.output_dir else default_output_dir()
-        self.brand_dir = Path(s.brand_dir) if s.brand_dir else None
+        self.environ: Mapping[str, str] = dict(os.environ if environ is None else environ)
+        self._allow_mock_everywhere = self.environ.get(ALLOW_MOCK_ENV) == "1"
+        self.problem = problem
 
     def mock_allowed(self, tenant_id: str | None) -> bool:
         """`ConnectionRegistry.mock_allowed`, applied to the brand."""
         return self._allow_mock_everywhere or (tenant_id is not None and tenant_id in self.mock_tenants)
 
+    def paths(self, tenant_id: str | None = None) -> TenantPaths:
+        """The folders for `tenant_id` (default: the connection's tenant). A request for another
+        tenant than the connection's is refused outright."""
+        if self.problem is not None:
+            raise BrandMisconfigured(self.problem)
+        if tenant_id is None:
+            tenant_id = self.tenant_id
+        elif self.tenant_id is not None and tenant_id != self.tenant_id:
+            raise InvalidConnection("this connection belongs to another tenant")
+        return tenant_paths(tenant_id, self.environ)
+
+    @property
+    def output_dir(self) -> Path:
+        return self.paths().output
+
     # ------------------------------------------------------------------ loading
 
-    def _brand(self, tenant_id: str | None) -> Brand:
-        """The tenant's brand. A real tenant must name its `brand_dir`, and may never render a
-        brand marked fictional: a real post must not silently carry the demo brand."""
+    def _brand(self, paths: TenantPaths, tenant_id: str | None) -> Brand:
+        """The tenant's brand, from its folder under the operator's root. A real tenant must have
+        one, and may never render a brand marked fictional: a real post must not silently carry
+        the demo brand."""
         mock = self.mock_allowed(tenant_id)
-        if self.brand_dir is None:
+        if paths.brand is None:
             if not mock:
-                raise BrandMisconfigured("no brand_dir set for this tenant; the demo brand is only for mock tenants")
+                raise BrandMisconfigured("this tenant has no brand folder; the demo brand is only for mock tenants")
             return load_brand(DEMO_BRAND_DIR)
-        brand = load_brand(self.brand_dir)
+        brand = load_brand(paths.brand)
         if brand.tokens.fictional and not mock:
             raise BrandMisconfigured(f"brand {brand.tokens.brand!r} is marked fictional; only a mock tenant may use it")
         return brand
 
-    def _book(self) -> TemplateBook:
-        return load_templates(self.settings.templates_dir) if self.settings.templates_dir else default_templates()
+    def _book(self, paths: TenantPaths) -> TemplateBook:
+        return load_templates(paths.templates) if paths.templates is not None else default_templates()
 
     # ------------------------------------------------------------------ the five calls
 
@@ -129,8 +209,9 @@ class TemplateRender:
         if self.renderer is None:
             return c.Health(connected=False, checked_at=self.clock.now(), detail="no headless Chromium found")
         try:
-            self._brand(self.tenant_id)
-            self._book()
+            paths = self.paths()
+            self._brand(paths, self.tenant_id)
+            self._book(paths)
         except BrandMisconfigured as exc:
             return c.Health(connected=False, checked_at=self.clock.now(), detail=f"misconfigured: {exc}")
         except TokenError as exc:
@@ -145,7 +226,7 @@ class TemplateRender:
         if self.renderer is None:
             raise ProviderUnavailable("no headless Chromium on this machine")
         try:
-            self._brand(request.tenant_id)
+            self._brand(self.paths(request.tenant_id), request.tenant_id)
         except BrandMisconfigured as exc:
             raise ProviderUnavailable(f"misconfigured: {exc}") from None
         except TokenError:
@@ -156,10 +237,11 @@ class TemplateRender:
         c.check_request(self, request)  # type: ignore[arg-type]
         c.check_cap(self.estimate(request), request)
         assert isinstance(request, c.ImageRequest) and self.renderer is not None
+        paths = self.paths(request.tenant_id)  # BrandMisconfigured is not caught: it is no lint verdict
         try:
-            brand = self._brand(request.tenant_id)  # BrandMisconfigured is not caught: it is no lint verdict
-            book = self._book()
-            photo_roots = [Path(p) for p in self.settings.photo_dirs] + [brand.root]
+            brand = self._brand(paths, request.tenant_id)
+            book = self._book(paths)
+            photo_roots = ([paths.photos] if paths.photos is not None else []) + [brand.root]
             job = plan_job(request, brand=brand, book=book, default_language=self.settings.language,
                            photo_roots=photo_roots)
         except (PlanError, TokenError) as exc:
@@ -178,7 +260,7 @@ class TemplateRender:
             raise RenderRejected(report)  # the bytes are dropped; nothing was written
         data = rendered.data
         sha = hashlib.sha256(data).hexdigest()
-        path = self._write(sha, job.output, data)
+        path = self._write(paths.output, sha, job.output, data)
         pdf = job.output == "pdf"
         media = c.MediaResult(kind=MediaKind.PDF if pdf else MediaKind.IMAGE, sha256=sha,
                               mime="application/pdf" if pdf else "image/png", storage_uri=path.as_uri(),
@@ -199,11 +281,11 @@ class TemplateRender:
 
     # ------------------------------------------------------------------ internals
 
-    def _write(self, sha: str, ext: str, data: bytes) -> Path:
+    def _write(self, output: Path, sha: str, ext: str, data: bytes) -> Path:
         """Content-addressed write into a private folder. The temp file is created exclusively
         inside that folder, the final name must not be a symlink, and the final file is read back
         and re-hashed: the gate trusts the sha256 returned in MediaResult."""
-        folder = private_dir(self.output_dir)
+        folder = private_dir(output)
         final = folder / f"{sha}.{ext}"
         if final.is_symlink():
             raise RenderOutputError(f"refusing to write over a symlink: {final.name}")
@@ -230,19 +312,12 @@ class TemplateRender:
 
 
 class BrandMisconfigured(ProviderUnavailable):
-    """No brand for a real tenant, or a fictional brand for one. Raised from `run()`, it stops
-    the chain like any other error from inside a provider's run."""
+    """No usable brand root, no brand for a real tenant, or a fictional brand for one. Raised
+    from `run()`, it stops the chain like any other error from inside a provider's run."""
 
 
 class RenderOutputError(RuntimeError):
     """The output folder or file is not safe to use. Nothing is returned for the gate to hash."""
-
-
-def default_output_dir(environ: dict[str, str] | None = None) -> Path:
-    """A per-user private folder, never a predictable path under the shared temp dir."""
-    env = os.environ if environ is None else environ
-    base = Path(env["XDG_CACHE_HOME"]) if env.get("XDG_CACHE_HOME") else Path.home() / ".cache"
-    return base / "thallo" / "renders"
 
 
 def private_dir(path: Path) -> Path:
@@ -276,12 +351,24 @@ def read_sha256(path: Path) -> str:
 
 
 def create(ctx: ProviderContext) -> TemplateRender:
-    settings = TemplateRenderSettings.model_validate(ctx.connection.settings or {})
-    binary = Path(settings.chromium) if settings.chromium else find_chromium()
+    """The browser comes from operator configuration only (THALLO_CHROMIUM or `find_chromium()`),
+    never from the connection row. A row whose settings this schema does not accept (above all
+    a removed path or binary setting) is never used: the provider reports itself unavailable."""
+    raw = dict(ctx.connection.settings or {})
+    problem = None
+    try:
+        settings = TemplateRenderSettings.model_validate(raw)
+    except ValidationError:
+        settings = TemplateRenderSettings()
+        removed = sorted(REMOVED_SETTINGS & raw.keys())
+        problem = (f"the connection settings carry keys that are no longer accepted: {removed}" if removed
+                   else "the connection settings do not match this provider's schema")
+        log.warning("template_render: connection %s refused: %s", ctx.connection.id, problem)
+    binary = find_chromium()
     renderer = ChromiumRenderer(binary) if binary and binary.is_file() else None
     if renderer is None:
-        log.info("template_render: no headless Chromium found (set THALLO_CHROMIUM); reporting unavailable")
-    return TemplateRender(ctx.clock, settings, renderer, tenant_id=ctx.tenant_id)
+        log.info("template_render: no headless Chromium found (set %s); reporting unavailable", CHROMIUM_ENV)
+    return TemplateRender(ctx.clock, settings, renderer, tenant_id=ctx.tenant_id, problem=problem)
 
 
 def register(registry: ProviderRegistry) -> None:
