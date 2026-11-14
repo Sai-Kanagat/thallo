@@ -16,6 +16,7 @@ from thallo.contracts.models import Brief, Tenant
 from thallo.contracts.states import VariantState
 from thallo.contracts.testing.samples import T, _id
 from thallo.copy import CopyStatus, SlopKind, cost_cap_eur, find_slop, produce_copy, write_outcome
+from thallo.gate import VariantContent, review_checks, variant_hash
 from thallo.providers.text import claude, gemini, openai_compatible
 from thallo.providers.text.base import USD_TO_EUR, HttpReply
 from thallo.truth import new_candidate, verify_claim
@@ -154,6 +155,30 @@ def test_repair_feeds_findings_back_as_data(produce):
     assert (2, "truth.compile.digit", CheckVerdict.PASS) in rows  # closed, so the latest attempt is clean
     assert (2, "truth.compile", CheckVerdict.PASS) in rows
     assert "compiled on attempt 2" in out.asset.selection_reason
+
+
+def test_rows_are_bound_to_the_content_each_attempt_produced(produce, price):
+    """The repaired variant's rows carry the gate's hash of the stored variant, so its PASS counts and
+    the first attempt's FAIL (another text, another hash) does not."""
+    out, _ = produce(DIGIT, CLEAN, candidates=1)
+    stored = VariantContent(variant=out.variant, claims=(price,))  # what the gate loads: no media, no links
+    final = variant_hash(stored, lambda url: None)
+    by_attempt: dict[int, set[str]] = {}
+    for r in out.check_results:
+        by_attempt.setdefault(r.attempt, set()).add(r.content_sha256)
+    assert by_attempt[2] == {final} and len(by_attempt[1]) == 1 and by_attempt[1] != {final}
+    review = review_checks(out.check_results, tenant_id=out.variant.tenant_id, hashes={out.variant.id: final})
+    assert not review.failing and not review.flags and not review.unchecked
+    first = next(iter(by_attempt[1]))
+    review = review_checks(out.check_results, tenant_id=out.variant.tenant_id, hashes={out.variant.id: first})
+    assert review.failing  # the first draft's FAIL still describes the first draft
+
+
+def test_a_variant_sent_to_a_person_keeps_its_fail_bound_to_its_own_text(produce):
+    out, _ = produce(*[DIGIT] * 12)
+    final = variant_hash(VariantContent(variant=out.variant), lambda url: None)
+    review = review_checks(out.check_results, tenant_id=out.variant.tenant_id, hashes={out.variant.id: final})
+    assert review.failing and not review.unchecked  # the same text at every attempt: the FAIL counts
 
 
 def test_three_repair_loops_then_a_person_with_the_check_named(produce):
