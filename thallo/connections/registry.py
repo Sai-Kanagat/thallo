@@ -133,13 +133,34 @@ class Served:
     skipped: tuple[tuple[str, str], ...] = ()  # (connection id, reason)
 
 
-class CostOverCapAfterRun(c.CostCapExceeded):
+class CostOverCapAfterRun(Exception):  # noqa: N818 - the name callers already import
     """The provider ran and then reported a cost over the cap. The call was made and billed, so
-    the served result travels with the refusal for the caller's cost ledger."""
+    the served result travels with the refusal for the caller's cost ledger.
+
+    Deliberately not a `CostCapExceeded` (which means "refused before spending") and not a
+    `ConnectionsError`: a handler written for either of those must not absorb a billed call.
+    The registry has no ledger (the cost ledger sits above every connection and is written by
+    the caller, in the caller's own transaction), so every caller of `ConnectionRegistry.run`
+    that passes a `cost_cap_eur` handles this one by name and records `served` exactly once:
+
+        try:
+            served = registry.run(tenant_id, request)
+        except CostOverCapAfterRun as exc:
+            ledger.record(exc.served)  # billed: the one row for this call
+            raise Stop("over the cap after the call") from None
+        except c.CostCapExceeded:
+            raise Stop("over the cap, nothing spent") from None
+        ledger.record(served)
+
+    The registry also logs a warning when it raises this, so an unhandled one is never silent."""
 
     def __init__(self, message: str, served: Served) -> None:
         super().__init__(message)
         self.served = served
+
+    @property
+    def cost_eur(self) -> Decimal:
+        return self.served.result.cost_eur
 
 
 class ConnectionRegistry:
@@ -310,7 +331,10 @@ class ConnectionRegistry:
         `estimate()`) or when it was last seen unhealthy. Anything raised from inside a provider's
         `run()`, `CostCapExceeded` and `ProviderUnavailable` included, stops the chain: the provider
         may already have reached a third party, and a second send could duplicate it. A request
-        needs an idempotency key so a retry by the caller is safe."""
+        needs an idempotency key so a retry by the caller is safe.
+
+        A result whose cost is over `cost_cap_eur` raises `CostOverCapAfterRun` carrying the
+        served result: it was billed, and the caller writes its ledger row (see that class)."""
         if not request.idempotency_key:
             raise InvalidConnection("a request passed down the chain needs an idempotency_key")
         role = request.role if isinstance(request, c.TextRequest) else None
@@ -335,6 +359,8 @@ class ConnectionRegistry:
             result = provider.run(request)
             served = Served(cid, row.provider, row.mode, result, tuple(skipped))
             if request.cost_cap_eur is not None and result.cost_eur > request.cost_cap_eur:
+                log.warning("connection %s (%s) was billed %s EUR, over the %s EUR cap; the caller must "
+                            "record it", cid, row.provider, result.cost_eur, request.cost_cap_eur)
                 raise CostOverCapAfterRun(f"connection {cid} reported a cost over the cap", served)
             return served
         raise NoConnection(f"no connection could serve {request.capability.value}: {skipped}")

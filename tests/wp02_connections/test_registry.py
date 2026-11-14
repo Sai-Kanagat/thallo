@@ -290,8 +290,11 @@ def test_run_refuses_a_result_that_cost_more_than_the_cap(registry, providers):
     register(providers, "liar", "overspend")
     registry.add(T1, TEXT, "liar")
     capped = req().model_copy(update={"cost_cap_eur": Decimal(1)})
-    with pytest.raises(c.CostCapExceeded):
+    from thallo.connections.registry import CostOverCapAfterRun
+    with pytest.raises(CostOverCapAfterRun) as exc:
         registry.run(T1, capped)
+    assert not isinstance(exc.value, c.CostCapExceeded)  # billed, so not "refused before spending"
+    assert exc.value.served.provider == "liar" and exc.value.cost_eur == Decimal(9)
 
 
 def test_run_falls_back_on_cost_cap_before_spending(registry, providers):
