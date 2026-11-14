@@ -14,7 +14,7 @@ from thallo.connections import (
     VaultError,
     VaultKeyError,
 )
-from thallo.contracts.enums import Capability, ConnectionMode
+from thallo.contracts.enums import Capability
 
 from .conftest import T1, b64, new_key
 from .test_registry import TEXT, ids, register
@@ -138,11 +138,11 @@ def test_no_vault_secret_when_the_connection_store_fails(registry, providers, se
 
 def test_every_discovered_provider_passes_the_contract(providers):
     """Parametrised over what discovery finds, so a new provider file is covered with no test edit."""
-    from thallo.connections import ProviderContext, ProviderUnavailable
+    from thallo.connections import ProviderContext
     from thallo.contracts.clock import FAKE_EPOCH, FakeClock
     from thallo.contracts.models import Connection
     from thallo.contracts.testing.contract_suite import assert_provider_contract
-    from thallo.contracts.testing.samples import _id, sample_requests
+    from thallo.contracts.testing.samples import _id
 
     clock = FakeClock(FAKE_EPOCH)
     for cap in Capability:
