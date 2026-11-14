@@ -197,6 +197,7 @@ def test_tracked_links_of_the_variant_are_bound(world):
 
 def test_approval_and_publish_resolve_through_the_same_repository(world):
     content = world.content()
+    world.code_check()
     shown = bundle_hash(content, lambda u: world.resolve_link(world.tenant.id, u)).root
     change = approve_bundle_from_repo(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id,
                                       actor=world.human(), verifier=world.verifier(), shown_hash=shown,
@@ -215,6 +216,7 @@ def test_bundle_hash_requires_a_resolver(world):
 
 def test_grant_returns_the_rows_and_audit_entries_without_writing_them(world):
     content = world.content()
+    world.code_check()
     shown = bundle_hash(content, world.links.get).root
     change = approve_bundle_from_repo(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id,
                                       actor=world.human(), verifier=world.verifier(), shown_hash=shown,

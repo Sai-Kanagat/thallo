@@ -22,7 +22,7 @@ from thallo.contracts.models import (
     Variant,
     VariantMedia,
 )
-from thallo.gate.canonical import BundleContent, MediaItem, VariantContent
+from thallo.gate.canonical import BundleContent, MediaItem, VariantContent, build_snapshot
 
 
 class GateRepository(Protocol):
@@ -62,8 +62,9 @@ class GateRepository(Protocol):
         """Audit entries about one subject, for example ("approval", approval_id)."""
         ...
 
-    def get_check_results(self, tenant_id: str, variant_id: str) -> Sequence[CheckResult]:
-        """Every check_result row for this variant, all attempts."""
+    def get_check_results(self, tenant_id: str, variant_id: str, content_sha256: str) -> Sequence[CheckResult]:
+        """Every check_result row for this variant about this content hash, all attempts. The gate
+        filters again, so a repository that returns more rows weakens nothing."""
         ...
 
     def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:
@@ -109,4 +110,17 @@ def load_bundle(repo: GateRepository, tenant_id: str, bundle: Bundle) -> BundleC
     return BundleContent(bundle=bundle, variants=tuple(variants))
 
 
-__all__ = ["GateRepository", "MediaUnreadable", "load_bundle"]
+def content_hashes(repo: GateRepository, tenant_id: str, bundle_id: str) -> dict[str, str]:
+    """Each variant's current leaf hash, exactly as approval computes it: loaded through
+    `load_bundle`, resolved with the repository's links and non-link allowlist. A check writer
+    with a repository (the WP-07 check stack) puts this value in `check_result.content_sha256`."""
+    bundle = repo.get_bundle(tenant_id, bundle_id)
+    if bundle is None:
+        raise LookupError("bundle not found")
+    content = load_bundle(repo, tenant_id, bundle)
+    snapshot = build_snapshot(content, lambda url: repo.resolve_link(tenant_id, url),
+                              frozenset(repo.non_link_allowlist(tenant_id)))
+    return dict(snapshot.hash.variants)
+
+
+__all__ = ["GateRepository", "MediaUnreadable", "content_hashes", "load_bundle"]

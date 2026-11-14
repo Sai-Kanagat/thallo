@@ -58,6 +58,7 @@ from thallo.gate import (
     BlockReason,
     approve_bundle_from_repo,
     check_publish,
+    content_hashes,
     load_bundle,
     void_bundle_approvals,
 )
@@ -120,9 +121,10 @@ def _id(b) -> str:
     return new_id(b.clock)
 
 
-def seed(b, name: str) -> Shop:
+def seed(b, name: str, *, checks: bool = True) -> Shop:
     """Operator, tenant, founder, source, verified claim, compiled copy with one flag, the check
-    rows, an asset, a bundle in review with one variant, one image on the blob store, a tracked link."""
+    rows (unless `checks` is False), an asset, a bundle in review with one variant, one image on the
+    blob store, a tracked link."""
     clock = b.clock
     now = clock.now()
     operator = Operator(id=_id(b), created_at=now, name=f"op {name}")
@@ -167,11 +169,6 @@ def seed(b, name: str) -> Shop:
                                    channel=Channel.INSTAGRAM, language=Language.IT, state=VariantState.REVIEW,
                                    text=built.compiled.text, rendered_text=built.filled.text,
                                    task_type="offer_post"))
-        rows = to_check_results(built.compiled, variant_id=variant.id, clock=clock)
-        for row in rows:
-            s.insert(row)
-        flag_ids = [r.id for r in rows if r.verdict is CheckVerdict.FLAG]
-        assert len(flag_ids) == 1
         for claim_id in built.compiled.claim_ids:
             s.insert(VariantClaim(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, claim_id=claim_id))
         blob_name = "hero.png"
@@ -182,6 +179,15 @@ def seed(b, name: str) -> Shop:
         s.insert(VariantMedia(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, media_id=media.id))
         s.insert(TrackedLink(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, slug=slug,
                              destination=DESTINATION))
+        # The code checks run on the finished variant, bound to the hash the gate computes for it.
+        sha = content_hashes(s.gate, t, bundle.id)[variant.id]
+        rows = to_check_results(built.compiled, variant_id=variant.id, content_sha256=sha, clock=clock)
+        flag_ids: list[str] = []
+        if checks:
+            for row in rows:
+                s.insert(row)
+            flag_ids = [r.id for r in rows if r.verdict is CheckVerdict.FLAG]
+            assert len(flag_ids) == 1
     return Shop(tenant=tenant, founder=founder, human=human, verifier=verifier, claim=claim, bundle=bundle,
                 variant=variant, media=media, blob_name=blob_name, flag_ids=flag_ids)
 
@@ -307,7 +313,7 @@ def add_check(b, shop: Shop, verdict: CheckVerdict, *, attempt: int, like_flag: 
         row = s.insert(CheckResult(
             id=_id(b), created_at=b.clock.now(), tenant_id=t, variant_id=shop.variant.id, layer=seeded.layer,
             check_name=seeded.check_name if like_flag else "truth.compile.other", verdict=verdict,
-            reason=f"{verdict.value} at attempt {attempt}", attempt=attempt))
+            reason=f"{verdict.value} at attempt {attempt}", attempt=attempt, content_sha256=seeded.content_sha256))
     return row.id
 
 

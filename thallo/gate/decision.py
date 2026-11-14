@@ -4,7 +4,9 @@
 evidence (the approver's user row and the audited grant), the tenant, the global pause and the
 time, it returns allow or block with every reason found. `check_publish` loads all of that
 through a `GateRepository` and calls `decide`. It never raises: any repository or hashing
-failure is a block.
+failure is a block. Publish also re-reads the check results for the exact content hash of the
+payload and blocks on a FAIL, on no CODE-layer result for that content, and on any read error
+(gate/checks.py).
 
 The publisher (WP-08) calls `check_publish` immediately before sending and sends exactly
 `decision.payload`: hash the bytes it uploads, compare them to the payload, and block on any
@@ -39,6 +41,7 @@ from thallo.gate.canonical import (
     has_unrendered_slot,
     outgoing_text,
 )
+from thallo.gate.checks import CheckReader, review_checks
 from thallo.gate.consent import consent_problem
 from thallo.gate.repository import GateRepository, MediaUnreadable, load_bundle
 from thallo.gate.signing import GateKeyMissing, GateSigner, grant_fields
@@ -82,6 +85,9 @@ class BlockReason(StrEnum):
     REPO_ERROR = "repo_error"
     SPEND_OVER_CAP = "spend_over_cap"
     SPEND_INVALID = "spend_invalid"
+    CHECK_FAILED = "check_failed"
+    NOT_CHECKED = "not_checked"
+    CHECKS_UNREADABLE = "checks_unreadable"
 
 
 PUBLISHABLE_VARIANT_STATES = frozenset({
@@ -264,10 +270,33 @@ def _approval_blocks(evidence: ApprovalEvidence | None, bundle: Bundle, now: dat
     return out
 
 
+def _check_blocks(payload: PublishPayload, *, tenant_id: str, check_reader: CheckReader | None) -> list[Block]:
+    """Re-read the check results for exactly the content being sent (gate/checks.py). A missing
+    reader or a read that raises blocks: publish fails closed."""
+    if check_reader is None:
+        return [Block(BlockReason.CHECKS_UNREADABLE, "check results were not read")]
+    want = payload.variant_hash
+    try:
+        rows = list(check_reader(tenant_id, payload.variant_id, want))
+        review = review_checks(rows, tenant_id=tenant_id, hashes={payload.variant_id: want})
+    except Exception as exc:  # any read failure blocks; it never passes
+        return [Block(BlockReason.CHECKS_UNREADABLE, f"{type(exc).__name__}: {exc}")]
+    out: list[Block] = []
+    if review.unchecked:
+        out.append(Block(BlockReason.NOT_CHECKED, "no code check result for the content being sent"))
+    if review.failing:
+        out.append(Block(BlockReason.CHECK_FAILED, f"check(s) FAIL for this content: {sorted(review.failing)}"))
+    # A FLAG raised after the grant blocks nothing here (AUDIT.md): flags are settled at approval.
+    return out
+
+
 def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant: Tenant, variant_id: str,
            now: datetime, system_paused: bool, resolver: LinkResolver, signer: GateSigner | None,
-           non_links: frozenset[str] = frozenset(), spend: SpendCheck | None = None) -> GateDecision:
-    """Allow only if nothing blocks. Every block found is returned, canary first. Never raises."""
+           non_links: frozenset[str] = frozenset(), spend: SpendCheck | None = None,
+           check_reader: CheckReader | None = None) -> GateDecision:
+    """Allow only if nothing blocks. Every block found is returned, canary first. Never raises.
+    `check_reader` reads one variant's check results for one content hash (the repository's
+    `get_check_results`); without it publish blocks."""
     bundle = content.bundle
     approval = evidence.approval if evidence is not None else None
     blocks: list[Block] = []
@@ -316,6 +345,8 @@ def decide(content: BundleContent, evidence: ApprovalEvidence | None, *, tenant:
     if payload is not None and (hashed is None or payload.variant_hash != hashed.variants.get(variant_id)):
         blocks.append(Block(BlockReason.PAYLOAD_MISMATCH, "the payload is not the content that was hashed"))
     blocks += [Block(BlockReason.UNRESOLVED_LINK, f"link {url} does not resolve") for url in unresolved_urls]
+    if payload is not None:
+        blocks += _check_blocks(payload, tenant_id=bundle.tenant_id, check_reader=check_reader)
 
     blocks += _spend_blocks(spend)
 
@@ -375,7 +406,7 @@ def check_publish(repo: GateRepository, *, tenant_id: str, bundle_id: str, varia
     try:
         return decide(content, evidence, tenant=tenant, variant_id=variant_id, now=now, system_paused=paused,
                       resolver=lambda url: repo.resolve_link(tenant_id, url), signer=signer,
-                      non_links=non_links, spend=spend)
+                      non_links=non_links, spend=spend, check_reader=repo.get_check_results)
     except Exception as exc:  # belt and braces: decide does not raise, but if it ever does, block
         return blocked(BlockReason.UNHASHABLE, f"{type(exc).__name__}: {exc}")
 

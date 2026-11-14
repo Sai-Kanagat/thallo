@@ -76,7 +76,7 @@ def test_static_failure_raises_and_writes_nothing(provider, out, clock):
         provider.run(req("quote-01", quote="x" * 500, attribution="A"))
     assert not out.exists() or not any(out.iterdir())
     assert provider.renderer.calls == []  # never reached the browser
-    rows = to_check_results(exc.value.report, tenant_id=T, variant_id=V, clock=clock)
+    rows = to_check_results(exc.value.report, tenant_id=T, variant_id=V, content_sha256="0f" * 32, clock=clock)
     assert any(r.check_name == "design.slots" and r.verdict is CheckVerdict.FAIL for r in rows)
     assert all(r.verdict is not CheckVerdict.FLAG for r in rows)
 

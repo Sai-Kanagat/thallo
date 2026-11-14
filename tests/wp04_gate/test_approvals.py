@@ -26,6 +26,7 @@ def call(world, **over):
               method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=37.5, clock=world.clock, audit=world.audit,
               resolver=world.links.get, approver=world.users[world.user_id], signer=world.signer)
     kw.update(over)
+    kw.setdefault("check_results", world.code_check())  # the code checks ran on the current content
     return approve_bundle(content, **kw)
 
 

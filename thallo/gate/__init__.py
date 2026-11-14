@@ -27,7 +27,9 @@ from thallo.gate.canonical import (
     bundle_hash,
     canonical_text,
     find_unresolved_links,
+    variant_hash,
 )
+from thallo.gate.checks import CheckReader, CheckReview, review_checks
 from thallo.gate.decision import (
     ApprovalEvidence,
     Block,
@@ -38,10 +40,15 @@ from thallo.gate.decision import (
     decide,
 )
 from thallo.gate.legacy import Gate, content_hash
-from thallo.gate.repository import GateRepository, MediaUnreadable, load_bundle
+from thallo.gate.repository import GateRepository, MediaUnreadable, content_hashes, load_bundle
 from thallo.gate.signing import ENV_KEY, GateKeyMissing, GateSigner
 
 __all__ = [
+    "CheckReader",
+    "CheckReview",
+    "content_hashes",
+    "review_checks",
+    "variant_hash",
     "ENV_KEY",
     "GateKeyMissing",
     "GateSigner",

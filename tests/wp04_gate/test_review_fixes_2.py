@@ -287,7 +287,8 @@ def test_resolver_is_called_once_per_link_and_payload_matches_the_hash(world):
                           audit_entries=tuple(world.get_audit_entries(world.tenant.id, "approval", a.id)),
                           chain=tuple(world.get_audit_chain(world.tenant.id, 1)), anchor=None)
     d = decide(content, ev, tenant=world.tenant, variant_id=vid0(world), now=world.clock.now(),
-               system_paused=False, resolver=resolver, non_links=frozenset(), signer=world.signer)
+               system_paused=False, resolver=resolver, non_links=frozenset(), signer=world.signer,
+               check_reader=world.get_check_results)
     assert calls and all(n == 1 for n in calls.values()), calls
     assert d.allowed, d.blocks
     assert d.payload.variant_hash == d.bundle_hash.variants[vid0(world)]
@@ -402,7 +403,8 @@ def _flag(world, vid=None):
     from thallo.contracts.models import CheckResult
     r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
                     variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name="universal_claim",
-                    verdict=CheckVerdict.FLAG, reason="'always' is a universal claim")
+                    verdict=CheckVerdict.FLAG, reason="'always' is a universal claim",
+                    content_sha256=world.current_hash(vid or vid0(world)))
     world.checks.append(r)
     return r.id
 
@@ -450,7 +452,8 @@ def _check(world, verdict, *, attempt=1, name="truth.compile.flag_word", vid=Non
     from thallo.contracts.models import CheckResult
     r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
                     variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name=name,
-                    verdict=verdict, reason=f"{verdict.value} at attempt {attempt}", attempt=attempt)
+                    verdict=verdict, reason=f"{verdict.value} at attempt {attempt}", attempt=attempt,
+                    content_sha256=world.current_hash(vid or vid0(world)))
     world.checks.append(r)
     return r.id
 

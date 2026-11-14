@@ -80,12 +80,16 @@ def test_build_returns_flags_with_spans(built, lib, clock, tenant):
 
 def test_check_results_carry_fail_flag_and_pass(run, clock, tenant):
     variant = new_id(clock)
-    rows = to_check_results(run("Il top. The best.", IT), variant_id=variant, clock=clock)
+    first, second = "a1" * 32, "b2" * 32
+    rows = to_check_results(run("Il top. The best.", IT), variant_id=variant, content_sha256=first, clock=clock)
     assert {(r.verdict, r.layer) for r in rows} == {(CheckVerdict.FLAG, CheckLayer.CODE),
                                                     (CheckVerdict.FAIL, CheckLayer.CODE)}
     assert all(r.tenant_id == tenant and r.variant_id == variant and r.reason.startswith("[") for r in rows)
-    [ok] = to_check_results(run("Calm weeks."), variant_id=variant, clock=clock)
-    assert ok.verdict is CheckVerdict.PASS
+    assert all(r.content_sha256 == first for r in rows)
+    [ok] = to_check_results(run("Calm weeks."), variant_id=variant, content_sha256=second, clock=clock)
+    assert ok.verdict is CheckVerdict.PASS and ok.content_sha256 == second
+    with pytest.raises(ValueError):  # a row must name real content
+        to_check_results(run("Calm weeks."), variant_id=variant, content_sha256="unbound-before-0021", clock=clock)
 
 
 def test_legacy_gate_ignores_flags():

@@ -20,9 +20,15 @@ What it does, in order:
    the best failed one goes to a person as a variant left in DRAFTING (never REVIEW, so a FAIL can
    never be approved by accident), with the failing check named in `asset.selection_reason`.
 
-FAIL rows block, FLAG rows are kept with verdict FLAG, never dropped or downgraded. When a later
-attempt no longer raises a check an earlier one raised, a PASS row at the later attempt closes it,
-so "latest attempt per check" (the gate's rule for open flags) always describes the current text.
+FAIL rows block, FLAG rows are kept with verdict FLAG, never dropped or downgraded. Every row is
+bound to the content its attempt produced (`check_result.content_sha256`, the gate's
+`variant_hash` of the variant with that attempt's text and, once it built, its rendered text and
+claims). The gate counts only rows bound to the variant's current content, so the FAIL rows of an
+earlier attempt never block the text that replaced them. When a later attempt no longer raises a
+check an earlier one raised, a PASS row at the later attempt still records that. Pass the
+repository's link resolver and non-link allowlist (`resolver`, `non_links`) so the final rows match
+what approval computes; without them links hash as unresolved, and the check stack reruns the code
+checks on the finished variant in any case.
 
 Cost: every call the vendor billed goes to `cost_ledger`, failures included (a reply cut at the
 token limit, a refusal or a safety block still carries usage, and a result the registry refuses
@@ -38,7 +44,7 @@ outcome keeps every cost entry gathered so far.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
@@ -54,6 +60,7 @@ from thallo.contracts.models import Asset, Brief, Bundle, CheckResult, Claim, Co
 from thallo.contracts.states import VARIANT, VariantState
 from thallo.copy import prompts
 from thallo.copy.slop import SlopHit, find_slop
+from thallo.gate.canonical import LinkResolver, VariantContent, variant_hash
 from thallo.providers.text.base import USD_TO_EUR, TextProviderError
 from thallo.truth import Built, CompileFailed, CompileResult, FillError, LibraryError, build, to_check_results
 
@@ -234,11 +241,14 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                  length: PieceLength = "short", max_chars: int | None = None, task_type: str = "post",
                  voice_rules: Sequence[str] = (), extra_slop: Sequence[str] = (), allowed_terms: Sequence[str] = (),
                  protected_names: Sequence[str] = (), grader: Grader | None = None, brand_id: str | None = None,
-                 format: str | None = None, candidates: int = CANDIDATES) -> CopyOutcome:  # noqa: A002
+                 format: str | None = None, candidates: int = CANDIDATES,  # noqa: A002
+                 resolver: LinkResolver | None = None, non_links: Collection[str] = ()) -> CopyOutcome:
     """`claims` is `truth.library(repo, tenant.id)`. `sources` are the source spans the piece may use
     (owner answers, staff material); they are treated as untrusted. `voice_rules` are approved
     brand rules; like every free-text brief field they travel as data, never as instructions.
-    Nothing is written: pass the outcome to `write_outcome`."""
+    `resolver` and `non_links` are the repository's (`repo.resolve_link`, `repo.non_link_allowlist`),
+    used only to bind each check row to the content hash the gate will compute; with none, every
+    link hashes as unresolved. Nothing is written: pass the outcome to `write_outcome`."""
     if brief.tenant_id != tenant.id:
         raise ValueError("the brief belongs to another tenant")
     cap = cost_cap_eur(length)
@@ -305,7 +315,12 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
             break
 
     return _finish(runs, stop, run, tenant=tenant, brief=brief, channel=channel, rule_version=rule_version,
-                   task_type=task_type, max_chars=max_chars, clock=clock)
+                   task_type=task_type, max_chars=max_chars, clock=clock, claims=claims,
+                   resolver=resolver or _no_links, non_links=frozenset(non_links))
+
+
+def _no_links(url: str) -> str | None:
+    return None
 
 
 def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief) -> None:
@@ -365,21 +380,39 @@ def _summary(cand: CandidateRun) -> dict[str, Any]:
     }
 
 
-def _check_rows(cand: CandidateRun, variant_id: str, tenant_id: str, clock: Clock) -> list[CheckResult]:
+def _attempt_hash(cand: CandidateRun, a: Attempt, variant: Variant, claims_by_id: Mapping[str, Claim],
+                  resolver: LinkResolver, non_links: frozenset[str]) -> str:
+    """The gate's hash of the variant as this attempt left it: its text and, for the attempt that
+    built, the rendered text and linked claims, exactly as `_finish` stores the variant."""
+    built = cand.built if a is cand.attempts[-1] else None
+    claim_ids = dict.fromkeys(built.compiled.claim_ids) if built is not None else {}
+    shaped = variant.model_copy(update={"text": a.text,
+                                        "rendered_text": built.filled.text if built is not None else None})
+    vc = VariantContent(variant=shaped, claims=tuple(claims_by_id[cid] for cid in claim_ids))
+    return variant_hash(vc, resolver, non_links)
+
+
+def _check_rows(cand: CandidateRun, variant: Variant, claims: Mapping[str, Claim], clock: Clock,
+                resolver: LinkResolver, non_links: frozenset[str]) -> list[CheckResult]:
+    variant_id, tenant_id = variant.id, variant.tenant_id
+    claims_by_id = {c.id: c for c in claims.values()}
     rows: list[CheckResult] = []
     seen: set[str] = set()
     for a in cand.attempts:
-        new = [] if a.compiled is None else to_check_results(a.compiled, variant_id=variant_id, clock=clock,
-                                                             attempt=a.number, model_id=a.model)
+        sha = _attempt_hash(cand, a, variant, claims_by_id, resolver, non_links)
+        new = [] if a.compiled is None else to_check_results(a.compiled, variant_id=variant_id, content_sha256=sha,
+                                                             clock=clock, attempt=a.number, model_id=a.model)
         if a.compiled is None or a.error_check is not None:
             new.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id,
                                    variant_id=variant_id, layer=CheckLayer.CODE,
                                    check_name=a.error_check or FILL_CHECK, verdict=CheckVerdict.FAIL,
-                                   reason="; ".join(a.fill_problems), attempt=a.number, model_id=a.model))
+                                   reason="; ".join(a.fill_problems), attempt=a.number, model_id=a.model,
+                                   content_sha256=sha))
         names = {r.check_name for r in new}
         rows += [CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id, variant_id=variant_id,
                              layer=CheckLayer.CODE, check_name=name, verdict=CheckVerdict.PASS,
-                             reason="no longer raised on this attempt", attempt=a.number, model_id=a.model)
+                             reason="no longer raised on this attempt", attempt=a.number, model_id=a.model,
+                             content_sha256=sha)
                  for name in sorted(seen - names)]
         rows += new
         seen |= names
@@ -388,7 +421,8 @@ def _check_rows(cand: CandidateRun, variant_id: str, tenant_id: str, clock: Cloc
 
 def _finish(runs: list[CandidateRun], stop: _Stop | None, run: _Run, *, tenant: Tenant, brief: Brief,
             channel: Channel, rule_version: int, task_type: str, max_chars: int | None,
-            clock: Clock) -> CopyOutcome:
+            clock: Clock, claims: Mapping[str, Claim], resolver: LinkResolver,
+            non_links: frozenset[str]) -> CopyOutcome:
     total = len(runs)
     built = [r for r in runs if r.built is not None]
     tried = [r for r in runs if r.attempts]
@@ -434,4 +468,5 @@ def _finish(runs: list[CandidateRun], stop: _Stop | None, run: _Run, *, tenant: 
     links = tuple(VariantClaim(id=new_id(clock), created_at=now, tenant_id=tenant.id, variant_id=variant.id,
                                claim_id=cid) for cid in dict.fromkeys(claim_ids))
     return CopyOutcome(status, note, asset=asset, bundle=bundle, variant=variant, variant_claims=links,
-                       check_results=tuple(_check_rows(winner, variant.id, tenant.id, clock)), **base)
+                       check_results=tuple(_check_rows(winner, variant, claims, clock, resolver, non_links)),
+                       **base)
