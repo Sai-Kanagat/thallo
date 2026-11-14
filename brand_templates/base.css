@@ -1,0 +1,97 @@
+/* Shared layout for every family. Tokens arrive as custom properties: colours and sizes on
+   :root, canvas size, scale, safe zone, script and logo metrics on each .slide. Sizes in tokens
+   are pixels at 1080 px wide and are multiplied by --s (width / 1080). */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { margin: 0; background: #ffffff; }
+body.batch { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
+@page { margin: 0; }
+
+.slide {
+  position: relative; overflow: hidden; flex: none;
+  width: calc(var(--w) * 1px); height: calc(var(--h) * 1px);
+  --m: calc(var(--sp-margin) * var(--s) * 1px);
+  --g: calc(var(--sp-gap) * var(--s) * 1px);
+  --et: max(var(--m), calc(var(--safe-t) * 1px));
+  --er: max(var(--m), calc(var(--safe-r) * 1px));
+  --eb: max(var(--m), calc(var(--safe-b) * 1px));
+  --el: max(var(--m), calc(var(--safe-l) * 1px));
+  --lz: calc(var(--logo-h) * 1px + var(--logo-clear) * 1px + var(--g));
+  --fg: var(--c-ink); --fg2: var(--c-muted); --deco: var(--c-accent);
+  background: var(--c-paper); color: var(--fg);
+  font-family: var(--font-body); line-height: var(--lh);
+  break-after: page; page-break-after: always;
+}
+.slide:last-child { break-after: auto; page-break-after: auto; }
+
+.photo { position: absolute; inset: 0; display: none; background-size: cover; background-position: center; }
+.scrim { position: absolute; inset: 0; display: none; background: var(--c-scrim); }
+
+.frame {
+  position: absolute; top: var(--et); right: var(--er); bottom: var(--eb); left: var(--el);
+  display: flex; flex-direction: column; gap: var(--g);
+  justify-content: safe center; align-items: flex-start; text-align: left; overflow: hidden;
+}
+.slot { max-width: 100%; overflow: hidden; overflow-wrap: normal; word-break: normal; hyphens: manual; color: var(--fg); }
+.slot:empty { display: none; }
+.soft { color: var(--fg2); }
+
+.t-display { font-family: var(--font-display); font-weight: var(--fw-display); font-size: calc(var(--fs-display) * var(--s) * var(--sf) * 1px); line-height: calc(var(--lh) * 0.92); }
+.t-h1 { font-family: var(--font-display); font-weight: var(--fw-display); font-size: calc(var(--fs-h1) * var(--s) * var(--sf) * 1px); line-height: calc(var(--lh) * 0.95); }
+.t-h2 { font-family: var(--font-display); font-weight: var(--fw-display); font-size: calc(var(--fs-h2) * var(--s) * var(--sf) * 1px); }
+.t-body { font-size: calc(var(--fs-body) * var(--s) * var(--sf) * 1px); }
+.t-small { font-size: calc(var(--fs-small) * var(--s) * var(--sf) * 1px); }
+.big .t-h1 { font-size: calc(var(--fs-display) * var(--s) * var(--sf) * 1px); }
+.pill { background: var(--c-accent); color: var(--c-on_accent); padding: calc(var(--g) * 0.35) calc(var(--g) * 0.8); border-radius: calc(var(--r-card) * var(--s) * 1px); }
+.bg-accent .pill, .bg-ink .pill, .bg-photo .pill { background: var(--c-paper); color: var(--c-ink); }
+
+/* backgrounds */
+.bg-ink { background: var(--c-ink); --fg: var(--c-paper); --fg2: var(--c-paper); --deco: var(--c-accent); }
+.bg-accent { background: var(--c-accent); --fg: var(--c-on_accent); --fg2: var(--c-on_accent); --deco: var(--c-on_accent); }
+.bg-photo { --fg: var(--c-on_scrim); --fg2: var(--c-on_scrim); --deco: var(--c-on_scrim); }
+.bg-photo .photo, .bg-photo .scrim { display: block; }
+
+/* photo beside or above the text, never under it */
+.split-left .photo { display: block; right: auto; width: 44%; }
+.split-left .frame { left: calc(44% + var(--m)); }
+.split-left.logo-tl .logo, .split-left.logo-bl .logo { left: calc(44% + var(--m)); }
+.split-top .photo { display: block; bottom: auto; height: 40%; }
+.split-top .frame { top: calc(40% + var(--m)); }
+
+/* canvas shape (set by the renderer from the size): short canvases get tighter margins, and a
+   photo above the text moves beside it, since there is no height to spare */
+.shape-landscape { --m: calc(var(--sp-margin) * var(--s) * 0.7px); --g: calc(var(--sp-gap) * var(--s) * 0.6px); }
+.shape-landscape.split-left .photo, .shape-landscape.split-top .photo,
+.shape-square.split-top .photo { display: block; top: 0; bottom: 0; right: auto; width: 38%; height: auto; }
+.shape-landscape.split-left .frame, .shape-landscape.split-top .frame,
+.shape-square.split-top .frame { top: var(--et); left: calc(38% + var(--m)); }
+.shape-landscape.split-top.logo-bl .logo, .shape-square.split-top.logo-bl .logo,
+.shape-landscape.split-left.logo-bl .logo, .shape-landscape.split-left.logo-tl .logo { left: calc(38% + var(--m)); }
+.shape-tall.split-left .photo { right: 0; bottom: auto; width: auto; height: 40%; }
+.shape-tall.split-left .frame { left: var(--el); top: calc(40% + var(--m)); }
+.shape-tall.split-left.logo-tl .logo, .shape-tall.split-left.logo-bl .logo { left: var(--el); }
+.shape-tall.split-left.logo-tl .logo, .shape-tall.split-left.logo-tr .logo { top: calc(40% + var(--m)); }
+.shape-tall.split-left.logo-tl .frame, .shape-tall.split-left.logo-tr .frame { top: calc(40% + var(--m) + var(--lz)); }
+.shape-landscape.deco-mark .frame::before { font-size: calc(160 * var(--s) * 1px); height: calc(80 * var(--s) * 1px); }
+
+/* text position */
+.v-top .frame { justify-content: flex-start; }
+.v-bottom .frame { justify-content: safe flex-end; }
+.h-center .frame { align-items: center; text-align: center; }
+.h-end .frame { align-items: flex-end; text-align: right; }
+
+/* logo corner; the frame keeps clear of it */
+.logo { position: absolute; width: calc(var(--logo-w) * 1px); height: calc(var(--logo-h) * 1px); }
+.logo-tl .logo { top: var(--et); left: var(--el); }
+.logo-tr .logo { top: var(--et); right: var(--er); }
+.logo-bl .logo { bottom: var(--eb); left: var(--el); }
+.logo-br .logo { bottom: var(--eb); right: var(--er); }
+.logo-tl .frame, .logo-tr .frame { top: calc(var(--et) + var(--lz)); }
+.logo-bl .frame, .logo-br .frame { bottom: calc(var(--eb) + var(--lz)); }
+.split-top.logo-tl .logo, .split-top.logo-tr .logo { top: calc(40% + var(--m)); }
+.split-top.logo-tl .frame, .split-top.logo-tr .frame { top: calc(40% + var(--m) + var(--lz)); }
+
+/* decoration */
+.deco-bar .frame::before { content: ""; display: block; flex: none; width: calc(120 * var(--s) * 1px); height: calc(12 * var(--s) * 1px); background: var(--deco); }
+.deco-rule .frame { border-left: calc(10 * var(--s) * 1px) solid var(--deco); padding-left: var(--g); }
+.deco-mark .frame::before { content: "\201C"; display: block; flex: none; font-family: var(--font-display); font-size: calc(220 * var(--s) * 1px); line-height: 0.7; height: calc(120 * var(--s) * 1px); color: var(--deco); }
+.deco-frame .frame { border: calc(4 * var(--s) * 1px) solid var(--deco); padding: var(--g); }
