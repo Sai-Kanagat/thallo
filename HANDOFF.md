@@ -58,12 +58,16 @@ Start with WP-00 and show me the contract list before you write it.
 
 See `docs/BUILD_PLAN.md` section 4.6 for the list per wave. Before wave 1: a Supabase project with keys in `.env`, written consent from each pilot business, and access applications for WhatsApp Cloud, Google Ads and Business Profile.
 
-## Open security fixes (14 Nov, lead)
-Must land before WP-09 exposes connection settings to tenants:
-1. HIGH. `thallo/providers/image/template_render.py`: the `chromium` binary path is a connection setting. Remove it from `TemplateRenderSettings`; resolve the binary only from operator configuration (`THALLO_CHROMIUM` or `find_chromium()`).
-2. MEDIUM. Same file: `brand_dir`, `templates_dir`, `output_dir`, `photo_dirs` are connection settings. Derive them from an operator base directory keyed by tenant id, or require each resolved path to sit inside that tenant's operator-assigned root.
-3. SHOULD FIX (review of the WP-05 and WP-06 fix commits, 14 Nov, nothing blocking). `CostOverCapAfterRun` subclasses `CostCapExceeded`, so a caller that catches only the parent, or lets it propagate, drops a call that was billed. `thallo/copy/produce.py` handles it correctly today and is the only caller. Before a second caller exists (image path, WP-07 graders): the registry writes the ledger row itself, or the exception stops being a `CostCapExceeded`. Also `_grade` in `produce.py` catches `Exception`, so a grader that calls the registry needs a cost contract first.
-Rule for every provider from here on: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+## Security fixes merged 14 Nov (renderer settings, key origin, over-cap error)
+Merged after an independent security review, nothing blocking, CI 2,044 passed. The Chromium binary and all folders are out of tenant settings; a text provider's key goes only to a constant origin (Claude, Gemini) or an operator-listed one; `CostOverCapAfterRun` is no longer a `CostCapExceeded`.
+New operator env vars (Sai adds them to `.env`): `THALLO_BRAND_ROOT` (one folder per tenant id holding `brand/`, `templates/`, `photos/`, `renders/`; unset means the renderer is unavailable for everyone) and `THALLO_OPENAI_COMPATIBLE_ORIGINS` (comma-separated origins, no path).
+Rule for every provider: connection settings are tenant-writable, so no setting may name a binary, a filesystem path or a host that decides where a secret goes.
+
+Still open from that review, must land before tenants can upload template files (WP-09 or any upload path):
+1. SHOULD FIX. Templates now live in the tenant's own folder, and the render page still allows inline script and `file:` images and fonts (`thallo/media/render.py`, `thallo/brand/templates.py`). A tenant-written template can render another tenant's images or any local image or font into its own output. Fix: only operator-owned templates until the page policy confines `file:` to the tenant folder (or assets are inlined as data URLs and `file:` is dropped).
+2. NOTE. `base.css`, `manifest.json`, `channels.json`, `brand.json`, `script/*.json` are opened without the inside-the-folder check; folders are checked once then used later. Both matter only if an upload path can create symlinks: the upload path must refuse symlinks.
+3. NOTE. The tenant-id pattern in `template_render.py` uses `$`, which accepts a trailing newline; use `\Z` or `fullmatch`.
+4. NOTE. `_grade` in `thallo/copy/produce.py` catches `Exception`; a grader that calls the registry needs a cost contract first (WP-07).
 
 ## Lead ruling: check results are bound to content (contracts 2.5.0, to build)
 Why: the gate fix on branch `worktree-agent-af29c4c07c8cfae8c` (commit ded0f2a) refuses a grant on a latest FAIL, but review showed a FAIL can never be superseded (the compiler writes FAIL under `truth.compile.<kind>` and a clean rerun writes PASS under `truth.compile`), and nothing ties a check row to the content it checked. Do not merge ded0f2a alone.
@@ -75,3 +79,14 @@ Design:
 4. `check_result` becomes append-only for the app role (no UPDATE, no DELETE), in the same migration, following the pattern in `0010_wp01_rls.sql`. `attempt` is `ge=1` in the model and a CHECK in the migration.
 5. `check_publish` re-reads check results for the payload's content hash and blocks on any FAIL, on missing coverage, and if the read raises.
 Consequence: rows written while drafting stop counting once media or text changes; the WP-07 check stack reruns the code checks on the finished variant.
+
+## Gate content binding: review result and lead rulings (14 Nov, late)
+Built on branch `worktree-agent-af29c4c07c8cfae8c` (commits ccfd7ca, 6812e14, 75e33f9; CI there 2,003 passed, 5 skipped; migration 0021 run on Docker only). NOT merged: the security review found one blocking gap. Review repro: scratchpad `gate/repro.py` of the lead session.
+
+Rulings for the fix round (same branch, merge current main first):
+1. BLOCKING. Coverage is defined by the gate, per content type, not by "any CODE row". A variant with text needs at least one counting row named `truth.compile` or `truth.compile.*` for its current hash. A variant with media also needs at least one counting design-lint row. The required families live in one table in `thallo/gate/checks.py`. An unknown check name never satisfies coverage. Tests: a lint PASS alone on a text variant is refused; an invented name is refused; copy rows written before media was attached do not cover the variant after.
+2. A rerun must be able to clear a FAIL on unchanged content when the world changed (a claim got verified; claim state is not in the hash). So no "FAIL is sticky forever". Instead `to_check_results` always writes one row per kind the compiler can raise: FAIL or FLAG when raised, PASS when not, under the same `truth.compile.<kind>` name, plus the summary `truth.compile` row. Highest attempt per key then works for every caller, not only copy production. Test: unverified claim FAIL, verify the claim, rerun at attempt 2, grant.
+3. Copy production must not hash with guessed inputs. Remove the `_no_links` fallback: the content hash for a check row comes from one gate function given the variant as approval will see it (text, media, tracked links, resolver, allowlist). If the caller cannot supply those, raise; never write a row that can never match.
+4. Add a unit test that hands `review_checks` rows with mixed hashes directly, so the gate's own filter is exercised without the memory repository filtering first.
+5. Known limit, accepted for this merge and queued as its own package before WP-09: the app role can insert a PASS under a real check name for content never honestly checked. Real fix: a `cortex_checker` role that alone may INSERT into `check_result`, INSERT revoked from `cortex_app`, checks run through owner-side or worker-side code. Needs a design note first (which process runs checks, how it gets the tenant).
+Then: a second independent security review, CI green, merge. Tell Sai before 0021 goes to Supabase. A future tenant-erasure job must drop the append-only trigger inside its own migration.

@@ -14,13 +14,25 @@ from thallo.media.render import ChromiumRenderer, Rendered, find_chromium, plan_
 
 T = "0190f3a0-0000-7000-8000-000000000001"
 V = "0190f3a0-0000-7000-8000-0000000000a1"
-DEMO = {"tenant_id": T, "mock_tenants": {T}, "environ": {}}  # T is a mock (demo) tenant
 NO_CHROMIUM = "no headless Chromium on this machine (set THALLO_CHROMIUM to one); browser tests skipped"
+
+
+def demo(root, tenant=T):
+    """Constructor arguments for a mock (demo) tenant whose operator brand root is `root`."""
+    return {"tenant_id": tenant, "mock_tenants": {T}, "environ": {"THALLO_BRAND_ROOT": str(root)}}
 
 
 @pytest.fixture
 def clock():
     return FakeClock(FAKE_EPOCH)
+
+
+@pytest.fixture
+def brand_root(tmp_path):
+    """The operator's THALLO_BRAND_ROOT: one folder per tenant id."""
+    root = tmp_path / "brands"
+    root.mkdir(mode=0o700)
+    return root
 
 
 @pytest.fixture(scope="session")
