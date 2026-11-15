@@ -28,7 +28,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -40,13 +40,18 @@ from api.errors import ApiError, bad_request, conflict, not_found
 from thallo.connections.errors import ConnectionsError, UnknownProvider
 from thallo.connections.registry import MANUAL, ConnectionRegistry
 from thallo.connections.secret import Secret
+from thallo.contracts.actors import ActorRef
 from thallo.contracts.enums import Capability, ConnectionMode, TextRole
 from thallo.contracts.ids import is_id
 from thallo.contracts.models import Connection, CostEntry
+from thallo.trust.audit import AuditConflict
 
 log = logging.getLogger("thallo.api.connections")
 router = APIRouter(prefix="/api")
 
+TESTS_PER_CONNECTION = 5
+TESTS_PER_TENANT = 20
+TEST_WINDOW = timedelta(minutes=10)
 _PRICES = ("input_usd_per_mtok", "output_usd_per_mtok", "timeout_s")
 # The only settings this API takes or shows, per (capability, provider). Every value a scalar.
 SETTABLE: Mapping[tuple[Capability, str], tuple[str, ...]] = {
@@ -304,6 +309,11 @@ def test(connection_id: str, request: Request) -> dict:
     svc = services(request)
     registry = _registry(request, ctx)
     row = _get(registry, ctx, connection_id)
+    # A test may call the vendor for real (a hosted provider's health check), so it is limited per
+    # connection and per tenant, and every call is written to the tenant's audit log.
+    if not (svc.limits.allow(f"conn-test:{row.id}", TESTS_PER_CONNECTION, TEST_WINDOW)
+            and svc.limits.allow(f"conn-test-tenant:{ctx.tenant_id}", TESTS_PER_TENANT, TEST_WINDOW)):
+        raise ApiError(429, "rate_limited", "this connection was tested a moment ago; try again in a few minutes")
     try:
         health = registry.build(row).health()
         connected, checked_at = bool(health.connected), health.checked_at
@@ -312,6 +322,16 @@ def test(connection_id: str, request: Request) -> dict:
         connected, checked_at = False, svc.clock.now()
     if registry.health is not None:
         registry.health.set_connected(ctx.tenant_id, row.id, connected)
+    for attempt in range(3):
+        try:
+            with svc.backend.tenant(ctx.tenant_id) as tx:
+                tx.audit.append(ctx.tenant_id, ActorRef.of(ctx.human()), "connection.tested",
+                                subject_kind="connection", subject_id=row.id,
+                                payload={"provider": row.provider, "mode": row.mode.value, "connected": connected})
+            break
+        except AuditConflict:
+            if attempt == 2:
+                raise
     return {"connection_id": row.id, "health": "connected" if connected else "down",
             "checked_at": checked_at.isoformat()}
 

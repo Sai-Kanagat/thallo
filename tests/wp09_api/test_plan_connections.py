@@ -149,3 +149,14 @@ def test_connections_cross_tenant_and_roles(world):
     s, s_csrf = world.login(world.a.staff_email)
     assert s.get("/api/connections").status_code == 403
     assert _add(s, s_csrf, capability="crm", provider="mock").status_code == 403
+
+
+def test_connection_test_is_rate_limited_and_audited(world):
+    c, csrf = world.login(world.a.founder_email)
+    cid = _add(c, csrf, capability="crm", provider="mock").json()["connection"]["id"]
+    statuses = [c.post(f"/api/connections/{cid}/test", headers={CSRF_HEADER: csrf}).status_code for _ in range(6)]
+    assert statuses == [200] * 5 + [429]
+    with world.svc.backend.tenant(world.a.tenant.id) as tx:
+        entries = [e for e in tx.audit.store.entries(world.a.tenant.id) if e.action == "connection.tested"]
+    assert len(entries) == 5
+    assert entries[0].subject_id == cid and entries[0].actor_id == world.a.founder.id

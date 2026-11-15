@@ -25,6 +25,7 @@ from api.sessions import (
     FailureLockout,
     InMemorySessionStore,
     LoginCodes,
+    NullSender,
     RateLimiter,
     Session,
     SessionStore,
@@ -64,7 +65,7 @@ class Services:
     lockout: FailureLockout = None  # type: ignore[assignment]
     ceiling: EmailCeiling = None  # type: ignore[assignment]
     devices: DeviceSigner = None  # type: ignore[assignment]
-    trust_proxy: bool = False  # THALLO_TRUSTED_PROXY=1: read the last X-Forwarded-For entry
+    proxy_peers: frozenset[str] = frozenset({"127.0.0.1", "::1"})  # the Next host (web/server.mjs)
     allowed_origins: Collection[str] = ()
     mock_tenants: Collection[str] = ()
     environ: dict[str, str] = field(default_factory=dict)
@@ -82,6 +83,7 @@ class Services:
             self.ceiling = EmailCeiling(self.clock)
         if self.devices is None:
             self.devices = DeviceSigner()
+        self.decoy_sender = NullSender()
         self.verifier = ApiSessionVerifier(self.sessions)
 
 

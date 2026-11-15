@@ -2,8 +2,8 @@
 identity across sessions, 8-digit codes, no shared global bucket, and compare-and-set sessions.
 
 Client addresses: the test client's peer is the string "testclient" unless a test passes
-`client=(ip, port)`. X-Forwarded-For is ignored unless `Services.trust_proxy` is set (the operator
-setting THALLO_TRUSTED_PROXY=1), and then only its last entry is used."""
+`client=(ip, port)`. A request from 127.0.0.1 plays the Next server (web/server.mjs), whose
+x-thallo-client-ip header is trusted; X-Forwarded-For is never read."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -11,7 +11,7 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.context import CSRF_HEADER, DEVICE_COOKIE
+from api.context import COOKIE, CSRF_HEADER, DEVICE_COOKIE
 from api.sessions import (
     CEILING_MAX,
     ISSUES_PER_EMAIL,
@@ -64,14 +64,46 @@ def test_network_backstop_covers_many_addresses_in_one_slash_24(world):
     assert _req(c, csrf, "fresh@other.test").status_code == 202
 
 
-def test_forwarded_for_is_ignored_unless_a_proxy_is_trusted(world):
-    statuses = [(_req(*_client(world, "198.51.100.8"), f"x{i}@f.test", **{"x-forwarded-for": f"10.0.{i}.1"})
-                 .status_code) for i in range(11)]
-    assert statuses[-1] == 429  # the spoofed header did not make new clients
-    world.svc.trust_proxy = True
-    statuses = [(_req(*_client(world, "198.51.100.9"), f"y{i}@f.test",
-                      **{"x-forwarded-for": f"6.6.6.6, 10.{i}.0.1"}).status_code) for i in range(11)]
-    assert 429 not in statuses  # behind a trusted proxy the last entry is the client
+def test_spoofed_headers_from_a_client_do_not_change_the_key(world):
+    spoof = {"x-forwarded-for": "10.0.0.1", "x-thallo-client-ip": "10.0.0.1"}
+    statuses = []
+    for i in range(11):
+        c, csrf = _client(world, "198.51.100.8")  # not the Next host: both headers are ignored
+        statuses.append(_req(c, csrf, f"x{i}@f.test", **{**spoof, "x-thallo-client-ip": f"10.0.{i}.1"}).status_code)
+    assert statuses[-1] == 429
+
+
+def test_behind_the_next_server_two_real_peers_get_separate_buckets(world):
+    """The reviewer's repro: every request arrives from 127.0.0.1. With the stamp, each browser is
+    its own client; without it they would all share one bucket."""
+    statuses = []
+    for i in range(11):
+        c, csrf = _client(world, "127.0.0.1")
+        statuses.append(_req(c, csrf, f"p{i}@f.test", **{"x-thallo-client-ip": f"203.0.{i}.9"}).status_code)
+    assert 429 not in statuses
+    same = []
+    for i in range(11):
+        c, csrf = _client(world, "127.0.0.1")
+        same.append(_req(c, csrf, f"q{i}@f.test", **{"x-thallo-client-ip": "198.51.100.33"}).status_code)
+    assert same[-1] == 429
+    # X-Forwarded-For through the Next host is still never read
+    xff = []
+    for i in range(11):
+        c, csrf = _client(world, "127.0.0.1")
+        xff.append(_req(c, csrf, f"r{i}@f.test", **{"x-thallo-client-ip": "198.51.100.44",
+                                                     "x-forwarded-for": f"10.{i}.0.1"}).status_code)
+    assert xff[-1] == 429
+
+
+def test_the_stamp_is_trusted_only_from_configured_peers():
+    from api.sessions import client_keys
+
+    assert client_keys("127.0.0.1", "203.0.113.1")[0] != client_keys("127.0.0.1", "203.0.113.2")[0]
+    assert client_keys("198.51.100.1", "203.0.113.1")[0] == client_keys("198.51.100.1", "203.0.113.2")[0]
+    assert client_keys("127.0.0.1", "not-an-ip")[0] == client_keys("127.0.0.1", None)[0]
+    peers = frozenset({"10.9.9.9"})
+    assert client_keys("10.9.9.9", "203.0.113.1", proxy_peers=peers)[0] != client_keys(
+        "10.9.9.9", "203.0.113.2", proxy_peers=peers)[0]
 
 
 def _burn(world, ip: str, email: str, tries: int = 5) -> None:
@@ -248,7 +280,7 @@ def test_attackers_on_many_networks_cannot_stop_the_owner_on_a_known_device(worl
     r = owner.post("/api/auth/verify", json={"email": email, "code": world.sender.codes[email]},
                    headers={CSRF_HEADER: csrf})
     assert r.status_code == 200 and DEVICE_COOKIE in owner.cookies
-    owner.post("/api/auth/logout", headers={CSRF_HEADER: r.json()["csrf_token"]})
+    owner.cookies.delete(COOKIE)  # the session is gone (closed tab, timeout); the device cookie stays
     _fill_ceiling(world, email)
     for i in range(2):  # ten wrong guesses lock the owner's own network for unknown devices
         a, a_csrf = _client(world, f"198.51.100.{i + 1}")
@@ -299,9 +331,9 @@ def test_owner_with_a_live_code_signs_in_while_the_global_ceiling_is_hit(world):
 def test_ipv6_networks_are_slash_48():
     from api.sessions import client_keys
 
-    a = client_keys("2001:db8:1:1::1", None, trust_proxy=False)[1]
-    b = client_keys("2001:db8:1:ffff::9", None, trust_proxy=False)[1]
-    c = client_keys("2001:db8:2::1", None, trust_proxy=False)[1]
+    a = client_keys("2001:db8:1:1::1", None)[1]
+    b = client_keys("2001:db8:1:ffff::9", None)[1]
+    c = client_keys("2001:db8:2::1", None)[1]
     assert a == b != c
 
 
@@ -373,3 +405,38 @@ def test_failed_send_releases_the_slot(world):
     token = ceiling.reserve("k", "n")
     ceiling.release(token)
     assert ceiling._held == {} and not ceiling._issues.get("k")
+
+
+# ---------------------------------------------------------------------- review round 3
+
+def test_unknown_email_does_the_same_work_as_a_known_one(world, monkeypatch):
+    calls = {"decoy": 0, "real": 0}
+    monkeypatch.setattr(world.svc.decoy_sender, "send", lambda e, c: calls.__setitem__("decoy", calls["decoy"] + 1))
+    issued = []
+    real_issue, real_decoy = world.svc.codes.issue, world.svc.codes.decoy
+    monkeypatch.setattr(world.svc.codes, "issue", lambda *a: issued.append("issue") or real_issue(*a))
+    monkeypatch.setattr(world.svc.codes, "decoy", lambda: issued.append("decoy") or real_decoy())
+    c, csrf = _client(world, "198.51.100.61")
+    assert _req(c, csrf, "nobody@nowhere.test").status_code == 202
+    assert calls["decoy"] == 1 and issued == ["decoy"] and world.sender.calls == 0
+    c, csrf = _client(world, "198.51.100.62")
+    assert _req(c, csrf, world.a.founder_email).status_code == 202
+    assert issued == ["decoy", "issue"] and world.sender.calls == 1
+
+
+def test_a_decoy_code_never_signs_anyone_in(world):
+    c, csrf = _client(world, "198.51.100.63")
+    _req(c, csrf, "nobody@nowhere.test")
+    code = world.svc.codes.decoy()
+    r = c.post("/api/auth/verify", json={"email": "nobody@nowhere.test", "code": code}, headers={CSRF_HEADER: csrf})
+    assert r.status_code == 400
+
+
+def test_sign_out_clears_the_device_cookie(world):
+    c, csrf = world.login(world.a.founder_email)
+    assert DEVICE_COOKIE in c.cookies
+    r = c.post("/api/auth/logout", headers={CSRF_HEADER: csrf})
+    assert r.status_code == 200
+    cleared = [h for h in r.headers.get_list("set-cookie") if h.startswith(f"{DEVICE_COOKIE}=")]
+    assert cleared and ("max-age=0" in cleared[0].lower() or "expires=thu, 01 jan 1970" in cleared[0].lower())
+    assert DEVICE_COOKIE not in c.cookies

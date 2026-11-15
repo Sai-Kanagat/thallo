@@ -12,13 +12,17 @@ THALLO_DEV_CONSOLE_LOGIN=1; otherwise no code is ever delivered and nobody can s
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 from collections.abc import Mapping
 
 from fastapi import FastAPI, Request, Response
 
 from api import auth, connections, errors, plan, review
 from api.context import Services
+
+log = logging.getLogger("thallo.api")
 
 API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 _HEADERS = {
@@ -51,6 +55,35 @@ def create_app(svc: Services) -> FastAPI:
     return app
 
 
+_LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$")
+
+
+class StartupRefused(RuntimeError):
+    pass
+
+
+def check_startup(env: Mapping[str, str]) -> tuple[list[str], bool]:
+    """Operator settings that must hold before the API serves anyone. Returns (web origins,
+    whether the dev console sender may run) or raises StartupRefused with the reason.
+
+    - THALLO_WEB_ORIGIN must be set unless THALLO_ENVIRONMENT=development; the Origin check is
+      never silently skipped in production.
+    - THALLO_DEV_CONSOLE_LOGIN=1 prints login codes to stderr, so it needs a second marker
+      (THALLO_ENVIRONMENT=development) and every web origin on localhost; a loud warning is logged."""
+    dev = env.get("THALLO_ENVIRONMENT", "") == "development"
+    origins = [o.strip() for o in env.get("THALLO_WEB_ORIGIN", "").split(",") if o.strip()]
+    if not origins and not dev:
+        raise StartupRefused("THALLO_WEB_ORIGIN is empty: set the web app's origin (or THALLO_ENVIRONMENT=development)")
+    console = env.get("THALLO_DEV_CONSOLE_LOGIN") == "1"
+    if console:
+        if not dev:
+            raise StartupRefused("THALLO_DEV_CONSOLE_LOGIN=1 needs THALLO_ENVIRONMENT=development")
+        if not origins or not all(_LOCAL_ORIGIN.match(o) for o in origins):
+            raise StartupRefused("THALLO_DEV_CONSOLE_LOGIN=1 needs THALLO_WEB_ORIGIN on localhost only")
+        log.warning("DEVELOPMENT LOGIN: sign-in codes are printed to this console. Never run this on a real server.")
+    return origins, console
+
+
 def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # pragma: no cover - wiring
     from api.backend import PgBackend
     from api.directory import OwnerDirectory
@@ -62,6 +95,7 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     from thallo.gate.signing import GateKeyMissing, GateSigner
 
     env = os.environ if environ is None else environ
+    origins, console = check_startup(env)
     app_url, owner_url = env.get("DATABASE_URL", ""), env.get("DATABASE_ADMIN_URL", "")
     if not app_url or not owner_url:
         raise RuntimeError("DATABASE_URL and DATABASE_ADMIN_URL must be set for the API")
@@ -75,14 +109,14 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
         signer = None  # approvals refuse with a clear reason
     _conns, secrets, _health = backend.connection_stores()
     vault = Vault.from_env(secrets, clock, env) if env.get("THALLO_VAULT_KEY") else None
-    sender = ConsoleCodeSender() if env.get("THALLO_DEV_CONSOLE_LOGIN") == "1" else NoCodeSender()
+    sender = ConsoleCodeSender() if console else NoCodeSender()
     device_key = env.get("THALLO_DEVICE_KEY", "")
-    origins = [o.strip() for o in env.get("THALLO_WEB_ORIGIN", "").split(",") if o.strip()]
+    peers = frozenset(h.strip() for h in env.get("THALLO_WEB_PROXY_HOSTS", "127.0.0.1,::1").split(",") if h.strip())
     return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
-                    trust_proxy=env.get("THALLO_TRUSTED_PROXY") == "1",
+                    proxy_peers=peers,
                     devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None))
 
 
-__all__ = ["API_CSP", "create_app", "services_from_env"]
+__all__ = ["API_CSP", "StartupRefused", "check_startup", "create_app", "services_from_env"]

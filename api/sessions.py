@@ -222,6 +222,13 @@ class ConsoleCodeSender:
         print(f"[thallo dev login] code for {email}: {code}", file=self.stream, flush=True)
 
 
+class NullSender:
+    """Sends nothing and says nothing: the decoy path that keeps request timing the same."""
+
+    def send(self, email: str, code: str) -> None:
+        return None
+
+
 class NoCodeSender:
     """No sender configured: no code goes anywhere, so nobody can finish signing in (fails closed)."""
 
@@ -255,6 +262,12 @@ class LoginCodes:
         code = "".join(secrets.choice("0123456789") for _ in range(CODE_DIGITS))
         with self._lock:
             self._pending[(session_id, email)] = _Pending(self._mac(code), self.clock.now() + self.ttl)
+        return code
+
+    def decoy(self) -> str:
+        """The same work as `issue` (draw a code, compute its MAC), stored nowhere and usable never."""
+        code = "".join(secrets.choice("0123456789") for _ in range(CODE_DIGITS))
+        self._mac(code)
         return code
 
     def pending(self, session_id: str, email: str) -> bool:
@@ -451,16 +464,27 @@ class DeviceSigner:
                 and now.timestamp() < int(expiry))
 
 
-def client_keys(host: str | None, forwarded_for: str | None, *, trust_proxy: bool) -> tuple[str, str]:
+CLIENT_IP_HEADER = "x-thallo-client-ip"
+DEFAULT_PROXY_PEERS = frozenset({"127.0.0.1", "::1"})
+
+
+def client_keys(host: str | None, stamped: str | None, *,
+                proxy_peers: frozenset[str] = DEFAULT_PROXY_PEERS) -> tuple[str, str]:
     """(client, network) keys for rate limits, hashed, kept only in memory (no table stores an IP).
 
-    The client is the socket peer. X-Forwarded-For is read only when the operator says a proxy is
-    in front (THALLO_TRUSTED_PROXY=1), and then only its last entry, the one that proxy appended.
-    The network is the /24 for IPv4 and the /48 for IPv6. A peer that is not an IP address (the
-    test client reports "testclient") is its own client and its own network."""
+    Browsers reach the API through the Next server (`web/server.mjs`), which OVERWRITES the header
+    `x-thallo-client-ip` with the real socket peer and drops any copy a client sent, along with
+    X-Forwarded-For. The API trusts that header only when the connection itself comes from the
+    Next host (`proxy_peers`: loopback by default, THALLO_WEB_PROXY_HOSTS to change it); from any
+    other peer the header is ignored and the socket peer is the client. X-Forwarded-For is never
+    read. The network is the /24 for IPv4 and the /48 for IPv6. A peer that is not an IP address
+    (the test client reports "testclient") is its own client and its own network."""
     peer = (host or "unknown").strip()
-    if trust_proxy and forwarded_for:
-        peer = forwarded_for.split(",")[-1].strip() or peer
+    if peer in proxy_peers and stamped:
+        try:
+            peer = str(ipaddress.ip_address(stamped.strip()))
+        except ValueError:
+            pass  # a malformed stamp: the proxy peer itself stays the key
     try:
         ip = ipaddress.ip_address(peer)
         net = ipaddress.ip_network(f"{ip}/{24 if ip.version == 4 else 48}", strict=False)
@@ -494,7 +518,7 @@ class ApiSessionVerifier:
 
 __all__ = [
     "ABSOLUTE_LIFETIME", "CODE_TTL", "DeviceSigner", "EmailCeiling", "FailureLockout", "client_keys",
-    "IDLE_TIMEOUT", "ApiSessionVerifier", "CodeSender", "ConsoleCodeSender",
+    "IDLE_TIMEOUT", "ApiSessionVerifier", "CLIENT_IP_HEADER", "CodeSender", "NullSender", "ConsoleCodeSender",
     "InMemorySessionStore", "LoginCodes", "NoCodeSender", "RateLimiter", "Session", "SessionKind",
     "SessionStore", "Shown", "email_key",
 ]

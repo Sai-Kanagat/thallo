@@ -23,9 +23,13 @@ Limit design (final; see the security review rounds of 15 Nov):
    per-(email, network) lockout works the same way and never touches another network.
 4. A network counts toward the distinct-network cap only once it produced a wrong guess.
 5. Rate limits are per client, per network (/24 IPv4, /48 IPv6), per session and per (email,
-   network), never one shared bucket. X-Forwarded-For only behind THALLO_TRUSTED_PROXY=1.
+   network), never one shared bucket. The client address is the socket peer, or the
+   x-thallo-client-ip header only when the peer is the Next host, which overwrites it
+   (web/server.mjs); X-Forwarded-For is never read.
 6. A code request always gets the same answer, whatever happened, so nothing reveals state (the
-   only other answer is the per-client or per-network 429, which says nothing about the address).
+   only other answer is the per-client or per-network 429, which says nothing about the address),
+   and does the same work on every path: a code is drawn and a sender called (a null one when no
+   code may go out), so the response time does not tell a known address from an unknown one.
 """
 from __future__ import annotations
 
@@ -45,7 +49,7 @@ from api.context import (
 )
 from api.directory import Membership, normalise_email
 from api.errors import ApiError, unauthenticated
-from api.sessions import DEVICE_TTL, Session, SessionKind, client_keys, email_key
+from api.sessions import CLIENT_IP_HEADER, DEVICE_TTL, Session, SessionKind, client_keys, email_key
 
 router = APIRouter(prefix="/api")
 
@@ -117,7 +121,7 @@ def _anonymous(request: Request) -> Session:
 def _keys(request: Request) -> tuple[str, str]:
     svc = services(request)
     return client_keys(request.client.host if request.client else None,
-                       request.headers.get("x-forwarded-for"), trust_proxy=svc.trust_proxy)
+                       request.headers.get(CLIENT_IP_HEADER), proxy_peers=svc.proxy_peers)
 
 
 def _client_ok(request: Request, kind: str, per_client: int, per_network: int) -> bool:
@@ -145,17 +149,22 @@ def request_code(body: EmailBody, request: Request) -> dict:
             and svc.limits.allow(f"req-session:{s.id}", REQUESTS_PER_SESSION, WINDOW)):
         raise _limited()
     identity = svc.directory.find_identity(email)
-    if identity is None or not svc.directory.memberships(identity.id):
-        return SENT  # the same words, known address or not
+    member = identity is not None and bool(svc.directory.memberships(identity.id))
     network = _keys(request)[1]
-    known = svc.devices.valid_for(request.cookies.get(DEVICE_COOKIE), identity.id, svc.clock.now())
+    known = svc.devices.valid_for(request.cookies.get(DEVICE_COOKIE), identity.id if identity else "-",
+                                  svc.clock.now())
+    if not member:
+        _decoy(svc)  # the same work as a real send, so timing reveals nothing
+        return SENT
     token = None
     if not known:
         if svc.lockout.locked(_lock_key(request, email)):
-            return SENT  # a delay on this network after wrong guesses from it
+            _decoy(svc)  # a delay on this network after wrong guesses from it
+            return SENT
         token = svc.ceiling.reserve(email_key("ceiling", email), network)
         if token is None:
-            return SENT  # the per-email ceiling: the next code waits, at most 15 minutes
+            _decoy(svc)  # the per-email ceiling: the next code waits, at most 15 minutes
+            return SENT
     try:
         svc.sender.send(email, svc.codes.issue(s.id, email))
     except Exception:
@@ -165,6 +174,10 @@ def request_code(body: EmailBody, request: Request) -> dict:
     if token is not None:
         svc.ceiling.issued(token)  # confirmed after the code went out
     return SENT
+
+
+def _decoy(svc) -> None:  # noqa: ANN001
+    svc.decoy_sender.send("decoy@invalid", svc.codes.decoy())
 
 
 @router.post("/auth/verify")
@@ -237,6 +250,7 @@ def logout(request: Request, response: Response) -> dict:
     if s is not None:
         svc.sessions.delete(s)
     clear_cookie(response)
+    response.delete_cookie(DEVICE_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
     return {"status": "signed_out"}
 
 
