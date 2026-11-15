@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { getSession, post } from "@/lib/api";
-import { clearAllCaches } from "@/lib/caches";
+import { getSession } from "@/lib/api";
+import { signOut } from "@/lib/signout";
 import type { SessionView } from "@/lib/types";
 
 const NAV = [
@@ -48,14 +48,7 @@ export function Shell({ children }: { children: ReactNode }) {
       .catch(() => undefined); // offline: keep showing cached views
   }, [path, router]);
 
-  const signOut = async () => {
-    try {
-      await post("/api/auth/logout");
-    } finally {
-      await clearAllCaches();
-      router.replace("/login");
-    }
-  };
+  const onSignOut = () => void signOut(() => router.replace("/login"));
 
   const signedIn = session?.authenticated && session.tenant;
   return (
@@ -72,7 +65,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <Link href="/login?switch=1" className="tenant" title="Switch business">
               {session.tenant?.tenant_name}
             </Link>
-            <button type="button" className="link-button" onClick={signOut}>
+            <button type="button" className="link-button" onClick={onSignOut}>
               Sign out
             </button>
           </div>

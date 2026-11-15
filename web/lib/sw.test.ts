@@ -102,7 +102,7 @@ describe("clearAllCaches on sign-out and tenant switch", () => {
     vi.stubGlobal("caches", fake);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
-      value: { ready: Promise.resolve({ active: { postMessage } }) },
+      value: { getRegistration: async () => ({ active: { postMessage } }) },
     });
     await clearAllCaches();
     expect(await fake.keys()).toEqual([]);
