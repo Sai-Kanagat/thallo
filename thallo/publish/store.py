@@ -15,6 +15,7 @@ Events go to `event_log` (the outbox) in the same transaction as the change they
 from __future__ import annotations
 
 from collections.abc import Collection
+from datetime import datetime
 from typing import Any, Protocol
 
 from thallo.contracts.actors import SystemActor
@@ -85,10 +86,16 @@ class PublishStore:
         self.rows.insert(send)
         return True
 
-    def swap(self, publication_id: str, expect: Collection[SendState], **fields: Any) -> bool:
-        """Set fields on the send row only if its state is one of `expect`."""
+    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int | None = None,
+             if_requested_at: datetime | None = None, **fields: Any) -> bool:
+        """Set fields on the send row only if its state is one of `expect` and, when given, its
+        attempt number and requested time are still these (the attempt the caller acted on)."""
         current = self.send(publication_id)
         if current is None or current.state not in expect:
+            return False
+        if if_attempts is not None and current.attempts != if_attempts:
+            return False
+        if if_requested_at is not None and current.requested_at != if_requested_at:
             return False
         return self.rows.update(PublicationSend, publication_id, updated_at=self.clock.now(), **fields)
 
@@ -136,7 +143,8 @@ class PgPublishStore(PublishStore):
         self.rows.insert(send)
         return True
 
-    def swap(self, publication_id: str, expect: Collection[SendState], **fields: Any) -> bool:
+    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int | None = None,
+             if_requested_at: datetime | None = None, **fields: Any) -> bool:
         from thallo.store.db import _value  # the repo's own value encoding
 
         fields["updated_at"] = self.clock.now()
@@ -145,9 +153,16 @@ class PgPublishStore(PublishStore):
         for n in names:
             if n not in PublicationSend.model_fields:
                 raise ValueError(f"unknown field {n}")
+        where = "id = %s AND state = ANY(%s)"
+        params: list[Any] = [publication_id, [s.value for s in expect]]
+        if if_attempts is not None:
+            where += " AND attempts = %s"
+            params.append(if_attempts)
+        if if_requested_at is not None:
+            where += " AND requested_at = %s"
+            params.append(if_requested_at)
         cur = self.rows.execute(  # type: ignore[attr-defined]
-            f"UPDATE publication_send SET {sets} WHERE id = %s AND state = ANY(%s)",
-            [_value(fields[n]) for n in names] + [publication_id, [s.value for s in expect]])
+            f"UPDATE publication_send SET {sets} WHERE {where}", [_value(fields[n]) for n in names] + params)
         return cur.rowcount == 1
 
     def swap_slot(self, slot_id: str, expect: PlanSlotState, target: PlanSlotState, **fields: Any) -> bool:

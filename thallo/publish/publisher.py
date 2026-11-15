@@ -34,8 +34,8 @@ from __future__ import annotations
 import difflib
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from thallo.connections.errors import NoConnection, ProviderUnavailable
@@ -118,6 +118,8 @@ class Outcome:
     warnings: tuple[str, ...] = ()
     external_id: str | None = None
     live_url: str | None = None
+    attempt: int | None = None  # the send a person is shown; `settle` must quote it back
+    requested_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -271,7 +273,9 @@ class Publisher:
         else:
             assert send is not None  # `_standing` returns an outcome when the send row is missing
             attempts = send.attempts + 1
-            if not s.store.swap(existing.id, {SendState.RETRY}, state=SendState.SENDING, attempts=attempts,
+            if not s.store.swap(existing.id, {SendState.RETRY}, if_attempts=send.attempts,
+                                if_requested_at=send.requested_at,
+                                state=SendState.SENDING, attempts=attempts,
                                 requested_at=now, text_sha256=text_sha, media_sha256=list(payload.media_sha256),
                                 next_try_at=None, detail=None):
                 return Outcome(Status.IN_FLIGHT, variant_id, WaitingOn.PUBLISHER,
@@ -304,6 +308,18 @@ class Publisher:
                 continue
             return row, provider
         raise NoConnection("no publishing connection can serve this request")
+
+    def status(self, tenant_id: str, variant_id: str) -> Outcome:
+        """Where the variant's send stands, read only. Carries the attempt number and requested
+        time a person must quote back to `settle`."""
+        pub, send, _ = self._load(tenant_id, variant_id)
+        if pub is None:
+            return Outcome(Status.READBACK_PENDING, variant_id, WaitingOn.PUBLISHER, "nothing has been sent")
+        out = self._standing(pub, send) or Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
+                                                   "not sent; the retry is due", pub.id)
+        if send is None:
+            return out
+        return replace(out, attempt=send.attempts, requested_at=send.requested_at)
 
     def _standing(self, pub: Publication, send: PublicationSend | None) -> Outcome | None:
         """What an existing publication says, or None when it is a retry that is due."""
@@ -366,15 +382,17 @@ class Publisher:
         now = self.clock.now()
         if out.status == "manual_pending":
             with self.sessions(p.tenant_id) as s:
-                s.store.swap(p.publication_id, {SendState.SENDING}, state=SendState.MANUAL_PENDING,
-                             detail="manual pack prepared")
+                if not self._swap_mine(s, p, state=SendState.MANUAL_PENDING, detail="manual pack prepared"):
+                    return self._conflict(s, p, "a manual pack was prepared")
             return Outcome(Status.MANUAL_PENDING, vid, WaitingOn.PERSON,
                            "post the prepared pack exactly as it is, then confirm the live link", p.publication_id)
         if not (out.external_id or out.live_url):
             return self._record_unknown(p, "the provider accepted the post but returned no id or link")
         published = out.status == "published"
         with self.sessions(p.tenant_id) as s:
-            s.store.swap(p.publication_id, {SendState.SENDING}, state=SendState.SENT, detail=out.status)
+            if not self._swap_mine(s, p, state=SendState.SENT, detail=out.status):
+                return self._conflict(s, p, f"the provider accepted it (external id {out.external_id}, "
+                                            f"live link {out.live_url})", out.external_id, out.live_url)
             s.store.update_publication(p.publication_id, external_id=out.external_id, live_url=out.live_url,
                                        sent_at=now)
             if published:
@@ -385,14 +403,36 @@ class Publisher:
                        "read back the live text to prove what landed", p.publication_id,
                        external_id=out.external_id, live_url=out.live_url)
 
+    @staticmethod
+    def _swap_mine(s: PublishSession, p: _Prepared, **fields) -> bool:
+        """Compare and set on exactly the claim this send made: still SENDING, same attempt, same
+        requested time. Anything else means another writer moved the row while the call ran."""
+        return s.store.swap(p.publication_id, {SendState.SENDING}, if_attempts=p.attempts,
+                            if_requested_at=p.context.requested_at, **fields)
+
+    def _conflict(self, s: PublishSession, p: _Prepared, what: str, external_id: str | None = None,
+                  live_url: str | None = None) -> Outcome:
+        """The row moved while this send ran (a person settled it, a reconcile ran, a lease
+        expired). Nothing of this send's result is written to the publication or the variant; the
+        row goes to NEEDS_CHECK naming what this send got back, for a person to resolve."""
+        vid = p.request.variant_id
+        detail = (f"conflict: attempt {p.attempts} finished after the send row had moved; {what}")[:1000]
+        s.store.swap(p.publication_id, set(SendState), state=SendState.NEEDS_CHECK, detail=detail)
+        s.store.emit(EventName.PUBLICATION_BLOCKED, BlockedPayload(variant_id=vid, reason=detail))
+        return Outcome(Status.NEEDS_CHECK, vid, WaitingOn.PERSON,
+                       "two outcomes were recorded for one send; a person checks the channel and settles it",
+                       p.publication_id, reasons=("conflict",), detail=detail, external_id=external_id,
+                       live_url=live_url)
+
     def _record_not_sent(self, p: _Prepared, exc: NotSent) -> Outcome:
         vid = p.request.variant_id
         retry = exc.retryable and p.attempts < self.max_attempts
         next_try = self.clock.now() + self.retry_base * (2 ** (p.attempts - 1)) if retry else None
         detail = f"not sent: {exc}"[:1000]
         with self.sessions(p.tenant_id) as s:
-            s.store.swap(p.publication_id, {SendState.SENDING}, state=SendState.RETRY if retry else SendState.FAILED,
-                         next_try_at=next_try, detail=detail)
+            if not self._swap_mine(s, p, state=SendState.RETRY if retry else SendState.FAILED,
+                                   next_try_at=next_try, detail=detail):
+                return self._conflict(s, p, detail)
             s.store.move_variant(vid, VariantState.FAILED)
             s.store.emit(EventName.PUBLICATION_BLOCKED, BlockedPayload(variant_id=vid, reason=detail))
         if retry:
@@ -407,7 +447,8 @@ class Publisher:
     def _record_unknown(self, p: _Prepared, detail: str) -> Outcome:
         vid = p.request.variant_id
         with self.sessions(p.tenant_id) as s:
-            s.store.swap(p.publication_id, {SendState.SENDING}, state=SendState.NEEDS_CHECK, detail=detail)
+            if not self._swap_mine(s, p, state=SendState.NEEDS_CHECK, detail=detail):
+                return self._conflict(s, p, detail)
             s.store.emit(EventName.PUBLICATION_BLOCKED, BlockedPayload(variant_id=vid, reason=f"needs_check: {detail}"))
         return Outcome(Status.NEEDS_CHECK, vid, WaitingOn.PUBLISHER,
                        "the send may have landed; reconcile by readback, never resend", p.publication_id, detail=detail)
@@ -449,9 +490,17 @@ class Publisher:
         if standing is None or standing.status is not Status.NEEDS_CHECK:
             return standing or Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
                                        "not sent; the retry is due", pub.id)
+        if send.state is SendState.SENDING:  # the lease expired: the claimant died or hangs
+            with self.sessions(tenant_id) as s:
+                if not s.store.swap(pub.id, {SendState.SENDING}, if_attempts=send.attempts,
+                                    if_requested_at=send.requested_at, state=SendState.NEEDS_CHECK,
+                                    detail="the send's lease expired before its outcome was recorded"):
+                    return Outcome(Status.IN_FLIGHT, variant_id, WaitingOn.PUBLISHER, "the send row moved; look again",
+                                   pub.id)
         text = outgoing_text(variant)
         if sha256_hex(text.encode("utf-8")) != send.text_sha256:
-            return self._hold(tenant_id, pub, "the variant changed after the send; a person checks the channel by hand")
+            return self._hold(tenant_id, pub, send,
+                              "the variant changed after the send; a person checks the channel by hand")
         try:
             result = self._lookup(tenant_id, pub, send, text, variant.channel.value)
         except Exception as exc:
@@ -460,11 +509,12 @@ class Publisher:
                            detail=type(exc).__name__)
         found = result.external_ids.get("external_id")
         if result.status != "done" or not found:
-            return self._hold(tenant_id, pub, "the reconcile found no post for this key; a person checks the channel")
+            return self._hold(tenant_id, pub, send,
+                              "the reconcile found no post for this key; a person checks the channel")
         live_url = result.external_ids.get("live_url")
         with self.sessions(tenant_id) as s:
-            if not s.store.swap(pub.id, {SendState.SENDING, SendState.NEEDS_CHECK}, state=SendState.SENT,
-                                detail="found by reconcile"):
+            if not s.store.swap(pub.id, {SendState.NEEDS_CHECK}, if_attempts=send.attempts,
+                                if_requested_at=send.requested_at, state=SendState.SENT, detail="found by reconcile"):
                 return Outcome(Status.IN_FLIGHT, variant_id, WaitingOn.PUBLISHER, "settled by another process", pub.id)
             s.store.update_publication(pub.id, external_id=found, live_url=live_url, sent_at=send.requested_at)
             s.store.move_variant(variant_id, VariantState.PUBLISHED)
@@ -472,17 +522,22 @@ class Publisher:
         return Outcome(Status.SENT, variant_id, WaitingOn.PUBLISHER, "found the post; read back the live text",
                        pub.id, external_id=found, live_url=live_url)
 
-    def _hold(self, tenant_id: str, pub: Publication, why: str) -> Outcome:
+    def _hold(self, tenant_id: str, pub: Publication, send: PublicationSend, why: str) -> Outcome:
         with self.sessions(tenant_id) as s:
-            s.store.swap(pub.id, {SendState.SENDING, SendState.NEEDS_CHECK}, state=SendState.NEEDS_CHECK, detail=why)
+            s.store.swap(pub.id, {SendState.NEEDS_CHECK}, if_attempts=send.attempts, if_requested_at=send.requested_at,
+                         state=SendState.NEEDS_CHECK, detail=why)
         return Outcome(Status.NEEDS_CHECK, pub.variant_id, WaitingOn.PERSON,
                        why + "; then record what is live (settle), the publisher never resends on its own", pub.id)
 
     def settle(self, tenant_id: str, variant_id: str, *, actor: HumanActor, verifier: SessionVerifier,
-               posted: bool, live_url: str | None = None, external_id: str | None = None) -> Outcome:
-        """A person says what is live, for a manual pack or a send that needs a check. `posted`
-        with a link marks it SENT; `posted=False` says nothing went out, so the same bytes may be
-        tried again (RETRY, due now)."""
+               attempt: int, requested_at: datetime, posted: bool, live_url: str | None = None,
+               external_id: str | None = None) -> Outcome:
+        """A person says what is live, for a manual pack or a send that needs a check. `attempt`
+        and `requested_at` are the send the person was shown: if the row has moved since (another
+        attempt, a reconcile), nothing is written. Only MANUAL_PENDING and NEEDS_CHECK can be
+        settled; a send still in its lease cannot, and an expired one is first made NEEDS_CHECK
+        by `reconcile`. `posted` with a link marks it SENT; `posted=False` says nothing went out,
+        so the same bytes may be tried again (RETRY, due now)."""
         if actor.tenant_id != tenant_id or not verifier.is_live_human_session(actor):
             return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "only the signed-in person can settle a send",
                            reasons=("not_a_person",))
@@ -494,10 +549,13 @@ class Publisher:
             if pub is None:
                 return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "there is no send to settle",
                                reasons=("no_publication",))
-            open_states = {SendState.MANUAL_PENDING, SendState.NEEDS_CHECK, SendState.SENDING}
+            open_states = {SendState.MANUAL_PENDING, SendState.NEEDS_CHECK}
+            guard = {"if_attempts": attempt, "if_requested_at": requested_at}
             if posted:
-                if not s.store.swap(pub.id, open_states, state=SendState.SENT, detail=f"confirmed by {actor.id}"):
-                    return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY, "this send is not waiting on a person",
+                if not s.store.swap(pub.id, open_states, **guard, state=SendState.SENT,
+                                    detail=f"confirmed by {actor.id}"):
+                    return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY,
+                                   "this send is not waiting on a person, or it changed since it was shown",
                                    pub.id, reasons=("not_open",))
                 s.store.update_publication(pub.id, live_url=live_url, external_id=external_id, sent_at=self.clock.now())
                 s.store.move_variant(variant_id, VariantState.PUBLISHED)
@@ -505,9 +563,10 @@ class Publisher:
                              PublicationPayload(publication_id=pub.id, variant_id=variant_id))
                 return Outcome(Status.SENT, variant_id, WaitingOn.PUBLISHER, "read back the live text", pub.id,
                                live_url=live_url, external_id=external_id)
-            if not s.store.swap(pub.id, open_states, state=SendState.RETRY, next_try_at=self.clock.now(),
+            if not s.store.swap(pub.id, open_states, **guard, state=SendState.RETRY, next_try_at=self.clock.now(),
                                 detail=f"{actor.id} confirmed nothing went out"):
-                return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY, "this send is not waiting on a person",
+                return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY,
+                               "this send is not waiting on a person, or it changed since it was shown",
                                pub.id, reasons=("not_open",))
             s.store.move_variant(variant_id, VariantState.FAILED)
         return Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
