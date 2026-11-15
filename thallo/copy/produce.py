@@ -409,7 +409,12 @@ def _check_rows(cand: CandidateRun, variant: Variant, sha: str, clock: Clock) ->
                  for name in sorted(seen - names)]
         rows += new
         seen |= names
-    return rows
+    # The gate orders rows of one key by id as well as attempt (a PASS clears a FAIL only when it
+    # is newer, gate/checks.py). These rows are made in one pass, often in one millisecond, where
+    # uuid7 order is random, so give them ids that rise with the attempt.
+    ids = sorted(r.id for r in rows)
+    ordered = sorted(rows, key=lambda r: r.attempt)
+    return [r.model_copy(update={"id": i}) for r, i in zip(ordered, ids, strict=True)]
 
 
 def _finish(runs: list[CandidateRun], stop: _Stop | None, run: _Run, *, tenant: Tenant, brief: Brief,

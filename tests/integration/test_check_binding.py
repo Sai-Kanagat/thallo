@@ -486,3 +486,34 @@ def test_postgres_migration_marks_existing_rows_so_they_never_count(tmp_path):
     finally:
         with psycopg.connect(url, autocommit=True) as conn:
             conn.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+
+
+# ---------------------------------------------------------------- a late FAIL at a low attempt (gate review)
+
+def test_a_fail_at_attempt_one_written_after_a_pass_at_attempt_three_blocks(backend, signer):
+    shop, fixed = fixed_shop(backend, "Omega")
+    clean = run_truth(backend, shop, fixed.compiled.text, attempt=3)
+    assert all(r.verdict is CheckVerdict.PASS for r in clean)
+    assert approve(backend, shop, signer, acknowledged=[]).acknowledged_flag_ids == []
+    assert publish(backend, shop, signer).allowed
+    late = next(r for r in clean if r.check_name == "truth.compile")
+    insert(backend, shop, [late.model_copy(update={"id": _id(backend), "verdict": CheckVerdict.FAIL,
+                                                   "attempt": 1, "reason": "late fail"})])
+    decision = publish(backend, shop, signer)
+    assert not decision.allowed and BlockReason.CHECK_FAILED in decision.reasons
+    back_to_review(backend, shop, signer)
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        approve(backend, shop, signer, acknowledged=[])
+
+
+def test_the_repair_loop_fail_at_one_then_pass_at_two_still_grants(backend, signer):
+    shop, fixed = fixed_shop(backend, "Omicron")
+    first = run_truth(backend, shop, fixed.compiled.text, attempt=1)
+    summary = next(r for r in first if r.check_name == "truth.compile")
+    insert(backend, shop, [summary.model_copy(update={"id": _id(backend), "verdict": CheckVerdict.FAIL,
+                                                      "reason": "first try failed"})])
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        approve(backend, shop, signer, acknowledged=[])
+    run_truth(backend, shop, fixed.compiled.text, attempt=2)
+    assert approve(backend, shop, signer, acknowledged=[]).acknowledged_flag_ids == []
+    assert publish(backend, shop, signer).allowed

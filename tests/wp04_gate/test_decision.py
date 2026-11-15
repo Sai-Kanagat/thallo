@@ -323,6 +323,7 @@ def test_slot_without_linked_claim_blocks(world):
     # can insert one), publish still refuses the unlinked slot on its own.
     fails = [r for r in world.checks if r.variant_id == vid and r.verdict is CheckVerdict.FAIL]
     assert fails
+    world.clock.advance(seconds=1)  # the forged rows are written later (uuid7 order is write order)
     world.checks += [r.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2,
                                           "reason": "forged"}) for r in fails]
     a = world.approve(run_checks=False)
