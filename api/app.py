@@ -55,7 +55,7 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     from api.backend import PgBackend
     from api.directory import OwnerDirectory
     from api.media_store import TenantMediaStore
-    from api.sessions import ConsoleCodeSender, NoCodeSender
+    from api.sessions import ConsoleCodeSender, DeviceSigner, NoCodeSender
     from thallo.connections.registry import ProviderRegistry
     from thallo.connections.vault import Vault
     from thallo.contracts.clock import SystemClock
@@ -76,11 +76,13 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     _conns, secrets, _health = backend.connection_stores()
     vault = Vault.from_env(secrets, clock, env) if env.get("THALLO_VAULT_KEY") else None
     sender = ConsoleCodeSender() if env.get("THALLO_DEV_CONSOLE_LOGIN") == "1" else NoCodeSender()
+    device_key = env.get("THALLO_DEVICE_KEY", "")
     origins = [o.strip() for o in env.get("THALLO_WEB_ORIGIN", "").split(",") if o.strip()]
     return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
-                    trust_proxy=env.get("THALLO_TRUSTED_PROXY") == "1")
+                    trust_proxy=env.get("THALLO_TRUSTED_PROXY") == "1",
+                    devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None))
 
 
 __all__ = ["API_CSP", "create_app", "services_from_env"]
