@@ -377,25 +377,34 @@ CHECK_NAME = "truth.compile"
 
 def to_check_results(result: CompileResult, *, variant_id: str, content_sha256: str, clock: Clock,
                      attempt: int = 1, model_id: str | None = None) -> list[CheckResult]:
-    """One `check_result` row (layer CODE) per BLOCK finding (verdict FAIL) and per FLAG finding
-    (verdict FLAG, which the approver must acknowledge one by one), or a single PASS row.
+    """The rows of one compile run (layer CODE), always under every key the compiler has, so the
+    newest attempt decides every key on its own (gate/checks.py):
+      - for each `FindingKind`, one row per finding of that kind (BLOCK gives FAIL, FLAG gives FLAG,
+        which the approver must acknowledge one by one), or one PASS row when it raised none;
+      - the summary row `truth.compile`: FAIL when any BLOCK finding was raised, else PASS.
+    So a rerun on unchanged content clears a FAIL once the world changed (a claim got verified), and
+    a key never keeps an old FAIL because the clean run wrote under another name.
 
     `content_sha256` is the hash of the variant content this text belongs to, from the gate's own
-    function (`thallo.gate.variant_hash`, or `thallo.gate.content_hashes` from a repository). The
-    gate counts a row only while the variant still hashes to it, so a FAIL here stops counting once
-    the content is corrected, and counts again if the old content comes back."""
-    rows = []
-    for f in result.findings:
-        verdict = CheckVerdict.FAIL if f.severity is Severity.BLOCK else CheckVerdict.FLAG
-        rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=result.tenant_id,
-                                variant_id=variant_id, layer=CheckLayer.CODE, check_name=f"{CHECK_NAME}.{f.kind.value}",
-                                verdict=verdict, reason=f"[{f.start}:{f.end}] {f.message}", attempt=attempt,
-                                model_id=model_id, content_sha256=content_sha256))
-    if not rows:
-        rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=result.tenant_id,
-                                variant_id=variant_id, layer=CheckLayer.CODE, check_name=CHECK_NAME,
-                                verdict=CheckVerdict.PASS, attempt=attempt, model_id=model_id,
-                                content_sha256=content_sha256))
+    function (`thallo.gate.check_hash`, or `thallo.gate.content_hashes` from a repository). The gate
+    counts a row only while the variant still hashes to it."""
+    def row(name: str, verdict: CheckVerdict, reason: str | None = None) -> CheckResult:
+        return CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=result.tenant_id,
+                           variant_id=variant_id, layer=CheckLayer.CODE, check_name=name, verdict=verdict,
+                           reason=reason, attempt=attempt, model_id=model_id, content_sha256=content_sha256)
+
+    rows: list[CheckResult] = []
+    for kind in FindingKind:
+        raised = [f for f in result.findings if f.kind is kind]
+        name = f"{CHECK_NAME}.{kind.value}"
+        rows += [row(name, CheckVerdict.FAIL if f.severity is Severity.BLOCK else CheckVerdict.FLAG,
+                     f"[{f.start}:{f.end}] {f.message}") for f in raised]
+        if not raised:
+            rows.append(row(name, CheckVerdict.PASS))
+    blocks = sum(1 for f in result.findings if f.severity is Severity.BLOCK)
+    flags = len(result.findings) - blocks
+    rows.append(row(CHECK_NAME, CheckVerdict.FAIL if blocks else CheckVerdict.PASS,
+                    f"{blocks} blocking finding(s), {flags} flag(s)" if result.findings else None))
     return rows
 
 
