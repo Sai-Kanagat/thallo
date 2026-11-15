@@ -302,19 +302,17 @@ class RateLimiter:
             return True
 
 
-LOCKOUT_AFTER = 10  # failed verifications per identity, across every session and client
+LOCKOUT_AFTER = 10  # wrong guesses at issued codes, per (email, client network)
 LOCKOUT_BASE = timedelta(minutes=1)
-LOCKOUT_MAX = timedelta(hours=1)
-LOCKOUT_MAX_EXP = 6  # 1 minute doubled six times is 64 minutes, past the cap: the exponent stops there
+LOCKOUT_MAX = timedelta(minutes=15)
+LOCKOUT_MAX_EXP = 4  # 1, 2, 4, 8 minutes, then the 15-minute cap: the exponent stops there
 _MAX_COUNT = LOCKOUT_AFTER + LOCKOUT_MAX_EXP
 
 
 class FailureLockout:
-    """Counts failed checks of codes that were really issued, per (email, client network). From
-    the tenth failure on, new codes for that email requested FROM THAT NETWORK are refused for 1,
-    2, 4 ... minutes, capped at an hour (the exponent and the count are clamped). So someone on
-    another network cannot lock the owner out, and a guesser gets at most five tries per code at 1
-    in 10^8 each while the lockout limits how many codes their network can get. A success clears."""
+    """Per (email, client network), for unknown devices: from the tenth wrong guess at a really
+    issued code, new codes requested FROM THAT NETWORK wait 1, 2, 4, 8 minutes, capped at 15.
+    Another network is never affected. A success clears it. Count and exponent are clamped."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
@@ -333,8 +331,7 @@ class FailureLockout:
             self._fails[key] = n
             if n >= LOCKOUT_AFTER:
                 exp = min(n - LOCKOUT_AFTER, LOCKOUT_MAX_EXP)
-                wait = min(LOCKOUT_BASE * (2 ** exp), LOCKOUT_MAX)
-                self._until[key] = self.clock.now() + wait
+                self._until[key] = self.clock.now() + min(LOCKOUT_BASE * (2 ** exp), LOCKOUT_MAX)
 
     def clear(self, key: str) -> None:
         with self._lock:
@@ -342,52 +339,104 @@ class FailureLockout:
             self._until.pop(key, None)
 
 
-ISSUES_PER_EMAIL = 20  # new codes per email per window, all networks together
-WRONG_PER_EMAIL = 50  # wrong guesses at issued codes per email per window, all networks together
-NETWORKS_PER_EMAIL = 8  # distinct client networks asking for codes for one email per window
+ISSUES_PER_EMAIL = 20  # codes actually issued per email per window, every network together
+WRONG_PER_EMAIL = 50  # wrong guesses at issued codes per email per window, every network together
+NETWORKS_PER_EMAIL = 8  # distinct networks that produced a wrong guess for one email per window
 CEILING_WINDOW = timedelta(minutes=15)
+CEILING_BASE = timedelta(minutes=1)
+CEILING_MAX = timedelta(minutes=15)
+CEILING_MAX_EXP = 4
 
 
 class EmailCeiling:
-    """The global per-email backstop against a guesser spread over many networks. It only ever
-    stops NEW codes from being issued; a code already issued and still alive can always be used
-    (each code dies after `MAX_CODE_ATTEMPTS` wrong guesses from anywhere, so an issued code bounds
-    guessing by itself). Issue stops when, inside the window, the email had `ISSUES_PER_EMAIL` codes,
-    `WRONG_PER_EMAIL` wrong guesses, or requests from `NETWORKS_PER_EMAIL` distinct networks and
-    this request comes from a new one."""
+    """The per-email backstop, for unknown devices only. It counts codes actually issued and wrong
+    guesses at them, never bare requests. Deciding (`ready`) and recording (`issued`, `wrong`) are
+    separate steps; `issued` runs only after a code went out. When the ceiling is hit, the next code
+    for that email waits 1, 2, 4, 8 minutes after the last one issued, capped at 15 minutes: a delay,
+    never an indefinite refusal. A network counts toward the distinct-network cap only once it
+    produced a wrong guess. A code already issued is never affected."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self._issues: dict[str, deque[datetime]] = {}
         self._wrong: dict[str, deque[datetime]] = {}
-        self._nets: dict[str, dict[str, datetime]] = {}
+        self._bad_nets: dict[str, dict[str, datetime]] = {}
+        self._strikes: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def _trim(self, q: deque[datetime], now: datetime) -> deque[datetime]:
+    def _trim(self, table: dict[str, deque[datetime]], key: str, now: datetime) -> deque[datetime]:
+        q = table.setdefault(key, deque())
         while q and now - q[0] >= CEILING_WINDOW:
             q.popleft()
         return q
 
-    def may_issue(self, email_hash: str, network: str) -> bool:
-        """Decide and record one request for a code. False means: send nothing."""
-        with self._lock:
-            now = self.clock.now()
-            issues = self._trim(self._issues.setdefault(email_hash, deque()), now)
-            wrong = self._trim(self._wrong.setdefault(email_hash, deque()), now)
-            nets = {n: t for n, t in self._nets.get(email_hash, {}).items() if now - t < CEILING_WINDOW}
-            self._nets[email_hash] = nets
-            if len(issues) >= ISSUES_PER_EMAIL or len(wrong) >= WRONG_PER_EMAIL:
-                return False
-            if network not in nets and len(nets) >= NETWORKS_PER_EMAIL:
-                return False
-            nets[network] = now
-            issues.append(now)
-            return True
+    def _hit(self, key: str, network: str, now: datetime) -> bool:
+        issues = self._trim(self._issues, key, now)
+        wrong = self._trim(self._wrong, key, now)
+        nets = {n: t for n, t in self._bad_nets.get(key, {}).items() if now - t < CEILING_WINDOW}
+        self._bad_nets[key] = nets
+        return (len(issues) >= ISSUES_PER_EMAIL or len(wrong) >= WRONG_PER_EMAIL
+                or (network not in nets and len(nets) >= NETWORKS_PER_EMAIL))
 
-    def wrong(self, email_hash: str) -> None:
+    def delay(self, key: str) -> timedelta:
+        exp = min(self._strikes.get(key, 0), CEILING_MAX_EXP)
+        return min(CEILING_BASE * (2 ** exp), CEILING_MAX)
+
+    def ready(self, key: str, network: str) -> bool:
+        """Decide only: may a new code be issued now? Records nothing."""
         with self._lock:
             now = self.clock.now()
-            self._trim(self._wrong.setdefault(email_hash, deque()), now).append(now)
+            if not self._hit(key, network, now):
+                self._strikes.pop(key, None)
+                return True
+            issues = self._issues.get(key)
+            last = issues[-1] if issues else None
+            return last is None or now >= last + self.delay(key)
+
+    def issued(self, key: str, network: str) -> None:
+        """Record a code that was actually issued (after it went out)."""
+        with self._lock:
+            now = self.clock.now()
+            if self._hit(key, network, now):
+                self._strikes[key] = min(self._strikes.get(key, 0) + 1, CEILING_MAX_EXP)
+            self._trim(self._issues, key, now).append(now)
+
+    def wrong(self, key: str, network: str) -> None:
+        with self._lock:
+            now = self.clock.now()
+            self._trim(self._wrong, key, now).append(now)
+            self._bad_nets.setdefault(key, {})[network] = now
+
+
+DEVICE_TTL = timedelta(days=180)
+
+
+class DeviceSigner:
+    """A known device: after a sign-in, a long-lived cookie `v1.<identity>.<expiry>.<mac>`, HMAC
+    signed with a key only this process holds (THALLO_DEVICE_KEY when set, else random per start).
+    A valid one for the identity being signed in exempts that request from the per-email ceiling,
+    the distinct-network cap and the per-network lockout; per-code guess limits and per-network
+    rate limits still apply. It never signs anyone in by itself."""
+
+    def __init__(self, key: bytes | None = None) -> None:
+        self._key = key if key else secrets.token_bytes(32)
+
+    def _mac(self, identity_id: str, expiry: int) -> str:
+        return hmac.new(self._key, f"v1.{identity_id}.{expiry}".encode(), hashlib.sha256).hexdigest()
+
+    def make(self, identity_id: str, now: datetime) -> str:
+        expiry = int((now + DEVICE_TTL).timestamp())
+        return f"v1.{identity_id}.{expiry}.{self._mac(identity_id, expiry)}"
+
+    def valid_for(self, token: str | None, identity_id: str, now: datetime) -> bool:
+        if not token or len(token) > 256:
+            return False
+        parts = token.split(".")
+        if len(parts) != 4 or parts[0] != "v1" or not parts[2].isdigit():
+            return False
+        _, ident, expiry, mac = parts
+        return (hmac.compare_digest(mac, self._mac(ident, int(expiry))) and ident == identity_id
+                and now.timestamp() < int(expiry))
 
 
 def client_keys(host: str | None, forwarded_for: str | None, *, trust_proxy: bool) -> tuple[str, str]:
@@ -432,7 +481,7 @@ class ApiSessionVerifier:
 
 
 __all__ = [
-    "ABSOLUTE_LIFETIME", "CODE_TTL", "EmailCeiling", "FailureLockout", "client_keys",
+    "ABSOLUTE_LIFETIME", "CODE_TTL", "DeviceSigner", "EmailCeiling", "FailureLockout", "client_keys",
     "IDLE_TIMEOUT", "ApiSessionVerifier", "CodeSender", "ConsoleCodeSender",
     "InMemorySessionStore", "LoginCodes", "NoCodeSender", "RateLimiter", "Session", "SessionKind",
     "SessionStore", "Shown", "email_key",

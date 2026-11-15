@@ -20,6 +20,7 @@ from api.media_store import TenantMediaStore
 from api.sessions import (
     ApiSessionVerifier,
     CodeSender,
+    DeviceSigner,
     EmailCeiling,
     FailureLockout,
     InMemorySessionStore,
@@ -37,6 +38,7 @@ from thallo.contracts.models import AppUser
 from thallo.gate.signing import GateSigner
 
 COOKIE = "__Host-thallo_sid"
+DEVICE_COOKIE = "__Host-thallo_device"
 CSRF_HEADER = "x-csrf-token"
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -61,6 +63,7 @@ class Services:
     limits: RateLimiter = None  # type: ignore[assignment]
     lockout: FailureLockout = None  # type: ignore[assignment]
     ceiling: EmailCeiling = None  # type: ignore[assignment]
+    devices: DeviceSigner = None  # type: ignore[assignment]
     trust_proxy: bool = False  # THALLO_TRUSTED_PROXY=1: read the last X-Forwarded-For entry
     allowed_origins: Collection[str] = ()
     mock_tenants: Collection[str] = ()
@@ -77,6 +80,8 @@ class Services:
             self.lockout = FailureLockout(self.clock)
         if self.ceiling is None:
             self.ceiling = EmailCeiling(self.clock)
+        if self.devices is None:
+            self.devices = DeviceSigner()
         self.verifier = ApiSessionVerifier(self.sessions)
 
 
@@ -103,6 +108,11 @@ def current_session(request: Request) -> Session | None:
 
 def set_cookie(response: Response, token: str) -> None:
     response.set_cookie(COOKIE, token, httponly=True, secure=True, samesite="strict", path="/")
+
+
+def set_device_cookie(response: Response, value: str, max_age: int) -> None:
+    response.set_cookie(DEVICE_COOKIE, value, httponly=True, secure=True, samesite="strict", path="/",
+                        max_age=max_age)
 
 
 def clear_cookie(response: Response) -> None:
@@ -144,6 +154,7 @@ def member(request: Request, roles: Collection[UserRole], *, unsafe: bool = Fals
 
 
 __all__ = [
-    "COOKIE", "CONNECTION_EDITORS", "CSRF_HEADER", "PLANNERS", "PLAN_READERS", "REVIEWERS", "Ctx", "Services",
+    "COOKIE", "CONNECTION_EDITORS", "DEVICE_COOKIE", "set_device_cookie",
+    "CSRF_HEADER", "PLANNERS", "PLAN_READERS", "REVIEWERS", "Ctx", "Services",
     "check_csrf", "clear_cookie", "current_session", "member", "services", "set_cookie",
 ]

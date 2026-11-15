@@ -11,8 +11,10 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.context import CSRF_HEADER
+from api.context import CSRF_HEADER, DEVICE_COOKIE
 from api.sessions import (
+    CEILING_MAX,
+    ISSUES_PER_EMAIL,
     LOCKOUT_AFTER,
     LOCKOUT_MAX,
     LOCKOUT_MAX_EXP,
@@ -204,14 +206,75 @@ def test_guesses_from_fifty_networks_cannot_pass_the_per_code_cap(world):
     assert r.status_code != 200  # dead after five wrong guesses, whatever network they came from
 
 
-def test_distinct_network_cap_stops_new_codes_only(world):
+def _fill_ceiling(world, email: str) -> None:
+    """Many networks each get a real code and guess wrong once: issued codes and bad networks."""
+    for i in range(ISSUES_PER_EMAIL):
+        c, csrf = _client(world, f"10.{i}.0.1")
+        _req(c, csrf, email)
+        c.post("/api/auth/verify", json={"email": email, "code": "00000009"}, headers={CSRF_HEADER: csrf})
+
+
+def test_networks_without_wrong_guesses_do_not_count(world):
     email = world.a.founder_email
-    for i in range(NETWORKS_PER_EMAIL):
+    for i in range(NETWORKS_PER_EMAIL + 2):  # plain requests, codes issued, no wrong guess
         c, csrf = _client(world, f"10.{i}.0.1")
         _req(c, csrf, email)
     calls = world.sender.calls
     c, csrf = _client(world, "10.200.0.1")
-    assert _req(c, csrf, email).status_code == 202 and world.sender.calls == calls  # same answer, no code
+    _req(c, csrf, email)
+    assert world.sender.calls == calls + 1
+
+
+def test_unknown_device_owner_waits_at_most_the_capped_delay(world):
+    email = world.a.founder_email
+    _fill_ceiling(world, email)
+    owner, o_csrf = _client(world, "198.51.100.77")
+    calls = world.sender.calls
+    assert _req(owner, o_csrf, email).status_code == 202 and world.sender.calls == calls  # same answer
+    world.clock.advance(seconds=CEILING_MAX.total_seconds() + 1)
+    owner, o_csrf = _client(world, "198.51.100.77")
+    _req(owner, o_csrf, email)
+    assert world.sender.calls == calls + 1  # a delay, never a lasting refusal
+    r = owner.post("/api/auth/verify", json={"email": email, "code": world.sender.codes[email]},
+                   headers={CSRF_HEADER: o_csrf})
+    assert r.status_code == 200
+
+
+def test_attackers_on_many_networks_cannot_stop_the_owner_on_a_known_device(world):
+    email = world.a.founder_email
+    owner, csrf = _client(world, "198.51.100.88")
+    _req(owner, csrf, email)
+    r = owner.post("/api/auth/verify", json={"email": email, "code": world.sender.codes[email]},
+                   headers={CSRF_HEADER: csrf})
+    assert r.status_code == 200 and DEVICE_COOKIE in owner.cookies
+    owner.post("/api/auth/logout", headers={CSRF_HEADER: r.json()["csrf_token"]})
+    _fill_ceiling(world, email)
+    for i in range(2):  # ten wrong guesses lock the owner's own network for unknown devices
+        a, a_csrf = _client(world, f"198.51.100.{i + 1}")
+        _req(a, a_csrf, email)
+        for _ in range(5):
+            a.post("/api/auth/verify", json={"email": email, "code": "00000008"}, headers={CSRF_HEADER: a_csrf})
+    stranger, s_csrf = _client(world, "198.51.100.99")
+    calls = world.sender.calls
+    _req(stranger, s_csrf, email)
+    assert world.sender.calls == calls  # unknown devices wait
+    csrf = owner.get("/api/session").json()["csrf_token"]
+    assert _req(owner, csrf, email).status_code == 202
+    assert world.sender.calls == calls + 1  # the known device gets its code at once
+    r = owner.post("/api/auth/verify", json={"email": email, "code": world.sender.codes[email]},
+                   headers={CSRF_HEADER: csrf})
+    assert r.status_code == 200, r.text
+
+
+def test_device_cookie_is_signed_and_bound_to_the_identity(world):
+    d = world.svc.devices
+    now = world.clock.now()
+    token = d.make(world.a.founder.identity_id, now)
+    assert d.valid_for(token, world.a.founder.identity_id, now)
+    assert not d.valid_for(token, world.b.founder.identity_id, now)
+    assert not d.valid_for(token[:-1] + ("0" if token[-1] != "0" else "1"), world.a.founder.identity_id, now)
+    forged = token.replace(world.a.founder.identity_id, world.b.founder.identity_id)
+    assert not d.valid_for(forged, world.b.founder.identity_id, now)
 
 
 def test_owner_with_a_live_code_signs_in_while_the_global_ceiling_is_hit(world):

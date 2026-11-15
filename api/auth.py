@@ -8,8 +8,24 @@ memberships. No passwords.
   POST /api/auth/tenant          {tenant_id}: must be one of those memberships; rotates the session
   POST /api/auth/logout
 
-Every POST needs the session's CSRF token, including the two before sign-in. Requests and checks
-are rate limited per email and per session; a limit hit answers the same way for every address.
+Every POST needs the session's CSRF token, including the two before sign-in.
+
+Limit design (final; see the security review rounds of 15 Nov):
+1. Brute force is bounded by the code itself: 8 digits, bound to the session that asked, dead after
+   5 wrong guesses from anywhere, 10 minutes to live. Everything below only limits how many codes
+   exist; nothing ever blocks verifying a code that is issued and alive.
+2. Known devices: a sign-in sets a long-lived signed device cookie. A code request carrying a valid
+   one for that identity skips the per-email ceiling, the distinct-network cap and the per-network
+   lockout (per-code guess limits and per-network rate limits still apply).
+3. Unknown devices: the per-email ceiling counts codes actually issued and wrong guesses, never bare
+   requests, recorded after the code goes out, separately from the decision. Hitting it delays the
+   next code (1, 2, 4, 8, at most 15 minutes after the last one), never refuses it for good. The
+   per-(email, network) lockout works the same way and never touches another network.
+4. A network counts toward the distinct-network cap only once it produced a wrong guess.
+5. Rate limits are per client, per network (/24 IPv4, /48 IPv6), per session and per (email,
+   network), never one shared bucket. X-Forwarded-For only behind THALLO_TRUSTED_PROXY=1.
+6. A code request always gets the same answer, whatever happened, so nothing reveals state (the
+   only other answer is the per-client or per-network 429, which says nothing about the address).
 """
 from __future__ import annotations
 
@@ -18,10 +34,18 @@ from datetime import timedelta
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.context import check_csrf, clear_cookie, current_session, services, set_cookie
+from api.context import (
+    DEVICE_COOKIE,
+    check_csrf,
+    clear_cookie,
+    current_session,
+    services,
+    set_cookie,
+    set_device_cookie,
+)
 from api.directory import Membership, normalise_email
 from api.errors import ApiError, unauthenticated
-from api.sessions import Session, SessionKind, client_keys, email_key
+from api.sessions import DEVICE_TTL, Session, SessionKind, client_keys, email_key
 
 router = APIRouter(prefix="/api")
 
@@ -120,14 +144,20 @@ def request_code(body: EmailBody, request: Request) -> dict:
             and svc.limits.allow(f"{email_key('req', email)}|{_keys(request)[1]}", REQUESTS_PER_EMAIL, WINDOW)
             and svc.limits.allow(f"req-session:{s.id}", REQUESTS_PER_SESSION, WINDOW)):
         raise _limited()
-    if svc.lockout.locked(_lock_key(request, email)):
-        return SENT  # locked after repeated failures: no new code, and the same answer
-    if not svc.ceiling.may_issue(email_key("ceiling", email), _keys(request)[1]):
-        return SENT  # the global per-email ceiling: no new code, the same answer
     identity = svc.directory.find_identity(email)
-    if identity is not None and svc.directory.memberships(identity.id):
-        svc.sender.send(email, svc.codes.issue(s.id, email))
-    return SENT  # the same words, known address or not
+    if identity is None or not svc.directory.memberships(identity.id):
+        return SENT  # the same words, known address or not
+    network = _keys(request)[1]
+    known = svc.devices.valid_for(request.cookies.get(DEVICE_COOKIE), identity.id, svc.clock.now())
+    if not known:
+        if svc.lockout.locked(_lock_key(request, email)):
+            return SENT  # a delay on this network after wrong guesses from it
+        if not svc.ceiling.ready(email_key("ceiling", email), network):
+            return SENT  # the per-email ceiling: the next code waits, at most 15 minutes
+    svc.sender.send(email, svc.codes.issue(s.id, email))
+    if not known:
+        svc.ceiling.issued(email_key("ceiling", email), network)  # recorded after the code went out
+    return SENT
 
 
 @router.post("/auth/verify")
@@ -147,7 +177,7 @@ def verify(body: VerifyBody, request: Request, response: Response) -> dict:
     if not svc.codes.check(s.id, email, body.code.strip()):
         if issued:
             svc.lockout.fail(_lock_key(request, email))
-            svc.ceiling.wrong(email_key("ceiling", email))
+            svc.ceiling.wrong(email_key("ceiling", email), _keys(request)[1])
         raise ApiError(400, "invalid_code", "that code is not valid; request a new one")
     svc.lockout.clear(_lock_key(request, email))
     identity = svc.directory.find_identity(email)
@@ -162,6 +192,7 @@ def verify(body: VerifyBody, request: Request, response: Response) -> dict:
     except PermissionError:
         raise unauthenticated() from None
     set_cookie(response, token)
+    set_device_cookie(response, svc.devices.make(identity.id, svc.clock.now()), int(DEVICE_TTL.total_seconds()))
     return {**_session_view(request, fresh), "memberships": [_membership_view(m) for m in memberships]}
 
 
