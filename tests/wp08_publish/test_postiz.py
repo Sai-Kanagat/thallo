@@ -195,6 +195,20 @@ def test_create_post_failures_map_to_not_sent_or_unknown(clock, vault, create, e
         assert got.value.retryable is retryable
 
 
+def test_surrounding_whitespace_in_the_operator_value_is_trimmed():
+    assert postiz_self_hosted.operator_origin(" https://postiz.example.com\n") == ("https", "postiz.example.com", 443)
+
+
+@pytest.mark.parametrize("mime", ["image/png\r\nX-Evil: 1", "image/pngé", "png", ""])
+def test_a_media_type_that_could_break_the_part_header_is_never_sent(clock, vault, mime):
+    fx = Fixtures(**OK)
+    ctx_ = context(clock)
+    bad = SendContext(**{**ctx_.__dict__, "media": (StagedMedia(0, SHA, mime, None, IMAGE),)})
+    with staged(bad), pytest.raises(NotSent, match="media type"):
+        hosted(clock, vault, fx).run(request())
+    assert fx.calls == []
+
+
 def test_a_lost_upload_is_not_a_post(clock, vault):
     fx = Fixtures(**{**OK, "POST upload": "raise_reached"})
     with staged(context(clock)), pytest.raises(NotSent):
@@ -243,12 +257,13 @@ def test_a_queued_post_is_not_live_text(clock, vault):
 @pytest.mark.parametrize("origin", [
     "", "http://postiz.example.com", "https://Postiz.example.com", "https://postiz.example.com/api",
     "https://a.example.com,https://b.example.com", "https://user@postiz.example.com", "https://postiz.example.com.",
-    "https://postiz.example.com?x=1", " https://postiz.example.com\n", "https://postiz.example.com:99999",
+    "https://postiz.example.com?x=1", "https://postiz.example.com:99999", "https://10.0.0.5",
 ])
 def test_a_hostile_or_malformed_self_hosted_origin_is_unavailable_and_never_called(clock, vault, origin):
     fx = Fixtures(**OK)
     prov = self_hosted(clock, vault, fx, origin=origin)
-    if origin.strip() == SELF:  # surrounding whitespace is trimmed from an env value; the origin itself is fine
+    if origin == "https://10.0.0.5":  # a literal private address parses; the transport refuses it (below)
+        assert prov.problem() is None
         return
     assert not prov.health().connected
     with staged(context(clock)):

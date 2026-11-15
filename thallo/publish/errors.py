@@ -27,4 +27,8 @@ class LookupFailed(ConnectionsError):  # noqa: N818
     """A readback or reconcile lookup could not be answered. Nothing changes; try later."""
 
 
-__all__ = ["LookupFailed", "NotSent", "OutcomeUnknown"]
+class AmbiguousLookup(LookupFailed):
+    """The lookup found more than one candidate. Retrying will not settle it: a person must."""
+
+
+__all__ = ["AmbiguousLookup", "LookupFailed", "NotSent", "OutcomeUnknown"]

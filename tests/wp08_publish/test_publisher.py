@@ -403,3 +403,84 @@ def test_with_no_real_connection_the_manual_pack_waits_on_a_person(backend, shop
     got = rig.publisher.record_readback(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier,
                                         live_text=rig.shop.approved_payload.text, media_changed=None)
     assert got.status is Status.READ_BACK_OK
+
+
+def test_the_chain_skips_an_unconfigured_and_an_unhealthy_connection_and_falls_to_manual(backend, shop, signer):
+    from thallo.connections.stores import InMemoryHealthState
+    from thallo.contracts.enums import Capability
+    from thallo.providers.publishing import postiz_hosted
+
+    from .harness import FAKE, mirror_connections
+
+    rig = build_rig(backend, shop, signer)  # the fake poster is configured first
+    rig.registry.health = InMemoryHealthState()
+    (fake_row,) = [r for r in rig.registry.connections.list_for_tenant(rig.t) if r.provider == FAKE]
+    rig.registry.health.set_connected(rig.t, fake_row.id, False)  # last seen unhealthy
+    postiz = rig.registry.add(rig.t, Capability.PUBLISHING, postiz_hosted.NAME, priority=-1)  # no key, no channels
+    mirror_connections(rig)
+    out = rig.publish()
+    assert out.status is Status.MANUAL_PENDING and rig.poster.calls == []
+    (pub,) = rows(rig, Publication)
+    assert pub.connection_id not in (fake_row.id, postiz.id)  # pinned to the manual floor
+
+
+# ---------------------------------------------------------------- more refusals and holds
+
+def test_a_payload_mismatch_from_the_gate_blocks_and_goes_back_to_the_checks(rig, monkeypatch):
+    import thallo.publish.publisher as publisher_module
+    from thallo.gate.decision import Block, GateDecision
+
+    def mismatch(repo, **kw):
+        return GateDecision(allowed=False, blocks=(Block(BlockReason.PAYLOAD_MISMATCH, "not the hashed content"),),
+                            tenant_id=kw["tenant_id"], bundle_id=kw["bundle_id"], variant_id=kw["variant_id"],
+                            approval_id=kw["approval_id"])
+    monkeypatch.setattr(publisher_module, "check_publish", mismatch)
+    assert_refused(rig, rig.publish(), BlockReason.PAYLOAD_MISMATCH.value)
+    assert variant(rig).state is VariantState.CHECKING
+
+
+def test_an_ambiguous_reconcile_holds_for_a_person(rig):
+    from thallo.publish import AmbiguousLookup
+
+    rig.poster.behaviour = "timeout"
+    rig.publish()
+
+    def ambiguous(*a, **k):
+        raise AmbiguousLookup("more than one post matches")
+    rig.poster.run = ambiguous
+    out = rig.publisher.reconcile(rig.t, rig.shop.variant.id)
+    assert out.status is Status.NEEDS_CHECK and out.waiting_on is WaitingOn.PERSON
+
+
+def test_a_reconcile_whose_connection_is_gone_holds_for_a_person(rig):
+    rig.poster.behaviour = "timeout"
+    rig.publish()
+    (pub,) = rows(rig, Publication)
+    rig.registry.connections.delete(rig.t, pub.connection_id)
+    out = rig.publisher.reconcile(rig.t, rig.shop.variant.id)
+    assert out.status is Status.NEEDS_CHECK and out.waiting_on is WaitingOn.PERSON
+
+
+# ---------------------------------------------------------------- the way out of FAILED
+
+@pytest.mark.parametrize("by_hand", [True, False])
+def test_a_failed_send_can_be_reopened_by_a_person(rig, by_hand):
+    rig.poster.behaviour = "not_sent_final"
+    assert rig.publish().status is Status.FAILED
+    actor, verifier = person(rig)
+    shown = rig.publisher.status(rig.t, rig.shop.variant.id)
+    stale = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, by_hand=by_hand,
+                                 attempt=shown.attempt + 1, requested_at=shown.requested_at)
+    assert stale.status is Status.BLOCKED and send_row(rig).state is SendState.FAILED
+    out = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, by_hand=by_hand,
+                               attempt=shown.attempt, requested_at=shown.requested_at)
+    rig.poster.behaviour = "ok"
+    if by_hand:
+        assert out.status is Status.MANUAL_PENDING and rig.publish().status is Status.MANUAL_PENDING
+        done = rig.publisher.settle(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, posted=True,
+                                    live_url="https://instagram.invalid/p/2", attempt=shown.attempt,
+                                    requested_at=shown.requested_at)
+        assert done.status is Status.SENT and len(rig.poster.calls) == 1
+    else:
+        assert out.status is Status.RETRY_LATER
+        assert rig.publish().status is Status.SENT and len(rig.poster.calls) == 2

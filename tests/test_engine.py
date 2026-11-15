@@ -146,9 +146,10 @@ def test_changed_evidence_blocks():
 ])
 def test_pause_and_channel_never_schedule(change, message):
     engine, item = approved()
+    board = engine.cockpit
     engine.brand = change(engine.brand)
     engine._schedule(item, MONDAY - timedelta(days=3))
-    assert item.status is Status.FAILED
+    assert item.status is Status.FAILED and any(message in m for _, m in board.messages)
 
 
 def test_broken_chain_is_detected():

@@ -59,7 +59,7 @@ from thallo.gate.decision import BlockReason
 from thallo.gate.repository import GateRepository
 from thallo.gate.signing import GateSigner
 from thallo.publish.context import SendContext, StagedMedia, sha256_hex, staged
-from thallo.publish.errors import NotSent
+from thallo.publish.errors import AmbiguousLookup, NotSent
 from thallo.publish.preflight import channel_problems
 from thallo.publish.records import PublicationSend, SendState
 from thallo.publish.store import PublishStore
@@ -509,6 +509,8 @@ class Publisher:
                               "the variant changed after the send; a person checks the channel by hand")
         try:
             result = self._lookup(tenant_id, pub, send, text, variant.channel.value)
+        except (AmbiguousLookup, NoConnection) as exc:  # retrying will not settle these
+            return self._hold(tenant_id, pub, send, f"the reconcile cannot decide ({exc}); a person checks the channel")
         except Exception as exc:
             return Outcome(Status.NEEDS_CHECK, variant_id, WaitingOn.PROVIDER,
                            "the lookup could not be answered; try the reconcile again later", pub.id,
@@ -577,6 +579,35 @@ class Publisher:
             s.store.move_variant(variant_id, VariantState.FAILED)
         return Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
                        "nothing went out; publish again to send the approved bytes", pub.id)
+
+    def reopen(self, tenant_id: str, variant_id: str, *, actor: HumanActor, verifier: SessionVerifier,
+               attempt: int, requested_at: datetime, by_hand: bool) -> Outcome:
+        """The way out of FAILED, which only a definite "not sent" reaches, so reopening cannot
+        double post. `by_hand` hands the person the manual pack's job (MANUAL_PENDING; they post
+        it and `settle`); otherwise the same bytes may be tried again (RETRY, due now). Guarded on
+        the attempt the person was shown, like `settle`."""
+        if actor.tenant_id != tenant_id or not verifier.is_live_human_session(actor):
+            return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "only the signed-in person can reopen a send",
+                           reasons=("not_a_person",))
+        with self.sessions(tenant_id) as s:
+            pub = s.store.publication_for_variant(variant_id)
+            if pub is None:
+                return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "there is no send to reopen",
+                               reasons=("no_publication",))
+            target = SendState.MANUAL_PENDING if by_hand else SendState.RETRY
+            if not s.store.swap(pub.id, {SendState.FAILED}, if_attempts=attempt, if_requested_at=requested_at,
+                                state=target, next_try_at=None if by_hand else self.clock.now(),
+                                detail=f"reopened by {actor.id}" + (" to post by hand" if by_hand else "")):
+                return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY,
+                               "this send is not failed, or it changed since it was shown", pub.id,
+                               reasons=("not_open",))
+            if by_hand:
+                s.store.move_variant(variant_id, VariantState.SCHEDULED)
+        if by_hand:
+            return Outcome(Status.MANUAL_PENDING, variant_id, WaitingOn.PERSON,
+                           "post the approved text and files exactly, then confirm the live link", pub.id)
+        return Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
+                       "publish again to send the approved bytes", pub.id)
 
     # ================================================================== readback
 

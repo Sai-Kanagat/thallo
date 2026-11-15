@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -76,9 +77,10 @@ from thallo.providers.text.base import (
     system_resolver,
 )
 from thallo.publish.context import current
-from thallo.publish.errors import LookupFailed, NotSent, OutcomeUnknown
+from thallo.publish.errors import AmbiguousLookup, LookupFailed, NotSent, OutcomeUnknown
 
 DEFAULT_TIMEOUT_S = 30.0
+MIME = re.compile(r"[a-z0-9][a-z0-9.+-]{0,63}/[a-z0-9][a-z0-9.+-]{0,63}")  # goes into a part header
 LOOKUP_WINDOW = timedelta(days=1)
 _EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "video/mp4": "mp4",
         "application/pdf": "pdf"}
@@ -335,6 +337,8 @@ class PostizProvider:
         for i, sha in enumerate(req.media_sha256):
             data = ctx.media_for(i, sha)  # hashed again: this exact object goes into the body
             mime = ctx.media[i].mime
+            if not MIME.fullmatch(mime):
+                raise NotSent(f"media {i}: the type is not a plain media type", retryable=False)
             body, ctype = multipart("file", f"{sha[:16]}.{_EXT.get(mime, 'bin')}", mime, data)
             try:
                 reply = self._call(RawCall("POST", f"{self.base()}/upload", body, ctype, auth, self._timeout()))
@@ -411,7 +415,7 @@ class PostizProvider:
                      and p["integration"].get("id") == integ.id
                      and isinstance(p.get("content"), str) and canonical_text(p["content"]) == want]
         if len(match) > 1:
-            raise LookupFailed("more than one post matches; a person must check")
+            raise AmbiguousLookup("more than one post matches; a person must check")
         if not match:
             return c.ReadbackResult(live_text=None, media_changed=None), {}
         p = match[0]

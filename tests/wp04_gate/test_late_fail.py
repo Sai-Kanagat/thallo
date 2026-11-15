@@ -65,6 +65,17 @@ def test_a_fail_at_the_top_attempt_decides_even_beside_a_newer_pass_at_that_atte
     assert review([fail, same]).failing == {fail.id}
 
 
+def test_a_fail_then_a_flag_with_no_pass_under_that_key_still_fails():
+    """Documents a consequence for the lead: only a PASS clears a FAIL, so a newer FLAG under the
+    same key leaves the FAIL deciding. The truth lexical layer is deterministic for one text and
+    language, so on unchanged content one kind does not go from BLOCK to FLAG between runs; if
+    tenant allowed terms ever change a severity, this becomes reachable."""
+    fail = row(CheckVerdict.FAIL, 1, "truth.compile.superlative")
+    flag = row(CheckVerdict.FLAG, 2, "truth.compile.superlative")
+    r = review([fail, flag])
+    assert r.failing == {fail.id} and r.flags == {flag.id}
+
+
 def test_lower_attempt_flags_still_do_not_decide():
     flag = row(CheckVerdict.FLAG, 1)
     passed = row(CheckVerdict.PASS, 2)
