@@ -111,6 +111,21 @@ def _wrap(value: str | Secret) -> Secret:
     return value if isinstance(value, Secret) else Secret(value)
 
 
+def _clean(secret: Secret) -> bool:
+    """Not empty, no control character (C0 or DEL) and no leading or trailing space. A trailing
+    newline from copy-paste is the usual cause. Checked on the bytes, never raises."""
+    return (secret.size() > 0 and not any(b < 0x20 or b == 0x7F for b in secret.reveal_bytes())
+            and secret.reveal_bytes()[:1] != b" " and secret.reveal_bytes()[-1:] != b" ")
+
+
+def _check_value(secret: Secret) -> None:
+    """Refuse, never strip: a vault that silently changes a secret stores something the person
+    did not give it. The message names the rule, never the value or its length."""
+    if not _clean(secret):
+        raise VaultError("a secret may not be empty, hold control characters (such as a newline) "
+                         "or start or end with a space; paste it again without them")
+
+
 class Vault:
     def __init__(self, keyring: KeyRing, store: SecretStore, clock: Clock) -> None:
         self._keys = keyring
@@ -131,6 +146,7 @@ class Vault:
         Pass a `Secret` where you can: a plain str stays alive in the caller's frame."""
         secret = _wrap(value)
         del value
+        _check_value(secret)
         ref = "sec_" + os.urandom(16).hex() if ref is None else ref
         self._check(tenant_id, ref)
         if not self._store.put(self._seal(tenant_id, ref, secret, None, 1), replace=False):
@@ -141,6 +157,7 @@ class Vault:
     def replace(self, tenant_id: str, ref: str, value: str | Secret) -> None:
         secret = _wrap(value)
         del value
+        _check_value(secret)
         self._check(tenant_id, ref)
         old = self._store.get(tenant_id, ref)
         if old is None:
