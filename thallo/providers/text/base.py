@@ -105,6 +105,25 @@ class Auth:
     scheme: str = ""  # e.g. "Bearer "
 
 
+SECRET_REJECTED = "the stored secret has characters a header value cannot carry; store it again without them"
+
+
+def secret_header_safe(secret: Secret) -> bool:
+    """True when the secret can go into a header value as is: not empty, printable ASCII only
+    (no CR, LF, NUL or other control character, nothing above 0x7E) and no leading or trailing
+    whitespace. Works on the bytes, so invalid UTF-8 is refused without a decode error that would
+    carry the bytes. Never raises, so the value is never in a frame a traceback keeps."""
+    return (secret.size() > 0 and all(0x20 <= b <= 0x7E for b in secret.reveal_bytes())
+            and secret.reveal_bytes()[:1] != b" " and secret.reveal_bytes()[-1:] != b" ")
+
+
+def check_header_secret(secret: Secret) -> None:
+    """The one guard every transport and provider runs before a secret becomes a header. The
+    error is fixed text: never the value, its length or the offending character."""
+    if not secret_header_safe(secret):
+        raise TextProviderError(SECRET_REJECTED)
+
+
 @dataclass(frozen=True)
 class HttpCall:
     method: str
@@ -226,6 +245,8 @@ class HttpTransport:
         self.connect = connect
 
     def __call__(self, call: HttpCall) -> HttpReply:
+        if call.auth is not None:
+            check_header_secret(call.auth.secret)  # before any lookup or connection
         parts = urlsplit(call.url)
         allowed = ("https",) if self.policy is AddressPolicy.PUBLIC else ("http", "https")
         if parts.scheme not in allowed or not parts.hostname or parts.username or parts.password or parts.fragment:
@@ -242,18 +263,25 @@ class HttpTransport:
         headers = {"content-type": "application/json", "accept": "application/json", **call.headers}
         data = None if call.body is None else json.dumps(call.body, ensure_ascii=False).encode()
         conn = self.connect(parts.scheme, host, port, ips[0], call.timeout)
+        failed: str | None = None
+        status, raw = 0, b""
         try:
-            if call.auth is not None:
+            if call.auth is not None:  # revealed inline into the dict, popped in `finally`
                 headers[call.auth.header] = call.auth.scheme + call.auth.secret.reveal()
             conn.request(call.method, path, body=data, headers=headers)
             resp = conn.getresponse()
             status, raw = resp.status, resp.read(MAX_BODY_BYTES + 1)
-        except (OSError, http.client.HTTPException) as exc:
-            raise TextProviderError(f"could not reach the endpoint ({type(exc).__name__})") from None
+        except (OSError, http.client.HTTPException, ValueError, TypeError) as exc:
+            # Only the type name survives. ValueError and TypeError from http.client can quote
+            # the header bytes, so the original is dropped here and the error raised below,
+            # outside this block, carries no __cause__ and no __context__.
+            failed = type(exc).__name__
         finally:
             if call.auth is not None:
                 headers.pop(call.auth.header, None)
             conn.close()
+        if failed is not None:
+            raise TextProviderError(f"could not reach the endpoint ({failed})")
         if 300 <= status < 400:
             raise TextProviderError("the endpoint answered with a redirect (HTTP 3xx); redirects are refused")
         if len(raw) > MAX_BODY_BYTES:
@@ -498,6 +526,7 @@ class HttpTextProvider:
         secret = self.ctx.secret()
         if secret is None or not secret:
             raise TextProviderError("the vault returned no secret for this connection")
+        check_header_secret(secret)  # any transport, injected or real, gets a header-safe secret
         return self.auth(secret)
 
     def _check_tenant(self, request: c.Request) -> None:
