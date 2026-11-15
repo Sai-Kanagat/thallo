@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 
 from thallo.contracts import BrandSettings, Item, Status
 from thallo.notion import NotionCockpit, NotionMap
-from thallo.publishing import MockPublisher
 from thallo.truth import ClaimLedger
 from thallo.workflow import Engine
 from thallo import writer
@@ -43,7 +42,7 @@ def engine_for(fake, claims=None, complete=writer.mock):
     claims = claims or ClaimLedger()
     cockpit = NotionCockpit(NotionMap("db", "sai"), fake)
     return Engine(BrandSettings("sai", {"linkedin"}), cockpit,
-                  writer.LlmWriter(complete, claims, lambda: MONDAY), MockPublisher(),
+                  writer.LlmWriter(complete, claims, lambda: MONDAY),
                   Source(), claims)
 
 
@@ -54,7 +53,7 @@ def test_notion_row_becomes_draft_in_review():
     assert fake.comments == ["Ready for review"]
 
 
-def test_human_approval_in_notion_flows_to_published():
+def test_human_approval_in_notion_flows_to_scheduled_and_never_sends():
     fake = FakeNotion()
     engine = engine_for(fake)
     engine.tick(MONDAY - timedelta(days=7))
@@ -64,7 +63,7 @@ def test_human_approval_in_notion_flows_to_published():
     engine.tick(MONDAY - timedelta(days=3))
     assert fake.status == "Scheduled"
     engine.tick(MONDAY)
-    assert fake.status == "Published"
+    assert fake.status == "Scheduled"  # the engine has no send path (WP-08); a person marks it live
 
 
 def test_engine_never_writes_approved():

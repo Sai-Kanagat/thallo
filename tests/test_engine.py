@@ -5,10 +5,9 @@ import pytest
 
 from thallo.contracts import BrandSettings, Item, Status
 from thallo.foresight import ForecastLedger
-from thallo.publishing import MockPublisher, deliver, preflight
 from thallo.taste import TasteLedger, edit_ratio
 from thallo.truth import ClaimLedger, render
-from thallo.workflow import Engine
+from thallo.workflow import DUE, Engine, preflight
 
 MONDAY = datetime(2026, 11, 16, 9)
 START = MONDAY - timedelta(days=10)
@@ -41,12 +40,12 @@ class Source:
         return {"impressions": 420.0}
 
 
-def build(text="We help operators ship calmer weeks.", items=None, publisher=None):
+def build(text="We help operators ship calmer weeks.", items=None):
     claims = ClaimLedger()
     items = items or [Item("a", "sai", "linkedin", "brief", MONDAY)]
     board = Board(items)
     engine = Engine(BrandSettings("sai", {"linkedin"}), board, Writer(text),
-                    publisher or MockPublisher(), Source(), claims)
+                    Source(), claims)
     return engine, board, items[0]
 
 
@@ -59,7 +58,10 @@ def run(engine, start, end, on_day=None):
         now += timedelta(hours=6)
 
 
-def test_full_week_publishes_and_scores():
+def test_full_week_schedules_never_sends_and_scores_once_a_person_marks_it_live():
+    """The engine has no send path (WP-08): at the slot it says the item is due, once, and leaves
+    it SCHEDULED. A person posts it through the publisher or by hand and marks it Published with
+    its link; measurement and forecast scoring then run as before."""
     engine, board, item = build()
     wednesday = MONDAY - timedelta(days=5)
 
@@ -67,26 +69,26 @@ def test_full_week_publishes_and_scores():
         if now >= wednesday and item.status is Status.REVIEW:
             engine.approve(item, "sai", now)
 
-    run(engine, START, MONDAY + timedelta(days=8), approve)
-    assert item.status is Status.PUBLISHED and item.url
+    run(engine, START, MONDAY + timedelta(days=1), approve)
+    assert item.status is Status.SCHEDULED and item.url is None
+    assert board.messages.count(("a", DUE)) == 1
+    item.status, item.url = Status.PUBLISHED, "https://social.invalid/p/1"  # the person marks it live
+    run(engine, MONDAY + timedelta(days=1), MONDAY + timedelta(days=8))
     assert item.metrics_pulled == {2, 7}
     assert engine.forecasts.scores[item.forecast_seq]["impressions"]["actual"] == 420.0
     assert engine.forecasts.verify_chain()
-    assert len(engine.publisher.sent) == 1
 
 
 def test_missed_approval_goes_on_hold_and_never_posts():
     engine, board, item = build()
     run(engine, START, MONDAY + timedelta(days=2))
-    assert item.status is Status.ON_HOLD
-    assert engine.publisher.calls == 0
+    assert item.status is Status.ON_HOLD and item.url is None
 
 
 def test_unsupported_claim_never_reaches_review():
     engine, board, item = build("We cut review time by 40%.")
     run(engine, START, MONDAY)
-    assert item.status is Status.NEEDS_EVIDENCE
-    assert engine.publisher.calls == 0
+    assert item.status is Status.NEEDS_EVIDENCE and item.url is None
 
 
 def test_verified_claim_compiles_and_expired_claim_does_not():
@@ -107,17 +109,18 @@ def approved(text="Calm weeks."):
     return engine, item
 
 
-def test_missing_approval_blocks():
+def test_missing_approval_never_schedules():
     engine, board, item = build()
-    decision = engine.gate.evaluate(item, None, engine.brand, MONDAY)
-    assert not decision.allowed
+    item.status, item.text = Status.APPROVED, "Calm weeks."
+    engine._schedule(item, MONDAY)
+    assert item.status is Status.FAILED and ("a", "no approval") in board.messages
 
 
-def test_changed_content_blocks():
+def test_changed_content_goes_back_to_review():
     engine, item = approved()
-    passport = engine.passports[item.id]
     item.text = "Changed after approval."
-    assert not engine.gate.evaluate(item, passport, engine.brand, MONDAY).allowed
+    engine.tick(MONDAY - timedelta(days=4))
+    assert item.status is Status.REVIEW and item.id not in engine.passports
 
 
 def test_human_edit_voids_approval():
@@ -132,19 +135,20 @@ def test_changed_evidence_blocks():
     engine.claims.verify(claim.id)
     item.text = f"Fact [[{claim.id}]]."
     passport = engine.approve(item, "sai", START)
+    assert passport.content_hash
     claim.evidence_hash = "new"
-    assert not engine.gate.evaluate(item, passport, engine.brand, START).allowed
+    engine.tick(START)
+    assert item.status is Status.REVIEW and item.id not in engine.passports
 
 
-def test_kill_switch_pause_channel_and_spend_cap_block():
+@pytest.mark.parametrize(("change", "message"), [
+    (lambda b: replace(b, paused=True), "brand paused"), (lambda b: replace(b, channels=set()), "channel not allowed"),
+])
+def test_pause_and_channel_never_schedule(change, message):
     engine, item = approved()
-    passport = engine.passports[item.id]
-    assert engine.gate.evaluate(item, passport, engine.brand, MONDAY).allowed
-    assert not engine.gate.evaluate(item, passport, engine.brand, MONDAY, spend_eur=1).allowed
-    assert not engine.gate.evaluate(item, passport, replace(engine.brand, paused=True), MONDAY).allowed
-    assert not engine.gate.evaluate(item, passport, replace(engine.brand, channels=set()), MONDAY).allowed
-    engine.gate.killed = True
-    assert not engine.gate.evaluate(item, passport, engine.brand, MONDAY).allowed
+    engine.brand = change(engine.brand)
+    engine._schedule(item, MONDAY - timedelta(days=3))
+    assert item.status is Status.FAILED
 
 
 def test_broken_chain_is_detected():
@@ -154,24 +158,6 @@ def test_broken_chain_is_detected():
     assert ledger.verify_chain()
     ledger.sealed[1]["forecast"]["x"] = 99
     assert not ledger.verify_chain()
-
-
-def test_delivery_retries_and_never_double_posts():
-    item = Item("a", "sai", "linkedin", "b", MONDAY, text="Hi")
-    publisher = MockPublisher(failures=2)
-    assert deliver(publisher, "k", item)
-    assert deliver(publisher, "k", item) == publisher.sent["k"]
-    assert len(publisher.sent) == 1
-    assert deliver(MockPublisher(failures=3), "k", item) is None
-
-
-def test_failed_delivery_is_flagged():
-    engine, board, item = build(publisher=MockPublisher(failures=9))
-    engine.tick(START + timedelta(days=3))
-    engine.approve(item, "sai", MONDAY - timedelta(days=5))
-    run(engine, MONDAY - timedelta(days=3), MONDAY + timedelta(hours=1))
-    assert item.status is Status.FAILED
-    assert ("a", "Delivery failed, reschedule needed") in board.messages
 
 
 def test_preflight_catches_channel_errors():
@@ -192,6 +178,4 @@ def test_repeated_edits_propose_a_rule_for_human_acceptance():
 
 
 def test_claim_tags_never_reach_the_channel():
-    publisher = MockPublisher()
-    deliver(publisher, "k", Item("a", "s", "linkedin", "b", MONDAY, text="Fact 1 [[C-0001]]."))
-    assert publisher.texts == ["Fact 1."]
+    assert render("Fact 1 [[C-0001]].") == "Fact 1."

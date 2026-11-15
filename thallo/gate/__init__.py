@@ -48,7 +48,7 @@ from thallo.gate.decision import (
     check_publish,
     decide,
 )
-from thallo.gate.legacy import Gate, content_hash
+from thallo.gate.legacy import content_hash
 from thallo.gate.repository import GateRepository, MediaUnreadable, content_hashes, load_bundle
 from thallo.gate.signing import ENV_KEY, GateKeyMissing, GateSigner
 
@@ -76,7 +76,6 @@ __all__ = [
     "BlockReason",
     "BundleContent",
     "BundleHash",
-    "Gate",
     "GateChange",
     "GateDecision",
     "GateRepository",

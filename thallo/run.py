@@ -1,7 +1,7 @@
 """One pass over a brand's calendar: python -m thallo.run brand.json [state.db]
 
-Without POSTIZ_API_KEY nothing leaves. With it, approved items become Postiz drafts
-unless LAUNCH_MODE=live.
+Nothing leaves from here: the engine schedules and measures, and sending goes through
+thallo.publish (the publisher), which alone calls the gate's check_publish.
 """
 from __future__ import annotations
 
@@ -12,18 +12,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from thallo import postiz, writer
+from thallo import writer
 from thallo.crew import CrewWriter
 from thallo.contracts import BrandSettings, Item
 from thallo.notion import NotionCockpit, NotionMap, http_transport
 from thallo.store import Store
 from thallo.truth import ClaimLedger
 from thallo.workflow import Engine
-
-
-class NoPublisher:
-    def publish(self, key: str, item: Item) -> str:
-        raise ConnectionError("no real publisher connected")
 
 
 class NoMetrics:
@@ -47,17 +42,6 @@ def completer():
     return writer.mock
 
 
-def outbound(config: dict):
-    key = os.environ.get("POSTIZ_API_KEY")
-    if not key or "postiz" not in config:
-        return NoPublisher(), NoMetrics()
-    call = postiz.http_transport(key, os.environ.get("POSTIZ_API_URL", postiz.API))
-    live = os.environ.get("LAUNCH_MODE") == "live"
-    sent = Path("state") / f"{config['notion']['brand']}.sent.json"
-    return (postiz.PostizPublisher(call, config["postiz"]["integrations"], live, sent),
-            postiz.PostizMetrics(call))
-
-
 def main() -> None:
     load_env()
     if len(sys.argv) not in (2, 3) or not os.environ.get("NOTION_TOKEN"):
@@ -67,7 +51,7 @@ def main() -> None:
     cockpit = NotionCockpit(NotionMap(**config["notion"]), http_transport(os.environ["NOTION_TOKEN"]))
     brand = BrandSettings(config["notion"]["brand"], set(config["channels"]))
     engine = Engine(brand, cockpit, CrewWriter(completer(), claims),
-                    *outbound(config), claims)
+                    NoMetrics(), claims)
     store = Store(sys.argv[2]) if len(sys.argv) == 3 else Store.for_brand(brand.name)
     store.load(engine)
     minutes = float(os.environ.get("CORTEX_LOOP_MINUTES", "0"))
