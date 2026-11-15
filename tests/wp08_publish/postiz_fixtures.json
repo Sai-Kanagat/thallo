@@ -1,0 +1,21 @@
+{
+  "_provenance": "Hand-written from the Postiz public API docs (docs.postiz.com, public-api, posts/create, posts/list), read 15 Nov 2026. Not captured from a live server; ids and URLs are invented.",
+  "upload_ok": {"status": 200, "body": {"id": "img-123", "path": "https://uploads.postiz.invalid/img-123.png", "name": "hero.png"}},
+  "create_ok": {"status": 200, "body": [{"postId": "post-123", "integration": "ig-1"}]},
+  "create_no_id": {"status": 200, "body": [{"integration": "ig-1"}]},
+  "rate_limited": {"status": 429, "body": {"message": "Too many requests"}},
+  "bad_request": {"status": 400, "body": {"message": "integration not found"}},
+  "server_error": {"status": 502, "body": null},
+  "integrations": {"status": 200, "body": [{"id": "ig-1", "name": "Shop", "identifier": "instagram", "disabled": false}]},
+  "list_published": {"status": 200, "body": {"posts": [
+    {"id": "post-123", "content": "Hello from the shop", "publishDate": "2026-01-05T09:00:00.000Z",
+     "releaseURL": "https://instagram.invalid/p/abc", "state": "PUBLISHED", "error": null,
+     "integration": {"id": "ig-1", "providerIdentifier": "instagram", "name": "Shop", "picture": null}},
+    {"id": "post-999", "content": "Another post", "publishDate": "2026-01-05T08:00:00.000Z",
+     "releaseURL": null, "state": "QUEUE", "error": null,
+     "integration": {"id": "ig-1", "providerIdentifier": "instagram", "name": "Shop", "picture": null}}]}},
+  "list_twice": {"status": 200, "body": {"posts": [
+    {"id": "post-1", "content": "Hello from the shop", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
+    {"id": "post-2", "content": "Hello  from the shop", "state": "PUBLISHED", "integration": {"id": "ig-1"}}]}},
+  "list_empty": {"status": 200, "body": {"posts": []}}
+}
