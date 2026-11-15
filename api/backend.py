@@ -35,6 +35,7 @@ from thallo.contracts.models import (
     Bundle,
     CheckResult,
     Claim,
+    Connection,
     Consent,
     Media,
     Row,
@@ -121,9 +122,55 @@ class PgBackend:
             yield PgTx(repo, self.blobs, self.clock, self.redirect_prefixes, self.vouched_links)
 
     def connection_stores(self) -> tuple[ConnectionStore, SecretStore, HealthState]:
-        from thallo.connections.pg import PostgresConnectionStore, PostgresHealthState, PostgresSecretStore
+        from thallo.connections.pg import PostgresHealthState, PostgresSecretStore
 
-        return PostgresConnectionStore(self.db), PostgresSecretStore(self.db), PostgresHealthState(self.db)
+        return _PgConnections(self.db), PostgresSecretStore(self.db), PostgresHealthState(self.db)
+
+
+_CONN_MUTABLE = ("capability", "provider", "mode", "model", "role", "scope", "scope_ref", "priority", "enabled",
+                 "settings", "secret_ref")
+
+
+def _pg_connections_class():  # noqa: ANN202
+    from psycopg import sql
+
+    from thallo.connections.pg import PostgresConnectionStore
+    from thallo.store.db import _value
+
+    class PgConnections(PostgresConnectionStore):
+        """`PostgresConnectionStore` with an update that works for a row holding a `model` column.
+        Upstream `_upsert` passes `model=` to `TenantRepo.update(model, ...)`, which takes `model` as
+        its first parameter, so every update of an existing connection raises TypeError (reported
+        to the lead; fixed here without touching WP-01 or WP-02 files)."""
+
+        @staticmethod
+        def _upsert(repo, c: Connection) -> None:  # noqa: ANN001
+            if repo.get(Connection, c.id) is None:
+                repo.insert(c)
+                return
+            sets = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(f)) for f in _CONN_MUTABLE)
+            repo.execute(sql.SQL("UPDATE connection SET {} WHERE id = %s").format(sets),
+                         [_value(getattr(c, f)) for f in _CONN_MUTABLE] + [c.id])
+
+        def put(self, connection: Connection) -> None:
+            with self.db.tenant(connection.tenant_id) as repo:
+                self._upsert(repo, connection)
+
+        def put_many(self, connections: list[Connection]) -> None:
+            if not connections:
+                return
+            tenants = {c.tenant_id for c in connections}
+            if len(tenants) != 1:
+                raise ValueError("put_many takes rows of one tenant")
+            with self.db.tenant(next(iter(tenants))) as repo:
+                for c in connections:
+                    self._upsert(repo, c)
+
+    return PgConnections
+
+
+def _PgConnections(db):  # noqa: ANN001, ANN202, N802
+    return _pg_connections_class()(db)
 
 
 # ====================================================================== in memory
