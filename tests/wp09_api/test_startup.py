@@ -7,11 +7,20 @@ import pytest
 
 from api.app import StartupRefused, check_startup
 
+KEY = "ab" * 32
+
 
 def test_production_needs_a_web_origin():
     with pytest.raises(StartupRefused, match="THALLO_WEB_ORIGIN"):
-        check_startup({})
-    assert check_startup({"THALLO_WEB_ORIGIN": "https://app.example"}) == (["https://app.example"], False)
+        check_startup({"THALLO_PROXY_STAMP_KEY": KEY})
+    assert check_startup({"THALLO_WEB_ORIGIN": "https://app.example", "THALLO_PROXY_STAMP_KEY": KEY}) == (
+        ["https://app.example"], False)
+
+
+def test_production_needs_the_stamp_key():
+    for key in ("", "abcd", "zz" * 32):
+        with pytest.raises(StartupRefused, match="THALLO_PROXY_STAMP_KEY"):
+            check_startup({"THALLO_WEB_ORIGIN": "https://app.example", "THALLO_PROXY_STAMP_KEY": key})
 
 
 def test_development_may_run_without_an_origin():
@@ -20,7 +29,8 @@ def test_development_may_run_without_an_origin():
 
 def test_console_login_alone_is_refused():
     with pytest.raises(StartupRefused, match="THALLO_ENVIRONMENT=development"):
-        check_startup({"THALLO_DEV_CONSOLE_LOGIN": "1", "THALLO_WEB_ORIGIN": "http://localhost:3000"})
+        check_startup({"THALLO_DEV_CONSOLE_LOGIN": "1", "THALLO_WEB_ORIGIN": "http://localhost:3000",
+                       "THALLO_PROXY_STAMP_KEY": KEY})
 
 
 def test_console_login_needs_localhost_origins_only():

@@ -65,7 +65,8 @@ class Services:
     lockout: FailureLockout = None  # type: ignore[assignment]
     ceiling: EmailCeiling = None  # type: ignore[assignment]
     devices: DeviceSigner = None  # type: ignore[assignment]
-    proxy_peers: frozenset[str] = frozenset({"127.0.0.1", "::1"})  # the Next host (web/server.mjs)
+    proxy_peers: frozenset[str] = frozenset()  # THALLO_WEB_PROXY_HOSTS; empty: any peer, HMAC decides
+    stamp_key: bytes | None = None  # THALLO_PROXY_STAMP_KEY; None: no stamp is ever trusted
     allowed_origins: Collection[str] = ()
     mock_tenants: Collection[str] = ()
     environ: dict[str, str] = field(default_factory=dict)

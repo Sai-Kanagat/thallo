@@ -58,6 +58,9 @@ def create_app(svc: Services) -> FastAPI:
 _LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$")
 
 
+_HEX_KEY = re.compile(r"^(?:[0-9a-fA-F]{2}){32,}$")
+
+
 class StartupRefused(RuntimeError):
     pass
 
@@ -68,12 +71,17 @@ def check_startup(env: Mapping[str, str]) -> tuple[list[str], bool]:
 
     - THALLO_WEB_ORIGIN must be set unless THALLO_ENVIRONMENT=development; the Origin check is
       never silently skipped in production.
+    - THALLO_PROXY_STAMP_KEY must be set unless THALLO_ENVIRONMENT=development: without it no
+      client address stamp is trusted and every browser would share the web server's bucket.
     - THALLO_DEV_CONSOLE_LOGIN=1 prints login codes to stderr, so it needs a second marker
       (THALLO_ENVIRONMENT=development) and every web origin on localhost; a loud warning is logged."""
     dev = env.get("THALLO_ENVIRONMENT", "") == "development"
     origins = [o.strip() for o in env.get("THALLO_WEB_ORIGIN", "").split(",") if o.strip()]
     if not origins and not dev:
         raise StartupRefused("THALLO_WEB_ORIGIN is empty: set the web app's origin (or THALLO_ENVIRONMENT=development)")
+    key = env.get("THALLO_PROXY_STAMP_KEY", "")
+    if not dev and not _HEX_KEY.match(key):
+        raise StartupRefused("THALLO_PROXY_STAMP_KEY must be hex of 32 or more bytes (scripts/gen_keys.py)")
     console = env.get("THALLO_DEV_CONSOLE_LOGIN") == "1"
     if console:
         if not dev:
@@ -111,11 +119,13 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     vault = Vault.from_env(secrets, clock, env) if env.get("THALLO_VAULT_KEY") else None
     sender = ConsoleCodeSender() if console else NoCodeSender()
     device_key = env.get("THALLO_DEVICE_KEY", "")
-    peers = frozenset(h.strip() for h in env.get("THALLO_WEB_PROXY_HOSTS", "127.0.0.1,::1").split(",") if h.strip())
+    peers = frozenset(h.strip() for h in env.get("THALLO_WEB_PROXY_HOSTS", "").split(",") if h.strip())
+    raw_stamp_key = env.get("THALLO_PROXY_STAMP_KEY", "")
+    stamp_key = bytes.fromhex(raw_stamp_key) if _HEX_KEY.match(raw_stamp_key) else None
     return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
-                    proxy_peers=peers,
+                    proxy_peers=peers, stamp_key=stamp_key,
                     devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None))
 
 

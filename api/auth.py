@@ -23,9 +23,9 @@ Limit design (final; see the security review rounds of 15 Nov):
    per-(email, network) lockout works the same way and never touches another network.
 4. A network counts toward the distinct-network cap only once it produced a wrong guess.
 5. Rate limits are per client, per network (/24 IPv4, /48 IPv6), per session and per (email,
-   network), never one shared bucket. The client address is the socket peer, or the
-   x-thallo-client-ip header only when the peer is the Next host, which overwrites it
-   (web/server.mjs); X-Forwarded-For is never read.
+   network), never one shared bucket. The client address is the socket peer, or the address the
+   web server (web/server.mjs) stamped, only when its HMAC under THALLO_PROXY_STAMP_KEY verifies
+   and it is at most 30 seconds old; X-Forwarded-For is never read.
 6. A code request always gets the same answer, whatever happened, so nothing reveals state (the
    only other answer is the per-client or per-network 429, which says nothing about the address),
    and does the same work on every path: a code is drawn and a sender called (a null one when no
@@ -49,7 +49,7 @@ from api.context import (
 )
 from api.directory import Membership, normalise_email
 from api.errors import ApiError, unauthenticated
-from api.sessions import CLIENT_IP_HEADER, DEVICE_TTL, Session, SessionKind, client_keys, email_key
+from api.sessions import CLIENT_IP_HEADER, CLIENT_STAMP_HEADER, DEVICE_TTL, Session, SessionKind, client_keys, email_key
 
 router = APIRouter(prefix="/api")
 
@@ -120,8 +120,9 @@ def _anonymous(request: Request) -> Session:
 
 def _keys(request: Request) -> tuple[str, str]:
     svc = services(request)
-    return client_keys(request.client.host if request.client else None,
-                       request.headers.get(CLIENT_IP_HEADER), proxy_peers=svc.proxy_peers)
+    return client_keys(request.client.host if request.client else None, request.headers.get(CLIENT_IP_HEADER),
+                       request.headers.get(CLIENT_STAMP_HEADER), stamp_key=svc.stamp_key, now=svc.clock.now(),
+                       proxy_peers=svc.proxy_peers)
 
 
 def _client_ok(request: Request, kind: str, per_client: int, per_network: int) -> bool:

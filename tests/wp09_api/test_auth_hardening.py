@@ -23,6 +23,7 @@ from api.sessions import (
     FailureLockout,
     InMemorySessionStore,
     SessionKind,
+    stamp_mac,
 )
 
 
@@ -64,46 +65,72 @@ def test_network_backstop_covers_many_addresses_in_one_slash_24(world):
     assert _req(c, csrf, "fresh@other.test").status_code == 202
 
 
-def test_spoofed_headers_from_a_client_do_not_change_the_key(world):
-    spoof = {"x-forwarded-for": "10.0.0.1", "x-thallo-client-ip": "10.0.0.1"}
-    statuses = []
-    for i in range(11):
-        c, csrf = _client(world, "198.51.100.8")  # not the Next host: both headers are ignored
-        statuses.append(_req(c, csrf, f"x{i}@f.test", **{**spoof, "x-thallo-client-ip": f"10.0.{i}.1"}).status_code)
-    assert statuses[-1] == 429
+STAMP_KEY = bytes([7]) * 32
 
 
-def test_behind_the_next_server_two_real_peers_get_separate_buckets(world):
-    """The reviewer's repro: every request arrives from 127.0.0.1. With the stamp, each browser is
-    its own client; without it they would all share one bucket."""
-    statuses = []
-    for i in range(11):
-        c, csrf = _client(world, "127.0.0.1")
-        statuses.append(_req(c, csrf, f"p{i}@f.test", **{"x-thallo-client-ip": f"203.0.{i}.9"}).status_code)
-    assert 429 not in statuses
-    same = []
-    for i in range(11):
-        c, csrf = _client(world, "127.0.0.1")
-        same.append(_req(c, csrf, f"q{i}@f.test", **{"x-thallo-client-ip": "198.51.100.33"}).status_code)
-    assert same[-1] == 429
-    # X-Forwarded-For through the Next host is still never read
-    xff = []
-    for i in range(11):
-        c, csrf = _client(world, "127.0.0.1")
-        xff.append(_req(c, csrf, f"r{i}@f.test", **{"x-thallo-client-ip": "198.51.100.44",
-                                                     "x-forwarded-for": f"10.{i}.0.1"}).status_code)
-    assert xff[-1] == 429
+def _stamped(world, ip: str, *, age: int = 0, key: bytes = STAMP_KEY) -> dict:
+    """Headers as web/server.mjs writes them, `age` seconds old."""
+    ts = int(world.clock.now().timestamp()) - age
+    return {"x-thallo-client-ip": ip, "x-thallo-client-stamp": f"{ts}.{stamp_mac(key, ip, ts)}"}
 
 
-def test_the_stamp_is_trusted_only_from_configured_peers():
+def _spray(world, peer: str, headers_for) -> list[int]:  # noqa: ANN001
+    out = []
+    for i in range(11):
+        c, csrf = _client(world, peer)
+        out.append(_req(c, csrf, f"s{i}-{peer}@f.test", **headers_for(i)).status_code)
+    return out
+
+
+def test_a_stamp_without_a_valid_hmac_is_ignored_even_from_loopback(world):
+    world.svc.stamp_key = STAMP_KEY
+    ts = int(world.clock.now().timestamp())
+    forged = _spray(world, "127.0.0.1", lambda i: {"x-thallo-client-ip": f"10.{i}.0.1",
+                                                    "x-thallo-client-stamp": f"{ts}.00"})
+    assert forged[-1] == 429  # keyed by the loopback peer itself
+    wrong_key = _spray(world, "127.0.0.2", lambda i: _stamped(world, f"10.{i}.1.1", key=bytes([8]) * 32))
+    assert wrong_key[-1] == 429
+    xff = _spray(world, "127.0.0.3", lambda i: {"x-forwarded-for": f"10.{i}.2.1"})
+    assert xff[-1] == 429  # X-Forwarded-For is never read
+
+
+def test_a_replayed_stamp_older_than_30_seconds_is_ignored(world):
+    world.svc.stamp_key = STAMP_KEY
+    old = _spray(world, "127.0.0.4", lambda i: _stamped(world, f"10.{i}.3.1", age=31))
+    assert old[-1] == 429
+
+
+def test_a_valid_stamp_is_honoured_and_two_real_peers_get_separate_buckets(world):
+    world.svc.stamp_key = STAMP_KEY
+    fresh = _spray(world, "127.0.0.5", lambda i: _stamped(world, f"203.0.{i}.9", age=5))
+    assert 429 not in fresh
+    same = _spray(world, "127.0.0.6", lambda i: _stamped(world, "198.51.100.33"))
+    assert same[-1] == 429  # one real client is still one bucket
+
+
+def test_no_key_means_no_stamp_is_trusted(world):
+    assert world.svc.stamp_key is None
+    valid_but_unkeyed = _spray(world, "127.0.0.7", lambda i: _stamped(world, f"10.{i}.4.1"))
+    assert valid_but_unkeyed[-1] == 429
+
+
+def test_proxy_peers_when_set_narrow_who_may_stamp(world):
     from api.sessions import client_keys
 
-    assert client_keys("127.0.0.1", "203.0.113.1")[0] != client_keys("127.0.0.1", "203.0.113.2")[0]
-    assert client_keys("198.51.100.1", "203.0.113.1")[0] == client_keys("198.51.100.1", "203.0.113.2")[0]
-    assert client_keys("127.0.0.1", "not-an-ip")[0] == client_keys("127.0.0.1", None)[0]
+    now = world.clock.now()
+    h = _stamped(world, "203.0.113.1")
+    args = (h["x-thallo-client-ip"], h["x-thallo-client-stamp"])
     peers = frozenset({"10.9.9.9"})
-    assert client_keys("10.9.9.9", "203.0.113.1", proxy_peers=peers)[0] != client_keys(
-        "10.9.9.9", "203.0.113.2", proxy_peers=peers)[0]
+    via_proxy = client_keys("10.9.9.9", *args, stamp_key=STAMP_KEY, now=now, proxy_peers=peers)
+    elsewhere = client_keys("10.9.9.8", *args, stamp_key=STAMP_KEY, now=now, proxy_peers=peers)
+    assert via_proxy == client_keys("203.0.113.1")
+    assert elsewhere == client_keys("10.9.9.8")
+
+
+def test_stamp_vector_matches_the_web_server():
+    # The same vector is asserted in web/lib/clientip.test.mjs, so both sides compute one HMAC.
+    assert stamp_mac(STAMP_KEY, "198.51.100.1", 1700000000) == (
+        "637855c9e0a3ea9128d80d36c9dcaf5b0df2d2eadf1ae7484fcc3c06960fdd86")
 
 
 def _burn(world, ip: str, email: str, tries: int = 5) -> None:

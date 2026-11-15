@@ -465,26 +465,51 @@ class DeviceSigner:
 
 
 CLIENT_IP_HEADER = "x-thallo-client-ip"
-DEFAULT_PROXY_PEERS = frozenset({"127.0.0.1", "::1"})
+CLIENT_STAMP_HEADER = "x-thallo-client-stamp"
+STAMP_MAX_AGE_S = 30
 
 
-def client_keys(host: str | None, stamped: str | None, *,
-                proxy_peers: frozenset[str] = DEFAULT_PROXY_PEERS) -> tuple[str, str]:
+def stamp_mac(key: bytes, ip: str, ts: int) -> str:
+    """The web server's proof that it wrote this client address (web/lib/clientip.mjs, same bytes)."""
+    return hmac.new(key, f"{ip}|{ts}".encode(), hashlib.sha256).hexdigest()
+
+
+def verified_stamp(ip: str | None, stamp: str | None, key: bytes | None, now: datetime) -> str | None:
+    """The stamped client address, or None unless the HMAC verifies and it is at most 30 s old."""
+    if not key or not ip or not stamp or len(stamp) > 100:
+        return None
+    ts_text, _, mac = stamp.partition(".")
+    if not ts_text.isdigit() or not mac:
+        return None
+    ts = int(ts_text)
+    if abs(now.timestamp() - ts) > STAMP_MAX_AGE_S:
+        return None  # stale or replayed
+    if not hmac.compare_digest(mac, stamp_mac(key, ip.strip(), ts)):
+        return None
+    try:
+        return str(ipaddress.ip_address(ip.strip()))
+    except ValueError:
+        return None
+
+
+def client_keys(host: str | None, stamped: str | None = None, stamp: str | None = None, *,
+                stamp_key: bytes | None = None, now: datetime | None = None,
+                proxy_peers: frozenset[str] = frozenset()) -> tuple[str, str]:
     """(client, network) keys for rate limits, hashed, kept only in memory (no table stores an IP).
 
-    Browsers reach the API through the Next server (`web/server.mjs`), which OVERWRITES the header
-    `x-thallo-client-ip` with the real socket peer and drops any copy a client sent, along with
-    X-Forwarded-For. The API trusts that header only when the connection itself comes from the
-    Next host (`proxy_peers`: loopback by default, THALLO_WEB_PROXY_HOSTS to change it); from any
-    other peer the header is ignored and the socket peer is the client. X-Forwarded-For is never
-    read. The network is the /24 for IPv4 and the /48 for IPv6. A peer that is not an IP address
-    (the test client reports "testclient") is its own client and its own network."""
+    Browsers reach the API through the web server (`web/server.mjs`). It strips any client copy of
+    `x-thallo-client-ip` and `x-thallo-client-stamp` (and of the forwarding headers) and writes the
+    real socket peer plus an HMAC of (address, time) under THALLO_PROXY_STAMP_KEY. The API honours
+    the address only when that HMAC verifies and the stamp is at most 30 seconds old, and, when
+    `proxy_peers` (THALLO_WEB_PROXY_HOSTS) is set, only from those peers. Anything else, a local
+    process on loopback included, is keyed by its own socket peer. X-Forwarded-For is never read.
+    The network is the /24 for IPv4 and the /48 for IPv6. A peer that is not an IP address (the
+    test client reports "testclient") is its own client and its own network."""
     peer = (host or "unknown").strip()
-    if peer in proxy_peers and stamped:
-        try:
-            peer = str(ipaddress.ip_address(stamped.strip()))
-        except ValueError:
-            pass  # a malformed stamp: the proxy peer itself stays the key
+    if not proxy_peers or peer in proxy_peers:
+        real = verified_stamp(stamped, stamp, stamp_key, now) if now is not None else None
+        if real is not None:
+            peer = real
     try:
         ip = ipaddress.ip_address(peer)
         net = ipaddress.ip_network(f"{ip}/{24 if ip.version == 4 else 48}", strict=False)
@@ -518,7 +543,8 @@ class ApiSessionVerifier:
 
 __all__ = [
     "ABSOLUTE_LIFETIME", "CODE_TTL", "DeviceSigner", "EmailCeiling", "FailureLockout", "client_keys",
-    "IDLE_TIMEOUT", "ApiSessionVerifier", "CLIENT_IP_HEADER", "CodeSender", "NullSender", "ConsoleCodeSender",
+    "IDLE_TIMEOUT", "ApiSessionVerifier", "CLIENT_IP_HEADER", "CLIENT_STAMP_HEADER", "CodeSender", "NullSender",
+    "ConsoleCodeSender", "stamp_mac", "verified_stamp",
     "InMemorySessionStore", "LoginCodes", "NoCodeSender", "RateLimiter", "Session", "SessionKind",
     "SessionStore", "Shown", "email_key",
 ]
