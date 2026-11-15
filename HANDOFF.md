@@ -108,3 +108,11 @@ Must land before WP-07 or any second writer of check rows:
 1. SHOULD FIX, becomes BLOCKING with a second writer. `thallo/gate/checks.py` `decisive_rows`: a FAIL written at a lower attempt than an existing PASS is ignored. Fix: a FAIL is decisive if it is at the top attempt for its key, or its uuid7 id is newer than the newest PASS for that key. Repro in the lead session scratchpad `gate2/attempt_repro.py`.
 2. Lead decision pending: media coverage. No production code writes design-lint rows, so no variant with media can be approved (fails closed). Reviewer recommends coverage keyed on each attached media item's bytes hash: a template render needs its lint rows, a client photo needs its own photo check or a human attestation row.
 3. Ruling 5 still deferred: a separate `cortex_checker` role that alone may INSERT into `check_result`; until then the app role can insert a PASS at a high attempt.
+
+## Requirement from Sai (15 Nov): design quality is audited like facts
+Not only verifiable content: nothing sloppy, off-brand or carrying AI telltale signs (malformed hands, garbled text in images, generic AI look) may reach approval unflagged. This is a product requirement on the same level as the truth check. Consequences for briefs, pending Sai's answers on scope:
+1. Gate: every attached media item needs a design check result for its exact bytes (already the coverage rule; decide the families per media source: template render, client photo, generated image).
+2. WP-07 adds a visual layer after the WP-05 code lint: a vision grader that can only FLAG, a design slop catalogue (the visual twin of the copy slop list), and a sameness check across a week's pieces.
+3. Generated imagery: provenance is always recorded; proposal is off by default in v1, and if ever on, an artefact check plus a mandatory FLAG the approver must acknowledge.
+4. Client photos: technical checks (resolution, blur, exposure, crop inside safe zones) plus human sign-off.
+5. The six template families themselves need a human design review of real rendered output; lint cannot make a weak template good.
