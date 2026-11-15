@@ -79,7 +79,8 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     origins = [o.strip() for o in env.get("THALLO_WEB_ORIGIN", "").split(",") if o.strip()]
     return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
-                    allowed_origins=origins, environ=connections.default_environ())
+                    allowed_origins=origins, environ=connections.default_environ(),
+                    trust_proxy=env.get("THALLO_TRUSTED_PROXY") == "1")
 
 
 __all__ = ["API_CSP", "create_app", "services_from_env"]

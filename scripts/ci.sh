@@ -17,7 +17,7 @@ fi
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "1/5 lint"
-"$PY" -m ruff check thallo scripts tests  # legacy engine files are excluded in pyproject.toml
+"$PY" -m ruff check thallo scripts tests api  # legacy engine files are excluded in pyproject.toml
 
 echo "2/5 repository rules"
 "$PY" scripts/check_rules.py

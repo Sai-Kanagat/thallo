@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import logging
 import secrets
 import sys
+import threading
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -36,7 +38,7 @@ log = logging.getLogger("thallo.api.sessions")
 IDLE_TIMEOUT = timedelta(minutes=15)
 ABSOLUTE_LIFETIME = timedelta(hours=12)
 CODE_TTL = timedelta(minutes=10)
-CODE_DIGITS = 6
+CODE_DIGITS = 8
 MAX_CODE_ATTEMPTS = 5
 
 
@@ -81,21 +83,35 @@ class SessionStore(Protocol):
     def create(self, kind: SessionKind = SessionKind.INTERACTIVE) -> tuple[str, Session]: ...
     def by_token(self, token: str | None) -> Session | None: ...
     def by_id(self, session_id: str) -> Session | None: ...
-    def touch(self, session: Session) -> Session: ...
-    def save(self, session: Session) -> None: ...
+    def touch(self, session: Session) -> Session | None: ...
+    def save(self, session: Session) -> bool: ...
     def rotate(self, session: Session, **changes: object) -> tuple[str, Session]: ...
     def delete(self, session: Session) -> None: ...
     def is_live(self, session: Session) -> bool: ...
 
 
 class InMemorySessionStore:
+    """Every read and write takes one lock. `save` and `touch` are compare-and-set: they write only
+    while the stored entry for that token still exists with the same session id, so a touch racing a
+    logout or a rotation can never bring a revoked session back. Revoked token hashes and ids are
+    kept until their absolute lifetime ends and are refused by `by_token` and `by_id`.
+    (There is no Postgres session store yet; a durable one must keep the same guarantee with a
+    conditional UPDATE ... WHERE token_hash = %s AND id = %s AND revoked_at IS NULL.)"""
+
     def __init__(self, clock: Clock, *, idle: timedelta = IDLE_TIMEOUT,
                  lifetime: timedelta = ABSOLUTE_LIFETIME) -> None:
         self.clock = clock
         self.idle = idle
         self.lifetime = lifetime
+        self._lock = threading.RLock()
         self._by_hash: dict[str, Session] = {}
         self._by_id: dict[str, str] = {}
+        self._revoked: dict[str, datetime] = {}  # token hash or session id -> keep until
+
+    def _prune(self) -> None:
+        now = self.clock.now()
+        for k in [k for k, until in self._revoked.items() if until <= now]:
+            del self._revoked[k]
 
     def _new(self, kind: SessionKind, base: Session | None = None, **changes: object) -> tuple[str, Session]:
         token = secrets.token_urlsafe(32)
@@ -107,51 +123,85 @@ class InMemorySessionStore:
                             tenant_id=base.tenant_id, app_user_id=base.app_user_id,
                             created_at=base.created_at if base.authenticated else now)
         fresh = replace(fresh, **changes)  # type: ignore[arg-type]
-        self.save(fresh)
+        self._by_hash[fresh.token_hash] = fresh
+        self._by_id[fresh.id] = fresh.token_hash
         return token, fresh
 
     def create(self, kind: SessionKind = SessionKind.INTERACTIVE) -> tuple[str, Session]:
-        return self._new(kind)
+        with self._lock:
+            return self._new(kind)
+
+    def _live(self, stored: Session | None, session: Session) -> bool:
+        now = self.clock.now()
+        return (stored is not None and stored.id == session.id and session.token_hash not in self._revoked
+                and session.id not in self._revoked and now - stored.last_seen < self.idle
+                and now - stored.created_at < self.lifetime)
 
     def is_live(self, session: Session) -> bool:
-        now = self.clock.now()
-        stored = self._by_hash.get(session.token_hash)
-        return (stored is not None and stored.id == session.id and now - stored.last_seen < self.idle
-                and now - stored.created_at < self.lifetime)
+        with self._lock:
+            return self._live(self._by_hash.get(session.token_hash), session)
 
     def by_token(self, token: str | None) -> Session | None:
         if not token or len(token) > 128:
             return None
-        s = self._by_hash.get(_hash_token(token))
-        if s is None:
-            return None
-        if not self.is_live(s):
-            self.delete(s)
-            return None
-        return s
+        h = _hash_token(token)
+        with self._lock:
+            self._prune()
+            if h in self._revoked:
+                return None
+            s = self._by_hash.get(h)
+            if s is None:
+                return None
+            if not self._live(s, s):
+                self._revoke(s)
+                return None
+            return s
 
     def by_id(self, session_id: str) -> Session | None:
-        h = self._by_id.get(session_id)
-        s = self._by_hash.get(h) if h else None
-        return s if s is not None and self.is_live(s) else None
+        with self._lock:
+            if session_id in self._revoked:
+                return None
+            h = self._by_id.get(session_id)
+            s = self._by_hash.get(h) if h else None
+            return s if s is not None and self._live(s, s) else None
 
-    def touch(self, session: Session) -> Session:
-        fresh = replace(session, last_seen=self.clock.now())
-        self.save(fresh)
-        return fresh
-
-    def save(self, session: Session) -> None:
+    def _cas(self, session: Session) -> bool:
+        stored = self._by_hash.get(session.token_hash)
+        if stored is None or stored.id != session.id or session.token_hash in self._revoked \
+                or session.id in self._revoked:
+            return False
         self._by_hash[session.token_hash] = session
-        self._by_id[session.id] = session.token_hash
+        return True
+
+    def touch(self, session: Session) -> Session | None:
+        """None when the session was revoked or rotated meanwhile."""
+        with self._lock:
+            fresh = replace(session, last_seen=self.clock.now())
+            return fresh if self._cas(fresh) else None
+
+    def save(self, session: Session) -> bool:
+        """Compare-and-set; False (nothing written) when the session is gone."""
+        with self._lock:
+            return self._cas(session)
 
     def rotate(self, session: Session, **changes: object) -> tuple[str, Session]:
         """A new token, id and CSRF token for the same person; the old token stops working."""
-        self.delete(session)
-        return self._new(session.kind, session, **changes)
+        with self._lock:
+            if self._by_hash.get(session.token_hash) is None or session.token_hash in self._revoked:
+                raise PermissionError("the session was revoked")
+            self._revoke(session)
+            return self._new(session.kind, session, **changes)
 
-    def delete(self, session: Session) -> None:
+    def _revoke(self, session: Session) -> None:
+        until = session.created_at + self.lifetime
+        self._revoked[session.token_hash] = until
+        self._revoked[session.id] = until
         self._by_hash.pop(session.token_hash, None)
         self._by_id.pop(session.id, None)
+
+    def delete(self, session: Session) -> None:
+        with self._lock:
+            self._revoke(session)
 
 
 # ---------------------------------------------------------------------- one-time codes
@@ -196,16 +246,26 @@ class LoginCodes:
         self.max_attempts = max_attempts
         self._key = secrets.token_bytes(32)
         self._pending: dict[tuple[str, str], _Pending] = {}
+        self._lock = threading.Lock()
 
     def _mac(self, code: str) -> str:
         return hmac.new(self._key, code.encode(), hashlib.sha256).hexdigest()
 
     def issue(self, session_id: str, email: str) -> str:
         code = "".join(secrets.choice("0123456789") for _ in range(CODE_DIGITS))
-        self._pending[(session_id, email)] = _Pending(self._mac(code), self.clock.now() + self.ttl)
+        with self._lock:
+            self._pending[(session_id, email)] = _Pending(self._mac(code), self.clock.now() + self.ttl)
         return code
 
+    def pending(self, session_id: str, email: str) -> bool:
+        p = self._pending.get((session_id, email))
+        return p is not None and self.clock.now() < p.expires_at and p.attempts < self.max_attempts
+
     def check(self, session_id: str, email: str, code: str) -> bool:
+        with self._lock:
+            return self._check(session_id, email, code)
+
+    def _check(self, session_id: str, email: str, code: str) -> bool:
         key = (session_id, email)
         p = self._pending.get(key)
         if p is None:
@@ -228,16 +288,75 @@ class RateLimiter:
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self._hits: dict[str, deque[datetime]] = {}
+        self._lock = threading.Lock()
 
     def allow(self, key: str, limit: int, window: timedelta) -> bool:
-        now = self.clock.now()
-        q = self._hits.setdefault(key, deque())
-        while q and now - q[0] >= window:
-            q.popleft()
-        if len(q) >= limit:
-            return False
-        q.append(now)
-        return True
+        with self._lock:
+            now = self.clock.now()
+            q = self._hits.setdefault(key, deque())
+            while q and now - q[0] >= window:
+                q.popleft()
+            if len(q) >= limit:
+                return False
+            q.append(now)
+            return True
+
+
+LOCKOUT_AFTER = 10  # failed verifications per identity, across every session and client
+LOCKOUT_BASE = timedelta(minutes=1)
+LOCKOUT_MAX = timedelta(hours=1)
+
+
+class FailureLockout:
+    """Counts failed code checks per email (known or not, so it reveals nothing). From the tenth
+    failure on, new codes for that email are refused for 1, 2, 4 ... minutes, capped at an hour.
+    A code already issued keeps its own five-attempt cap, so the owner holding a valid code can
+    still use it; an attacker gets at most five guesses per code at 1 in 10^8 each, and the lockout
+    caps how many codes there are to guess at. A success clears the count."""
+
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+        self._fails: dict[str, int] = {}
+        self._until: dict[str, datetime] = {}
+        self._lock = threading.Lock()
+
+    def locked(self, key: str) -> bool:
+        with self._lock:
+            until = self._until.get(key)
+            return until is not None and self.clock.now() < until
+
+    def fail(self, key: str) -> None:
+        with self._lock:
+            n = self._fails.get(key, 0) + 1
+            self._fails[key] = n
+            if n >= LOCKOUT_AFTER:
+                wait = min(LOCKOUT_BASE * (2 ** (n - LOCKOUT_AFTER)), LOCKOUT_MAX)
+                self._until[key] = self.clock.now() + wait
+
+    def clear(self, key: str) -> None:
+        with self._lock:
+            self._fails.pop(key, None)
+            self._until.pop(key, None)
+
+
+def client_keys(host: str | None, forwarded_for: str | None, *, trust_proxy: bool) -> tuple[str, str]:
+    """(client, network) keys for rate limits, hashed, kept only in memory (no table stores an IP).
+
+    The client is the socket peer. X-Forwarded-For is read only when the operator says a proxy is
+    in front (THALLO_TRUSTED_PROXY=1), and then only its last entry, the one that proxy appended.
+    The network is the /24 for IPv4 and the /64 for IPv6. A peer that is not an IP address (the
+    test client reports "testclient") is its own client and its own network."""
+    peer = (host or "unknown").strip()
+    if trust_proxy and forwarded_for:
+        peer = forwarded_for.split(",")[-1].strip() or peer
+    try:
+        ip = ipaddress.ip_address(peer)
+        net = ipaddress.ip_network(f"{ip}/{24 if ip.version == 4 else 64}", strict=False)
+        network = str(net)
+    except ValueError:
+        network = peer
+    h = lambda v: hashlib.sha256(v.encode()).hexdigest()  # noqa: E731
+    return f"client:{h(peer)}", f"net:{h(network)}"
 
 
 def email_key(kind: str, email: str) -> str:
@@ -262,7 +381,8 @@ class ApiSessionVerifier:
 
 
 __all__ = [
-    "ABSOLUTE_LIFETIME", "CODE_TTL", "IDLE_TIMEOUT", "ApiSessionVerifier", "CodeSender", "ConsoleCodeSender",
+    "ABSOLUTE_LIFETIME", "CODE_TTL", "FailureLockout", "client_keys",
+    "IDLE_TIMEOUT", "ApiSessionVerifier", "CodeSender", "ConsoleCodeSender",
     "InMemorySessionStore", "LoginCodes", "NoCodeSender", "RateLimiter", "Session", "SessionKind",
     "SessionStore", "Shown", "email_key",
 ]

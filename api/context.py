@@ -20,6 +20,7 @@ from api.media_store import TenantMediaStore
 from api.sessions import (
     ApiSessionVerifier,
     CodeSender,
+    FailureLockout,
     InMemorySessionStore,
     LoginCodes,
     RateLimiter,
@@ -57,6 +58,8 @@ class Services:
     sessions: SessionStore = None  # type: ignore[assignment]
     codes: LoginCodes = None  # type: ignore[assignment]
     limits: RateLimiter = None  # type: ignore[assignment]
+    lockout: FailureLockout = None  # type: ignore[assignment]
+    trust_proxy: bool = False  # THALLO_TRUSTED_PROXY=1: read the last X-Forwarded-For entry
     allowed_origins: Collection[str] = ()
     mock_tenants: Collection[str] = ()
     environ: dict[str, str] = field(default_factory=dict)
@@ -68,6 +71,8 @@ class Services:
             self.codes = LoginCodes(self.clock)
         if self.limits is None:
             self.limits = RateLimiter(self.clock)
+        if self.lockout is None:
+            self.lockout = FailureLockout(self.clock)
         self.verifier = ApiSessionVerifier(self.sessions)
 
 

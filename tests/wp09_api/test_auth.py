@@ -44,9 +44,9 @@ def test_unknown_and_known_email_get_the_same_answer(world):
 def test_wrong_code_and_unknown_email_fail_the_same_way(world):
     c, csrf = _start(world)
     c.post("/api/auth/request-code", json={"email": world.a.founder_email}, headers={CSRF_HEADER: csrf})
-    wrong = c.post("/api/auth/verify", json={"email": world.a.founder_email, "code": "000000"},
+    wrong = c.post("/api/auth/verify", json={"email": world.a.founder_email, "code": "00000000"},
                    headers={CSRF_HEADER: csrf})
-    ghost = c.post("/api/auth/verify", json={"email": "nobody@nowhere.test", "code": "123456"},
+    ghost = c.post("/api/auth/verify", json={"email": "nobody@nowhere.test", "code": "12345678"},
                    headers={CSRF_HEADER: csrf})
     assert wrong.status_code == ghost.status_code == 400
     assert wrong.json() == ghost.json()
@@ -68,7 +68,7 @@ def test_code_expires_and_burns_after_attempts(world):
     c.post("/api/auth/request-code", json={"email": email}, headers={CSRF_HEADER: csrf})
     code = world.sender.codes[email]
     for _ in range(5):
-        c.post("/api/auth/verify", json={"email": email, "code": "999999" if code != "999999" else "111111"},
+        c.post("/api/auth/verify", json={"email": email, "code": "99999999" if code != "99999999" else "11111111"},
                headers={CSRF_HEADER: csrf})
     r = c.post("/api/auth/verify", json={"email": email, "code": code}, headers={CSRF_HEADER: csrf})
     assert r.status_code in (400, 429)  # burned after five tries (or rate limited)
@@ -105,7 +105,7 @@ def test_verify_is_rate_limited(world):
     c, csrf = _start(world)
     email = world.a.founder_email
     c.post("/api/auth/request-code", json={"email": email}, headers={CSRF_HEADER: csrf})
-    codes = [c.post("/api/auth/verify", json={"email": email, "code": "123123"},
+    codes = [c.post("/api/auth/verify", json={"email": email, "code": "12312312"},
                     headers={CSRF_HEADER: csrf}).status_code for _ in range(12)]
     assert 429 in codes
 
