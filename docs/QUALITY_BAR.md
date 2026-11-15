@@ -62,3 +62,25 @@ A piece passes when a designer and a copywriter who know the client would sign i
 
 ## What this costs
 Two new pieces of work beyond the 42 packages: WP-05b (brand contract intake and conformance) and the blind comparison. The visual layer enlarges WP-07. Design review becomes a merge gate for UI packages. Nothing here publishes, sends or spends.
+
+## 9. Strategy and proof come before breadth (added 15 Nov)
+An agency earns its fee by deciding what to post and showing it worked. So after the core loop (WP-07 checks, WP-08 publisher, WP-09 app, WP-10 capture), the order is:
+1. WP-15 growth model and plays: every slot has a play, pillar, stage and target metric.
+2. WP-17 planner: the weekly plan with its reasoning and what it chose not to do.
+3. WP-12 link and touch tracking, then WP-18 measurement: outcome per piece.
+4. WP-21 scoreboard and weekly memo: what went out, what it did, what it cost, what changes.
+5. WP-19 learning loop and eval harness, with the blind comparison.
+Only then the extension packages (ads, video, pages, inbox, and the rest).
+Standing rules: approval rate is never shown without outcome per piece beside it. Sai is the design reviewer of record for every template family and every UI package until he names someone else; no checker replaces that sign-off.
+
+## 10. Outside tools: the intake rule
+Thallo is not a bundle of repos. A tool enters only when a pilot needs the capability, and then in the weakest form that works:
+1. Idea only: read it, port the pattern or the checklist into our own code with tests. Default.
+2. Seed data: use its lists (slop phrases, design tells, audit checks) as starting catalogues, attributed, licence checked.
+3. Provider behind the registry: only for a maintained project with a clear licence, a pinned version, no secret reaching it except through the vault, and a manual fallback.
+Never: anything that generates people or products, evades bot detection, scrapes personal data for outreach, warms up or rotates mailboxes, sends without a human, or spends without Sai's yes.
+
+Triage of the 15 Nov list (from Sai's saved posts; repo facts NOT yet verified, a researcher pass must confirm each exists, its licence and its upkeep before any use):
+- Adopt as pattern, soon: HyperFrames (HTML to MP4 fits our template renderer, WP-36); Humanizer, Impeccable, Hallmark, taste-skill (seed the copy and design slop catalogues, WP-07, and the UI review gate, WP-09); C2PA provenance, through the official C2PA tooling, to label our renders and to detect AI-made incoming client photos (WP-07, WP-11); a PII and injection screen as a plain code check (WP-07); the "needs check" state for ambiguous sends (already in WP-08).
+- Adopt as pattern, in its package: claude-ads audit checks, audit only (WP-22); AEO and GEO page checks, sitemap and JSON-LD validation (WP-27); share-of-model tracking (WP-38); "AI researches, human sends" lead research (WP-13); brand memory that compounds (WP-19); pre-publish compliance checks (WP-07); cookieless analytics (WP-12); revenue attribution for the Won column (WP-18, WP-35); last30days style signal intake and Firecrawl for public pages that allow it (WP-16); Wikidata or web checks that can only FLAG (WP-33).
+- Rejected: Open-Generative-AI and any uncensored image or video generation (generated imagery is off in v1 and this one ships with no content filters); Camofox and any stealth or anti-bot browser; Browser-Use for logging into client accounts; Lead Orchestra and scraped lead lists; Emareach, Warmbly and any mailbox warm-up or rotation; programmatic SEO at scale (mass thin pages are slop by definition); HyperFX MCP for executing ads; extra publishers (Postflare, postiz-cheap) until one publisher is proven; NeMo Guardrails (no conversational agent exists); MarketingAgent; MetricUI (a stock component look is what section 6 forbids).
