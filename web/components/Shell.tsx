@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { getSession, post } from "@/lib/api";
+import { clearAllCaches } from "@/lib/caches";
 import type { SessionView } from "@/lib/types";
 
 const NAV = [
@@ -51,7 +52,7 @@ export function Shell({ children }: { children: ReactNode }) {
     try {
       await post("/api/auth/logout");
     } finally {
-      navigator.serviceWorker?.controller?.postMessage("clear");
+      await clearAllCaches();
       router.replace("/login");
     }
   };
@@ -79,7 +80,7 @@ export function Shell({ children }: { children: ReactNode }) {
       </header>
       {!online ? (
         <p className="offline-bar" role="status">
-          Offline. You are seeing the last saved view. Nothing you tap is sent until you are back.
+          You are offline. Nothing loads or sends until the connection is back.
         </p>
       ) : null}
       <main className="main">{children}</main>

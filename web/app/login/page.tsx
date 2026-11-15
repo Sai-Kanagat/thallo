@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ApiError, get, getSession, post } from "@/lib/api";
+import { clearAllCaches } from "@/lib/caches";
 import type { Membership, SessionView } from "@/lib/types";
 
 type Step = "email" | "code" | "tenant";
@@ -61,6 +62,7 @@ export default function LoginPage() {
 
   const choose = (tenantId: string) =>
     run(async () => {
+      await clearAllCaches(); // nothing of the previous business survives the switch
       await post("/api/auth/tenant", { tenant_id: tenantId });
       router.replace("/review");
     });

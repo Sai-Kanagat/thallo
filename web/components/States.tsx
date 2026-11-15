@@ -68,7 +68,7 @@ export function Offline({ onRetry }: { onRetry?: () => void }) {
   return (
     <div className="state state-offline" role="alert">
       <h2>You are offline</h2>
-      <p>Saved views stay readable. Approving, editing and changes wait for a connection; nothing is queued.</p>
+      <p>This screen needs a connection to show current data. Nothing you tap is saved or queued while offline.</p>
       {onRetry ? (
         <button type="button" className="button" onClick={onRetry}>
           Try again
