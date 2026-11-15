@@ -350,18 +350,25 @@ CEILING_MAX_EXP = 4
 
 class EmailCeiling:
     """The per-email backstop, for unknown devices only. It counts codes actually issued and wrong
-    guesses at them, never bare requests. Deciding (`ready`) and recording (`issued`, `wrong`) are
-    separate steps; `issued` runs only after a code went out. When the ceiling is hit, the next code
-    for that email waits 1, 2, 4, 8 minutes after the last one issued, capped at 15 minutes: a delay,
-    never an indefinite refusal. A network counts toward the distinct-network cap only once it
-    produced a wrong guess. A code already issued is never affected."""
+    guesses at them, never bare requests. When the ceiling is reached, the next code for that
+    email waits 1, 2, 4, 8 minutes, capped at 15: a delay, never an indefinite refusal. A network
+    counts toward the distinct-network cap only once it produced a wrong guess. A code already
+    issued is never affected.
+
+    Atomic: `reserve` decides and takes a slot under one lock and returns a token (None: send
+    nothing). `issued(token)` confirms it after the code went out; `release(token)` gives the slot
+    back when the send failed. Parallel requests therefore cannot all pass before one is recorded.
+    The delay lives in `_until` and `_strikes`, apart from the sliding window, so a window that
+    empties does not lift a delay that is still running."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self._issues: dict[str, deque[datetime]] = {}
         self._wrong: dict[str, deque[datetime]] = {}
         self._bad_nets: dict[str, dict[str, datetime]] = {}
+        self._held: dict[str, tuple[str, datetime]] = {}  # token -> (key, reserved at)
         self._strikes: dict[str, int] = {}
+        self._until: dict[str, datetime] = {}
         self._lock = threading.Lock()
 
     def _trim(self, table: dict[str, deque[datetime]], key: str, now: datetime) -> deque[datetime]:
@@ -370,36 +377,41 @@ class EmailCeiling:
             q.popleft()
         return q
 
-    def _hit(self, key: str, network: str, now: datetime) -> bool:
-        issues = self._trim(self._issues, key, now)
-        wrong = self._trim(self._wrong, key, now)
-        nets = {n: t for n, t in self._bad_nets.get(key, {}).items() if now - t < CEILING_WINDOW}
-        self._bad_nets[key] = nets
-        return (len(issues) >= ISSUES_PER_EMAIL or len(wrong) >= WRONG_PER_EMAIL
-                or (network not in nets and len(nets) >= NETWORKS_PER_EMAIL))
+    def _delay(self, strikes: int) -> timedelta:
+        return min(CEILING_BASE * (2 ** min(max(strikes - 1, 0), CEILING_MAX_EXP)), CEILING_MAX)
 
-    def delay(self, key: str) -> timedelta:
-        exp = min(self._strikes.get(key, 0), CEILING_MAX_EXP)
-        return min(CEILING_BASE * (2 ** exp), CEILING_MAX)
-
-    def ready(self, key: str, network: str) -> bool:
-        """Decide only: may a new code be issued now? Records nothing."""
+    def reserve(self, key: str, network: str) -> str | None:
         with self._lock:
             now = self.clock.now()
-            if not self._hit(key, network, now):
+            until = self._until.get(key)
+            if until is not None and now < until:
+                return None  # a delay is running, whatever the window says
+            issues = self._trim(self._issues, key, now)
+            wrong = self._trim(self._wrong, key, now)
+            nets = {n: t for n, t in self._bad_nets.get(key, {}).items() if now - t < CEILING_WINDOW}
+            self._bad_nets[key] = nets
+            held = sum(1 for k, _ in self._held.values() if k == key)
+            new_net_over_cap = network not in nets and len(nets) >= NETWORKS_PER_EMAIL
+            token = secrets.token_hex(16)
+            self._held[token] = (key, now)
+            if len(issues) + held + 1 >= ISSUES_PER_EMAIL or len(wrong) >= WRONG_PER_EMAIL or new_net_over_cap:
+                strikes = min(self._strikes.get(key, 0) + 1, CEILING_MAX_EXP + 1)
+                self._strikes[key] = strikes
+                self._until[key] = now + self._delay(strikes)
+            elif until is None or now >= until:
                 self._strikes.pop(key, None)
-                return True
-            issues = self._issues.get(key)
-            last = issues[-1] if issues else None
-            return last is None or now >= last + self.delay(key)
+                self._until.pop(key, None)
+            return token
 
-    def issued(self, key: str, network: str) -> None:
-        """Record a code that was actually issued (after it went out)."""
+    def issued(self, token: str) -> None:
         with self._lock:
-            now = self.clock.now()
-            if self._hit(key, network, now):
-                self._strikes[key] = min(self._strikes.get(key, 0) + 1, CEILING_MAX_EXP)
-            self._trim(self._issues, key, now).append(now)
+            held = self._held.pop(token, None)
+            if held is not None:
+                self._trim(self._issues, held[0], self.clock.now()).append(held[1])
+
+    def release(self, token: str) -> None:
+        with self._lock:
+            self._held.pop(token, None)  # the delay, if one started, stays
 
     def wrong(self, key: str, network: str) -> None:
         with self._lock:

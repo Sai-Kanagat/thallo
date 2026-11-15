@@ -149,14 +149,21 @@ def request_code(body: EmailBody, request: Request) -> dict:
         return SENT  # the same words, known address or not
     network = _keys(request)[1]
     known = svc.devices.valid_for(request.cookies.get(DEVICE_COOKIE), identity.id, svc.clock.now())
+    token = None
     if not known:
         if svc.lockout.locked(_lock_key(request, email)):
             return SENT  # a delay on this network after wrong guesses from it
-        if not svc.ceiling.ready(email_key("ceiling", email), network):
+        token = svc.ceiling.reserve(email_key("ceiling", email), network)
+        if token is None:
             return SENT  # the per-email ceiling: the next code waits, at most 15 minutes
-    svc.sender.send(email, svc.codes.issue(s.id, email))
-    if not known:
-        svc.ceiling.issued(email_key("ceiling", email), network)  # recorded after the code went out
+    try:
+        svc.sender.send(email, svc.codes.issue(s.id, email))
+    except Exception:
+        if token is not None:
+            svc.ceiling.release(token)
+        return SENT  # the same answer; the sender logs its own failure
+    if token is not None:
+        svc.ceiling.issued(token)  # confirmed after the code went out
     return SENT
 
 

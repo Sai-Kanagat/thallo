@@ -19,6 +19,7 @@ from api.sessions import (
     LOCKOUT_MAX,
     LOCKOUT_MAX_EXP,
     NETWORKS_PER_EMAIL,
+    EmailCeiling,
     FailureLockout,
     InMemorySessionStore,
     SessionKind,
@@ -302,3 +303,73 @@ def test_ipv6_networks_are_slash_48():
     b = client_keys("2001:db8:1:ffff::9", None, trust_proxy=False)[1]
     c = client_keys("2001:db8:2::1", None, trust_proxy=False)[1]
     assert a == b != c
+
+
+# ---------------------------------------------------------------------- ceiling atomicity
+
+def test_parallel_code_requests_issue_at_most_the_allowed_number(world):
+    from concurrent.futures import ThreadPoolExecutor
+
+    email = world.a.founder_email
+    before = 15
+    for i in range(before):
+        c, csrf = _client(world, f"10.{i}.0.1")
+        _req(c, csrf, email)
+    start = world.sender.calls
+    clients = [_client(world, f"10.{100 + i}.0.1") for i in range(20)]
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        statuses = list(pool.map(lambda cc: _req(cc[0], cc[1], email).status_code, clients))
+    assert set(statuses) == {202}
+    assert world.sender.calls - start <= ISSUES_PER_EMAIL - before
+
+
+def test_reserve_is_atomic_across_threads():
+    import threading
+
+    from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+
+    ceiling = EmailCeiling(FakeClock(FAKE_EPOCH))
+    tokens: list = []
+    barrier = threading.Barrier(40)
+
+    def go(i):
+        barrier.wait()
+        tokens.append(ceiling.reserve("k", f"net{i}"))
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(40)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(1 for t in tokens if t is not None) == ISSUES_PER_EMAIL
+
+
+def test_delay_still_holds_after_the_window_empties():
+    from datetime import timedelta
+
+    from thallo.contracts.clock import FAKE_EPOCH, FakeClock
+
+    clock = FakeClock(FAKE_EPOCH)
+    ceiling = EmailCeiling(clock)
+    for i in range(ISSUES_PER_EMAIL):
+        ceiling.issued(ceiling.reserve("k", f"n{i}"))
+    for _ in range(4):  # keep hitting so the delay grows to its cap
+        clock.advance(seconds=CEILING_MAX.total_seconds())
+        for i in range(ISSUES_PER_EMAIL):
+            t = ceiling.reserve("k", f"m{i}")
+            if t:
+                ceiling.issued(t)
+    clock.advance(seconds=1)
+    ceiling._issues["k"].clear()  # the sliding window is empty
+    assert ceiling.reserve("k", "x") is None  # the running delay still holds
+    clock.advance(seconds=CEILING_MAX.total_seconds())
+    assert ceiling.reserve("k", "x") is not None  # and ends within the cap
+    assert ceiling._until["k"] - clock.now() <= CEILING_MAX if "k" in ceiling._until else True
+    assert CEILING_MAX == timedelta(minutes=15)
+
+
+def test_failed_send_releases_the_slot(world):
+    ceiling = world.svc.ceiling
+    token = ceiling.reserve("k", "n")
+    ceiling.release(token)
+    assert ceiling._held == {} and not ceiling._issues.get("k")
