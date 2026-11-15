@@ -121,7 +121,7 @@ class PublishStore:
     def emit(self, name: EventName, payload: Payload) -> None:
         now = self.clock.now()
         event = Event.build(id=new_id(self.clock), tenant_id=self.tenant_id, occurred_at=now,
-                            actor=SystemActor(id=ACTOR_ID, tenant_id=self.tenant_id), payload=payload, name=name)
+                            actor=SystemActor(id=ACTOR_ID), payload=payload, name=name)
         self.rows.insert(EventRecord(id=event.id, created_at=now, tenant_id=self.tenant_id, name=event.name.value,
                                      version=event.version, actor_kind=event.actor.kind, actor_id=event.actor.id,
                                      payload=event.payload, occurred_at=now))
