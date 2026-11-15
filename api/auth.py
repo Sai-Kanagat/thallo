@@ -122,6 +122,8 @@ def request_code(body: EmailBody, request: Request) -> dict:
         raise _limited()
     if svc.lockout.locked(_lock_key(request, email)):
         return SENT  # locked after repeated failures: no new code, and the same answer
+    if not svc.ceiling.may_issue(email_key("ceiling", email), _keys(request)[1]):
+        return SENT  # the global per-email ceiling: no new code, the same answer
     identity = svc.directory.find_identity(email)
     if identity is not None and svc.directory.memberships(identity.id):
         svc.sender.send(email, svc.codes.issue(s.id, email))
@@ -145,6 +147,7 @@ def verify(body: VerifyBody, request: Request, response: Response) -> dict:
     if not svc.codes.check(s.id, email, body.code.strip()):
         if issued:
             svc.lockout.fail(_lock_key(request, email))
+            svc.ceiling.wrong(email_key("ceiling", email))
         raise ApiError(400, "invalid_code", "that code is not valid; request a new one")
     svc.lockout.clear(_lock_key(request, email))
     identity = svc.directory.find_identity(email)

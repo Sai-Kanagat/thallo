@@ -342,19 +342,67 @@ class FailureLockout:
             self._until.pop(key, None)
 
 
+ISSUES_PER_EMAIL = 20  # new codes per email per window, all networks together
+WRONG_PER_EMAIL = 50  # wrong guesses at issued codes per email per window, all networks together
+NETWORKS_PER_EMAIL = 8  # distinct client networks asking for codes for one email per window
+CEILING_WINDOW = timedelta(minutes=15)
+
+
+class EmailCeiling:
+    """The global per-email backstop against a guesser spread over many networks. It only ever
+    stops NEW codes from being issued; a code already issued and still alive can always be used
+    (each code dies after `MAX_CODE_ATTEMPTS` wrong guesses from anywhere, so an issued code bounds
+    guessing by itself). Issue stops when, inside the window, the email had `ISSUES_PER_EMAIL` codes,
+    `WRONG_PER_EMAIL` wrong guesses, or requests from `NETWORKS_PER_EMAIL` distinct networks and
+    this request comes from a new one."""
+
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+        self._issues: dict[str, deque[datetime]] = {}
+        self._wrong: dict[str, deque[datetime]] = {}
+        self._nets: dict[str, dict[str, datetime]] = {}
+        self._lock = threading.Lock()
+
+    def _trim(self, q: deque[datetime], now: datetime) -> deque[datetime]:
+        while q and now - q[0] >= CEILING_WINDOW:
+            q.popleft()
+        return q
+
+    def may_issue(self, email_hash: str, network: str) -> bool:
+        """Decide and record one request for a code. False means: send nothing."""
+        with self._lock:
+            now = self.clock.now()
+            issues = self._trim(self._issues.setdefault(email_hash, deque()), now)
+            wrong = self._trim(self._wrong.setdefault(email_hash, deque()), now)
+            nets = {n: t for n, t in self._nets.get(email_hash, {}).items() if now - t < CEILING_WINDOW}
+            self._nets[email_hash] = nets
+            if len(issues) >= ISSUES_PER_EMAIL or len(wrong) >= WRONG_PER_EMAIL:
+                return False
+            if network not in nets and len(nets) >= NETWORKS_PER_EMAIL:
+                return False
+            nets[network] = now
+            issues.append(now)
+            return True
+
+    def wrong(self, email_hash: str) -> None:
+        with self._lock:
+            now = self.clock.now()
+            self._trim(self._wrong.setdefault(email_hash, deque()), now).append(now)
+
+
 def client_keys(host: str | None, forwarded_for: str | None, *, trust_proxy: bool) -> tuple[str, str]:
     """(client, network) keys for rate limits, hashed, kept only in memory (no table stores an IP).
 
     The client is the socket peer. X-Forwarded-For is read only when the operator says a proxy is
     in front (THALLO_TRUSTED_PROXY=1), and then only its last entry, the one that proxy appended.
-    The network is the /24 for IPv4 and the /64 for IPv6. A peer that is not an IP address (the
+    The network is the /24 for IPv4 and the /48 for IPv6. A peer that is not an IP address (the
     test client reports "testclient") is its own client and its own network."""
     peer = (host or "unknown").strip()
     if trust_proxy and forwarded_for:
         peer = forwarded_for.split(",")[-1].strip() or peer
     try:
         ip = ipaddress.ip_address(peer)
-        net = ipaddress.ip_network(f"{ip}/{24 if ip.version == 4 else 64}", strict=False)
+        net = ipaddress.ip_network(f"{ip}/{24 if ip.version == 4 else 48}", strict=False)
         network = str(net)
     except ValueError:
         network = peer
@@ -384,7 +432,7 @@ class ApiSessionVerifier:
 
 
 __all__ = [
-    "ABSOLUTE_LIFETIME", "CODE_TTL", "FailureLockout", "client_keys",
+    "ABSOLUTE_LIFETIME", "CODE_TTL", "EmailCeiling", "FailureLockout", "client_keys",
     "IDLE_TIMEOUT", "ApiSessionVerifier", "CodeSender", "ConsoleCodeSender",
     "InMemorySessionStore", "LoginCodes", "NoCodeSender", "RateLimiter", "Session", "SessionKind",
     "SessionStore", "Shown", "email_key",

@@ -16,6 +16,7 @@ from api.sessions import (
     LOCKOUT_AFTER,
     LOCKOUT_MAX,
     LOCKOUT_MAX_EXP,
+    NETWORKS_PER_EMAIL,
     FailureLockout,
     InMemorySessionStore,
     SessionKind,
@@ -178,3 +179,63 @@ def test_logout_during_a_request_cannot_be_undone_by_a_late_touch(world):
     world.svc.sessions.delete(live)  # logout lands first
     assert world.svc.sessions.touch(live) is None  # the late touch of the in-flight request
     assert c.get("/api/review/bundles").status_code == 401
+
+
+# ---------------------------------------------------------------------- distributed guessing
+
+def test_guesses_from_fifty_networks_cannot_pass_the_per_code_cap(world):
+    email = world.a.founder_email
+    first, csrf = _client(world, "198.51.100.1")
+    _req(first, csrf, email)
+    code = world.sender.codes[email]
+    wrong = "00000003" if code != "00000003" else "00000004"
+    cookie = dict(first.cookies)
+    statuses = []
+    for i in range(50):  # the same session, a new network each time (all the per-session tries)
+        c = TestClient(create_app(world.svc), base_url="https://testserver", client=(f"10.{i}.0.1", 4000),
+                       cookies=cookie)
+        statuses.append(c.post("/api/auth/verify", json={"email": email, "code": wrong},
+                               headers={CSRF_HEADER: csrf}).status_code)
+    assert 200 not in statuses
+    last = TestClient(create_app(world.svc), base_url="https://testserver", client=("10.99.0.1", 4000),
+                      cookies=cookie)
+    world.clock.advance(minutes=16)  # past every rate window; the code itself is gone
+    r = last.post("/api/auth/verify", json={"email": email, "code": code}, headers={CSRF_HEADER: csrf})
+    assert r.status_code != 200  # dead after five wrong guesses, whatever network they came from
+
+
+def test_distinct_network_cap_stops_new_codes_only(world):
+    email = world.a.founder_email
+    for i in range(NETWORKS_PER_EMAIL):
+        c, csrf = _client(world, f"10.{i}.0.1")
+        _req(c, csrf, email)
+    calls = world.sender.calls
+    c, csrf = _client(world, "10.200.0.1")
+    assert _req(c, csrf, email).status_code == 202 and world.sender.calls == calls  # same answer, no code
+
+
+def test_owner_with_a_live_code_signs_in_while_the_global_ceiling_is_hit(world):
+    email = world.a.founder_email
+    owner, o_csrf = _client(world, "198.51.100.10")
+    _req(owner, o_csrf, email)
+    code = world.sender.codes[email]
+    for i in range(NETWORKS_PER_EMAIL + 3):  # an attacker fills the ceiling from many networks
+        a, a_csrf = _client(world, f"10.{i}.0.1")
+        _req(a, a_csrf, email)
+        for _ in range(5):
+            a.post("/api/auth/verify", json={"email": email, "code": "00000005"}, headers={CSRF_HEADER: a_csrf})
+    calls = world.sender.calls
+    probe, p_csrf = _client(world, "10.250.0.1")
+    _req(probe, p_csrf, email)
+    assert world.sender.calls == calls  # the ceiling is hit: no new codes
+    r = owner.post("/api/auth/verify", json={"email": email, "code": code}, headers={CSRF_HEADER: o_csrf})
+    assert r.status_code == 200, r.text
+
+
+def test_ipv6_networks_are_slash_48():
+    from api.sessions import client_keys
+
+    a = client_keys("2001:db8:1:1::1", None, trust_proxy=False)[1]
+    b = client_keys("2001:db8:1:ffff::9", None, trust_proxy=False)[1]
+    c = client_keys("2001:db8:2::1", None, trust_proxy=False)[1]
+    assert a == b != c
