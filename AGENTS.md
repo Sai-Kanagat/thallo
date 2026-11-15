@@ -46,3 +46,5 @@ If you are a worker, your brief is one file in `docs/packages/`. It carries your
 - Commit as the configured git user, with no AI co-author or generated-by lines.
 - No em dashes or emoji in copy, docs or commit messages.
 - Match surrounding code. Small, focused commits.
+
+Quality bar: `docs/QUALITY_BAR.md` applies to every package (brand contract, design craft, imagery, copy, product UI, proof). UI packages need a design review before merge.
