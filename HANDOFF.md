@@ -90,3 +90,13 @@ Rulings for the fix round (same branch, merge current main first):
 4. Add a unit test that hands `review_checks` rows with mixed hashes directly, so the gate's own filter is exercised without the memory repository filtering first.
 5. Known limit, accepted for this merge and queued as its own package before WP-09: the app role can insert a PASS under a real check name for content never honestly checked. Real fix: a `cortex_checker` role that alone may INSERT into `check_result`, INSERT revoked from `cortex_app`, checks run through owner-side or worker-side code. Needs a design note first (which process runs checks, how it gets the tenant).
 Then: a second independent security review, CI green, merge. Tell Sai before 0021 goes to Supabase. A future tenant-erasure job must drop the append-only trigger inside its own migration.
+
+## Vault and secrets audit (15 Nov, independent, read-only)
+Sound: AES-256-GCM with a fresh nonce per seal; ciphertext bound to tenant, ref and version; fails closed on a missing or wrong key; rotation works; `vault_secret` has forced RLS; the `Secret` wrapper redacts everywhere; existing tests cover cross-tenant decrypt, wrong key, tampering and no plaintext in logs.
+1. BLOCKING, fix in progress on its own branch: a secret with a newline or other illegal header character made `http.client` raise a `ValueError` that quotes the header, key included (`thallo/providers/text/base.py`). Fix: validate before building headers, catch and re-raise without the message, and `Vault.put` refuses such values.
+2. SHOULD FIX. `scripts/provision_db.py` sends role passwords as plaintext `PASSWORD` literals, which can land in the Postgres log. Send a client-computed SCRAM verifier. Do this before Sai reruns provisioning.
+3. SHOULD FIX. The app role can DELETE then INSERT its own `vault_secret` row at an old version, bringing back a revoked key (own tenant only). Revoke DELETE from the app role or keep a high-water mark.
+4. SHOULD FIX. `job.payload` "ids only" is a documented rule with no enforcement, and `cortex_worker` reads every tenant's jobs. Enforce in the model (allow only id-shaped values).
+5. NOTE. Settings secret scanner: misses split keys, userinfo URLs without a colon, secrets under 32 characters; rejects legitimate long paths and hex ids. Hygiene only, secrets belong in the vault.
+6. `.env.example` was missing 13 variables; added in the same fix branch.
+Not audited: image, Postiz and Notion transports; a live Postgres run.
