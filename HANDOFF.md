@@ -101,3 +101,10 @@ Sound: AES-256-GCM with a fresh nonce per seal; ciphertext bound to tenant, ref 
 6. `.env.example` was missing 13 variables; added and merged.
 7. Follow-up: `writer.py`, `postiz.py`, `notion.py` (older clients outside `thallo/providers/`) put env keys into urllib headers with the same newline risk; route them through `check_header_secret`. NOTE: the transport refuses non-ASCII keys the vault accepts; align `Vault.put` with it.
 Not audited: image, Postiz and Notion transports; a live Postgres run.
+
+## Gate content binding merged (15 Nov)
+Merged after a second independent security review (nothing blocking today), CI on main 2,165 passed, 5 skipped with Postgres. Contracts 2.5.0. Migration 0021 is in the repo and has run only on Docker Postgres: NOT applied to Supabase; Sai is told before it is.
+Must land before WP-07 or any second writer of check rows:
+1. SHOULD FIX, becomes BLOCKING with a second writer. `thallo/gate/checks.py` `decisive_rows`: a FAIL written at a lower attempt than an existing PASS is ignored. Fix: a FAIL is decisive if it is at the top attempt for its key, or its uuid7 id is newer than the newest PASS for that key. Repro in the lead session scratchpad `gate2/attempt_repro.py`.
+2. Lead decision pending: media coverage. No production code writes design-lint rows, so no variant with media can be approved (fails closed). Reviewer recommends coverage keyed on each attached media item's bytes hash: a template render needs its lint rows, a client photo needs its own photo check or a human attestation row.
+3. Ruling 5 still deferred: a separate `cortex_checker` role that alone may INSERT into `check_result`; until then the app role can insert a PASS at a high attempt.
