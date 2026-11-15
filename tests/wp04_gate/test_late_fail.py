@@ -42,6 +42,15 @@ def test_the_repair_loop_clears_the_fail():
     assert r.failing == frozenset() and not r.unchecked
 
 
+def test_a_pass_at_the_same_attempt_does_not_clear_a_fail():
+    fail = row(CheckVerdict.FAIL, 2)
+    same = row(CheckVerdict.PASS, 2)
+    assert review([fail, same]).failing == {fail.id}
+    fail1 = row(CheckVerdict.FAIL, 1, "truth.compile.digit")
+    later_same = row(CheckVerdict.PASS, 1, "truth.compile.digit")  # newer, same attempt
+    assert fail1.id in review([fail1, later_same]).failing
+
+
 def test_a_newer_pass_at_a_lower_attempt_does_not_clear_a_fail():
     fail = row(CheckVerdict.FAIL, 2)
     low_pass = row(CheckVerdict.PASS, 1)
@@ -65,15 +74,17 @@ def test_a_fail_at_the_top_attempt_decides_even_beside_a_newer_pass_at_that_atte
     assert review([fail, same]).failing == {fail.id}
 
 
-def test_a_fail_then_a_flag_with_no_pass_under_that_key_still_fails():
-    """Documents a consequence for the lead: only a PASS clears a FAIL, so a newer FLAG under the
-    same key leaves the FAIL deciding. The truth lexical layer is deterministic for one text and
-    language, so on unchanged content one kind does not go from BLOCK to FLAG between runs; if
-    tenant allowed terms ever change a severity, this becomes reachable."""
+def test_a_newer_flag_at_a_higher_attempt_clears_a_fail_and_needs_acknowledging():
     fail = row(CheckVerdict.FAIL, 1, "truth.compile.superlative")
     flag = row(CheckVerdict.FLAG, 2, "truth.compile.superlative")
     r = review([fail, flag])
-    assert r.failing == {fail.id} and r.flags == {flag.id}
+    assert r.failing == frozenset() and r.flags == {flag.id}
+
+
+def test_a_newer_fail_at_a_higher_attempt_does_not_clear_an_older_fail():
+    first = row(CheckVerdict.FAIL, 1)
+    second = row(CheckVerdict.FAIL, 2)
+    assert review([first, second]).failing == {first.id, second.id}
 
 
 def test_lower_attempt_flags_still_do_not_decide():

@@ -14,8 +14,8 @@ counts. Then:
   PASS  collapses.
 A rerun on unchanged content clears a FAIL because every check writes a row under each of its keys
 on every run (the truth compiler writes PASS for each kind it did not raise), so the newer attempt
-decides. A FAIL below the top attempt still decides unless a PASS at a higher or equal attempt was
-written after it (newer uuid7 id): a FAIL written late at a low attempt is never hidden.
+decides. A FAIL decides unless a PASS or FLAG at a strictly higher attempt was written after it
+(newer uuid7 id): a FAIL written late at a low attempt is never hidden.
 
 Coverage is decided here, per content type, from `COVERAGE`. Every variant has text (possibly
 empty, which the compiler still checks), so it needs a counting CODE-layer row from the truth
@@ -102,26 +102,27 @@ def counting_rows(results: Sequence[CheckResult], *, tenant_id: str,
             if r.tenant_id == tenant_id and r.variant_id in hashes and r.content_sha256 == hashes[r.variant_id]]
 
 
-def _cleared(fail: CheckResult, passes: Sequence[CheckResult]) -> bool:
-    """A PASS clears a FAIL only when it is at a higher or equal attempt AND newer (row ids are
-    uuid7, ordered by creation time)."""
-    return any(p.attempt >= fail.attempt and p.id > fail.id for p in passes)
+def _cleared(fail: CheckResult, group: Sequence[CheckResult]) -> bool:
+    """A FAIL is cleared only by a row of its key that is not a FAIL, at a strictly higher
+    attempt, and newer (row ids are uuid7, ordered by creation time; see AUDIT.md for the clock
+    this assumes). A PASS or FLAG at the same attempt never clears it."""
+    return any(p.verdict is not CheckVerdict.FAIL and p.attempt > fail.attempt and p.id > fail.id for p in group)
 
 
 def decisive_rows(rows: Sequence[CheckResult]) -> list[CheckResult]:
-    """Per (variant, layer, check name): every row at the highest attempt, plus every FAIL at a
-    lower attempt that no PASS clears (see `_cleared`). So a FAIL written after a PASS, at any
-    attempt, still decides: a late FAIL is never hidden by an older, higher-numbered PASS. The
-    normal repair loop (FAIL at 1, then PASS at 2) still clears the FAIL."""
+    """Per (variant, layer, check name): every row at the highest attempt, plus every FAIL that
+    no later, higher-attempt PASS or FLAG clears (see `_cleared`). So a FAIL written after a PASS,
+    at any attempt, still decides: a late FAIL is never hidden by an older, higher-numbered row.
+    The repair loop (FAIL at 1, then PASS or FLAG at 2) clears the FAIL; a FLAG that clears it
+    then decides and must be acknowledged."""
     by_key: dict[tuple[str, str, str], list[CheckResult]] = {}
     for r in rows:
         by_key.setdefault((r.variant_id, r.layer.value, r.check_name), []).append(r)
     out: list[CheckResult] = []
     for group in by_key.values():
         top = max(r.attempt for r in group)
-        passes = [r for r in group if r.verdict is CheckVerdict.PASS]
-        out += [r for r in group if r.attempt == top
-                or (r.verdict is CheckVerdict.FAIL and not _cleared(r, passes))]
+        out += [r for r in group if (r.attempt == top and r.verdict is not CheckVerdict.FAIL)
+                or (r.verdict is CheckVerdict.FAIL and not _cleared(r, group))]
     return sorted(out, key=lambda r: r.id)
 
 
