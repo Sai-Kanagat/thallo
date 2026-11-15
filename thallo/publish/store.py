@@ -86,7 +86,7 @@ class PublishStore:
         self.rows.insert(send)
         return True
 
-    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int | None = None,
+    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int,
              if_requested_at: datetime | None = None, **fields: Any) -> bool:
         """Set fields on the send row only if its state is one of `expect` and, when given, its
         attempt number and requested time are still these (the attempt the caller acted on)."""
@@ -143,7 +143,7 @@ class PgPublishStore(PublishStore):
         self.rows.insert(send)
         return True
 
-    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int | None = None,
+    def swap(self, publication_id: str, expect: Collection[SendState], *, if_attempts: int,
              if_requested_at: datetime | None = None, **fields: Any) -> bool:
         from thallo.store.db import _value  # the repo's own value encoding
 

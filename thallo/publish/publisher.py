@@ -417,7 +417,13 @@ class Publisher:
         row goes to NEEDS_CHECK naming what this send got back, for a person to resolve."""
         vid = p.request.variant_id
         detail = (f"conflict: attempt {p.attempts} finished after the send row had moved; {what}")[:1000]
-        s.store.swap(p.publication_id, set(SendState), state=SendState.NEEDS_CHECK, detail=detail)
+        # Only a row this attempt still owns (same attempt number and requested time) and that is
+        # not already SENT may change. A newer attempt's row, or a SENT one, is left as it is and
+        # the conflict is recorded as an event only.
+        owned = s.store.swap(p.publication_id, set(SendState) - {SendState.SENT}, if_attempts=p.attempts,
+                             if_requested_at=p.context.requested_at, state=SendState.NEEDS_CHECK, detail=detail)
+        if not owned:
+            detail = (detail + "; the row now belongs to another attempt or is sent, so it was left unchanged")[:1000]
         s.store.emit(EventName.PUBLICATION_BLOCKED, BlockedPayload(variant_id=vid, reason=detail))
         return Outcome(Status.NEEDS_CHECK, vid, WaitingOn.PERSON,
                        "two outcomes were recorded for one send; a person checks the channel and settles it",
