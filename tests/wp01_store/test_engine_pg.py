@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 from thallo.contracts import BrandSettings, Item, Status
 from thallo.notion import NotionCockpit, NotionMap
-from thallo.publishing import MockPublisher
 from thallo.store import PostgresStore
 from thallo.truth import ClaimLedger
 from thallo.workflow import Engine
@@ -42,7 +41,7 @@ class Source:
 def build(status=Status.IDEA):
     item = Item("a", "sai", "linkedin", "brief", MONDAY, status, TEXT)
     engine = Engine(BrandSettings("sai", {"linkedin"}), Board([item]), Writer(),
-                    MockPublisher(), Source(), ClaimLedger())
+                    Source(), ClaimLedger())
     return engine, item
 
 
@@ -105,13 +104,13 @@ def test_notion_cache_restores_progress_by_id(database, tenants):
     first = cockpit()
     item = first.items()[0]
     item.forecast_seq, item.metrics_pulled = 3, {2}
-    engine = Engine(BrandSettings("sai", {"linkedin"}), first, Writer(), MockPublisher(),
+    engine = Engine(BrandSettings("sai", {"linkedin"}), first, Writer(),
                     Source(), ClaimLedger())
     store = PostgresStore(database, tenants[0].id)
     store.save(engine)
 
     second = cockpit()
-    other = Engine(BrandSettings("sai", {"linkedin"}), second, Writer(), MockPublisher(),
+    other = Engine(BrandSettings("sai", {"linkedin"}), second, Writer(),
                    Source(), ClaimLedger())
     store.load(other)
     restored = second.items()[0]

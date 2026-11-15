@@ -478,7 +478,8 @@ def test_postgres_migration_marks_existing_rows_so_they_never_count(tmp_path):
             conn.execute("INSERT INTO check_result (id, created_at, tenant_id, variant_id, layer, check_name, "
                          "verdict, attempt) VALUES (gen_random_uuid(), now(), gen_random_uuid(), gen_random_uuid(), "
                          "'code', 'truth.compile.digit', 'fail', 1)")
-        assert migrate(db) == ["0021_check_content_hash.sql"]
+        applied = migrate(db)  # 0021, then any later migration (0022 onward)
+        assert applied[0] == "0021_check_content_hash.sql" and all(a > "0021" for a in applied[1:])
         with psycopg.connect(db) as conn:
             assert conn.execute("SELECT content_sha256 FROM check_result").fetchall() == [("unbound-before-0021",)]
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
