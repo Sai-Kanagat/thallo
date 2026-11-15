@@ -305,14 +305,16 @@ class RateLimiter:
 LOCKOUT_AFTER = 10  # failed verifications per identity, across every session and client
 LOCKOUT_BASE = timedelta(minutes=1)
 LOCKOUT_MAX = timedelta(hours=1)
+LOCKOUT_MAX_EXP = 6  # 1 minute doubled six times is 64 minutes, past the cap: the exponent stops there
+_MAX_COUNT = LOCKOUT_AFTER + LOCKOUT_MAX_EXP
 
 
 class FailureLockout:
-    """Counts failed code checks per email (known or not, so it reveals nothing). From the tenth
-    failure on, new codes for that email are refused for 1, 2, 4 ... minutes, capped at an hour.
-    A code already issued keeps its own five-attempt cap, so the owner holding a valid code can
-    still use it; an attacker gets at most five guesses per code at 1 in 10^8 each, and the lockout
-    caps how many codes there are to guess at. A success clears the count."""
+    """Counts failed checks of codes that were really issued, per (email, client network). From
+    the tenth failure on, new codes for that email requested FROM THAT NETWORK are refused for 1,
+    2, 4 ... minutes, capped at an hour (the exponent and the count are clamped). So someone on
+    another network cannot lock the owner out, and a guesser gets at most five tries per code at 1
+    in 10^8 each while the lockout limits how many codes their network can get. A success clears."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
@@ -327,10 +329,11 @@ class FailureLockout:
 
     def fail(self, key: str) -> None:
         with self._lock:
-            n = self._fails.get(key, 0) + 1
+            n = min(self._fails.get(key, 0) + 1, _MAX_COUNT)
             self._fails[key] = n
             if n >= LOCKOUT_AFTER:
-                wait = min(LOCKOUT_BASE * (2 ** (n - LOCKOUT_AFTER)), LOCKOUT_MAX)
+                exp = min(n - LOCKOUT_AFTER, LOCKOUT_MAX_EXP)
+                wait = min(LOCKOUT_BASE * (2 ** exp), LOCKOUT_MAX)
                 self._until[key] = self.clock.now() + wait
 
     def clear(self, key: str) -> None:

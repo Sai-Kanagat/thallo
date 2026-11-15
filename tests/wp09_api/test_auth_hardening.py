@@ -12,7 +12,14 @@ from fastapi.testclient import TestClient
 
 from api.app import create_app
 from api.context import CSRF_HEADER
-from api.sessions import LOCKOUT_AFTER, InMemorySessionStore, SessionKind
+from api.sessions import (
+    LOCKOUT_AFTER,
+    LOCKOUT_MAX,
+    LOCKOUT_MAX_EXP,
+    FailureLockout,
+    InMemorySessionStore,
+    SessionKind,
+)
 
 
 def _client(world, ip: str | None = None, port: int = 50000) -> tuple[TestClient, str]:
@@ -63,25 +70,64 @@ def test_forwarded_for_is_ignored_unless_a_proxy_is_trusted(world):
     assert 429 not in statuses  # behind a trusted proxy the last entry is the client
 
 
-def test_failures_across_sessions_lock_new_codes_exponentially(world):
+def _burn(world, ip: str, email: str, tries: int = 5) -> None:
+    """Request a real code from `ip`, then guess wrong `tries` times."""
+    c, csrf = _client(world, ip)
+    _req(c, csrf, email)
+    real = world.sender.codes[email]
+    wrong = "00000001" if real != "00000001" else "00000002"
+    for _ in range(tries):
+        c.post("/api/auth/verify", json={"email": email, "code": wrong}, headers={CSRF_HEADER: csrf})
+
+
+def test_guesses_without_an_issued_code_do_not_count(world):
     email = world.a.founder_email
-    for i in range(LOCKOUT_AFTER):  # failures from many sessions and clients add up per identity
+    for i in range(LOCKOUT_AFTER + 5):
         c, csrf = _client(world, f"203.0.113.{i + 1}")
         c.post("/api/auth/verify", json={"email": email, "code": "00000001"}, headers={CSRF_HEADER: csrf})
     calls = world.sender.calls
-    c, csrf = _client(world, "198.51.100.200")
-    r = _req(c, csrf, email)
-    assert r.status_code == 202 and world.sender.calls == calls  # same answer, no code sent
+    c, csrf = _client(world, "203.0.113.99")
+    _req(c, csrf, email)
+    assert world.sender.calls == calls + 1  # nothing was locked
+
+
+def test_failures_lock_new_codes_for_that_network_exponentially(world):
+    email = world.a.founder_email
+    _burn(world, "203.0.113.1", email)
+    _burn(world, "203.0.113.2", email)  # ten failures against real codes, from one /24
+    calls = world.sender.calls
+    c, csrf = _client(world, "203.0.113.3")
+    assert _req(c, csrf, email).status_code == 202 and world.sender.calls == calls  # same answer, no code
     world.clock.advance(seconds=61)
-    c, csrf = _client(world, "198.51.100.201")
-    assert _req(c, csrf, email).status_code == 202 and world.sender.calls == calls + 1
-    # one more failure doubles the wait
-    c2, csrf2 = _client(world, "198.51.100.202")
-    c2.post("/api/auth/verify", json={"email": email, "code": "00000001"}, headers={CSRF_HEADER: csrf2})
-    world.clock.advance(seconds=61)
-    c3, csrf3 = _client(world, "198.51.100.203")
-    _req(c3, csrf3, email)
-    assert world.sender.calls == calls + 1  # still locked: 2 minutes now
+    c, csrf = _client(world, "203.0.113.4")
+    _req(c, csrf, email)
+    assert world.sender.calls == calls + 1  # the first lock was one minute
+
+
+def test_attacker_on_one_network_cannot_lock_out_the_owner_on_another(world):
+    email = world.a.founder_email
+    _burn(world, "203.0.113.1", email)
+    _burn(world, "203.0.113.2", email)
+    c, csrf = _client(world, "203.0.113.3")
+    calls = world.sender.calls
+    _req(c, csrf, email)
+    assert world.sender.calls == calls  # the attacker's network is locked
+    owner, o_csrf = _client(world, "198.51.100.10")
+    assert _req(owner, o_csrf, email).status_code == 202
+    r = owner.post("/api/auth/verify", json={"email": email, "code": world.sender.codes[email]},
+                   headers={CSRF_HEADER: o_csrf})
+    assert r.status_code == 200, r.text
+
+
+def test_lockout_arithmetic_is_bounded_for_huge_counts(world):
+    lock = FailureLockout(world.clock)
+    for _ in range(10_000):
+        lock.fail("k")
+    assert lock._fails["k"] <= LOCKOUT_AFTER + LOCKOUT_MAX_EXP
+    assert lock._until["k"] - world.clock.now() == LOCKOUT_MAX
+    lock._fails["k"] = 10 ** 30  # even a corrupted count cannot overflow the wait
+    lock.fail("k")
+    assert lock._until["k"] - world.clock.now() <= LOCKOUT_MAX
 
 
 def test_owner_with_a_valid_code_is_not_blocked_by_attacks_on_the_address(world):

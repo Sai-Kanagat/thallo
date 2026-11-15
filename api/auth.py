@@ -26,7 +26,7 @@ from api.sessions import Session, SessionKind, client_keys, email_key
 router = APIRouter(prefix="/api")
 
 WINDOW = timedelta(minutes=15)
-REQUESTS_PER_EMAIL = 3
+REQUESTS_PER_EMAIL = 5  # per email AND client network, so another network cannot use them up
 REQUESTS_PER_SESSION = 5
 REQUESTS_PER_CLIENT = 10
 REQUESTS_PER_NETWORK = 30
@@ -90,14 +90,23 @@ def _anonymous(request: Request) -> Session:
     return s
 
 
+def _keys(request: Request) -> tuple[str, str]:
+    svc = services(request)
+    return client_keys(request.client.host if request.client else None,
+                       request.headers.get("x-forwarded-for"), trust_proxy=svc.trust_proxy)
+
+
 def _client_ok(request: Request, kind: str, per_client: int, per_network: int) -> bool:
     """The backstop is per client and per network, never one shared bucket, so one source cannot
     lock everyone out. See `client_keys` for how the client address is read."""
     svc = services(request)
-    client, network = client_keys(request.client.host if request.client else None,
-                                  request.headers.get("x-forwarded-for"), trust_proxy=svc.trust_proxy)
+    client, network = _keys(request)
     return (svc.limits.allow(f"{kind}:{client}", per_client, WINDOW)
             and svc.limits.allow(f"{kind}:{network}", per_network, WINDOW))
+
+
+def _lock_key(request: Request, email: str) -> str:
+    return f"{email_key('fail', email)}|{_keys(request)[1]}"
 
 
 @router.post("/auth/request-code", status_code=202)
@@ -108,10 +117,10 @@ def request_code(body: EmailBody, request: Request) -> dict:
     if email is None:
         raise ApiError(422, "invalid_request", "enter a valid email address")
     if not (_client_ok(request, "req", REQUESTS_PER_CLIENT, REQUESTS_PER_NETWORK)
-            and svc.limits.allow(email_key("req", email), REQUESTS_PER_EMAIL, WINDOW)
+            and svc.limits.allow(f"{email_key('req', email)}|{_keys(request)[1]}", REQUESTS_PER_EMAIL, WINDOW)
             and svc.limits.allow(f"req-session:{s.id}", REQUESTS_PER_SESSION, WINDOW)):
         raise _limited()
-    if svc.lockout.locked(email_key("fail", email)):
+    if svc.lockout.locked(_lock_key(request, email)):
         return SENT  # locked after repeated failures: no new code, and the same answer
     identity = svc.directory.find_identity(email)
     if identity is not None and svc.directory.memberships(identity.id):
@@ -132,10 +141,12 @@ def verify(body: VerifyBody, request: Request, response: Response) -> dict:
     if not (_client_ok(request, "verify", VERIFIES_PER_CLIENT, VERIFIES_PER_NETWORK)
             and svc.limits.allow(f"verify-session:{s.id}", VERIFIES_PER_SESSION, WINDOW)):
         raise _limited()
+    issued = svc.codes.pending(s.id, email)  # only a guess at a real code counts as a failure
     if not svc.codes.check(s.id, email, body.code.strip()):
-        svc.lockout.fail(email_key("fail", email))
+        if issued:
+            svc.lockout.fail(_lock_key(request, email))
         raise ApiError(400, "invalid_code", "that code is not valid; request a new one")
-    svc.lockout.clear(email_key("fail", email))
+    svc.lockout.clear(_lock_key(request, email))
     identity = svc.directory.find_identity(email)
     memberships = svc.directory.memberships(identity.id) if identity is not None else []
     if identity is None or not memberships:
