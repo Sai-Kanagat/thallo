@@ -39,6 +39,7 @@ from thallo.contracts.models import (
     AuditEntry,
     Brief,
     Bundle,
+    CheckResult,
     Claim,
     Idea,
     Identity,
@@ -57,17 +58,26 @@ from thallo.gate import (
     BlockReason,
     approve_bundle_from_repo,
     check_publish,
+    content_hashes,
     load_bundle,
     void_bundle_approvals,
 )
 from thallo.gate.approvals import ACTION_GRANTED, ACTION_VOIDED, AUDIT_SUBJECT
 from thallo.gate.canonical import build_snapshot
 from thallo.gate.signing import ENV_KEY, GateSigner
+from thallo.media.lint import CHECKS as LINT_CHECKS
+from thallo.media.lint import Finding as LintFinding
+from thallo.media.lint import LintReport
+from thallo.media.lint import to_check_results as lint_rows
 from thallo.store.adapters import ClaimWriteRefused, LocalBlobStore, TenantMismatch
 from thallo.trust.audit import AuditConflict, verify_chain
 from thallo.truth import build, change_claim, library, new_candidate, to_check_results, verify_claim
 
 from .backends import REDIRECT, MemoryBackend, PgBackend
+
+# The variant carries an image, so it needs a design-lint row too (gate/checks.py COVERAGE). A lint
+# in which every check passed, written through the lint's real `to_check_results`.
+PASSING_LINT = LintReport(findings=tuple(LintFinding(check=n, verdict=CheckVerdict.PASS) for n in LINT_CHECKS))
 
 TEXT = "Fino a {{C-0001}} con una carica, il top. Scopri di più: " + REDIRECT + "SLUG"
 DESTINATION = "https://bici-demo.example/offerta"
@@ -119,9 +129,10 @@ def _id(b) -> str:
     return new_id(b.clock)
 
 
-def seed(b, name: str) -> Shop:
+def seed(b, name: str, *, checks: bool = True) -> Shop:
     """Operator, tenant, founder, source, verified claim, compiled copy with one flag, the check
-    rows, an asset, a bundle in review with one variant, one image on the blob store, a tracked link."""
+    rows (unless `checks` is False), an asset, a bundle in review with one variant, one image on the
+    blob store, a tracked link."""
     clock = b.clock
     now = clock.now()
     operator = Operator(id=_id(b), created_at=now, name=f"op {name}")
@@ -166,11 +177,6 @@ def seed(b, name: str) -> Shop:
                                    channel=Channel.INSTAGRAM, language=Language.IT, state=VariantState.REVIEW,
                                    text=built.compiled.text, rendered_text=built.filled.text,
                                    task_type="offer_post"))
-        rows = to_check_results(built.compiled, variant_id=variant.id, clock=clock)
-        for row in rows:
-            s.insert(row)
-        flag_ids = [r.id for r in rows if r.verdict is CheckVerdict.FLAG]
-        assert len(flag_ids) == 1
         for claim_id in built.compiled.claim_ids:
             s.insert(VariantClaim(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, claim_id=claim_id))
         blob_name = "hero.png"
@@ -181,6 +187,16 @@ def seed(b, name: str) -> Shop:
         s.insert(VariantMedia(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, media_id=media.id))
         s.insert(TrackedLink(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, slug=slug,
                              destination=DESTINATION))
+        # The code checks run on the finished variant, bound to the hash the gate computes for it.
+        sha = content_hashes(s.gate, t, bundle.id)[variant.id]
+        rows = to_check_results(built.compiled, variant_id=variant.id, content_sha256=sha, clock=clock)
+        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock)
+        flag_ids: list[str] = []
+        if checks:
+            for row in rows:
+                s.insert(row)
+            flag_ids = [r.id for r in rows if r.verdict is CheckVerdict.FLAG]
+            assert len(flag_ids) == 1
     return Shop(tenant=tenant, founder=founder, human=human, verifier=verifier, claim=claim, bundle=bundle,
                 variant=variant, media=media, blob_name=blob_name, flag_ids=flag_ids)
 
@@ -295,6 +311,56 @@ def test_unacknowledged_flag_refuses_the_grant(backend, signer):
     with backend.session(shop.tenant.id) as s:  # nothing was written
         assert s.list(Approval) == [] and s.list(AuditEntry) == []
         assert s.get(Bundle, shop.bundle.id).state is BundleState.IN_REVIEW
+
+
+def add_check(b, shop: Shop, verdict: CheckVerdict, *, attempt: int, like_flag: bool = True) -> str:
+    """Another check_result row on the shop's variant; `like_flag` reuses the seeded flag's
+    layer and check name, so it shares that check's key."""
+    t = shop.tenant.id
+    with b.session(t) as s:
+        seeded = s.get(CheckResult, shop.flag_ids[0])
+        row = s.insert(CheckResult(
+            id=_id(b), created_at=b.clock.now(), tenant_id=t, variant_id=shop.variant.id, layer=seeded.layer,
+            check_name=seeded.check_name if like_flag else "truth.compile.other", verdict=verdict,
+            reason=f"{verdict.value} at attempt {attempt}", attempt=attempt, content_sha256=seeded.content_sha256))
+    return row.id
+
+
+def test_two_same_name_flags_at_one_attempt_each_need_acknowledging(backend, signer):
+    shop = seed(backend, "Eta")
+    second = add_check(backend, shop, CheckVerdict.FLAG, attempt=1)
+    with pytest.raises(ApprovalRefused, match="1 open flag"):
+        approve(backend, shop, signer, acknowledged=shop.flag_ids)
+    with pytest.raises(ApprovalRefused, match="1 open flag"):
+        approve(backend, shop, signer, acknowledged=[second])
+    granted = approve(backend, shop, signer, acknowledged=[*shop.flag_ids, second])
+    assert sorted(granted.acknowledged_flag_ids) == sorted([*shop.flag_ids, second])
+
+
+def test_a_fail_at_the_latest_attempt_refuses_the_grant(backend, signer):
+    shop = seed(backend, "Theta")
+    fail = add_check(backend, shop, CheckVerdict.FAIL, attempt=1, like_flag=False)
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        approve(backend, shop, signer)  # every flag acknowledged
+    with pytest.raises(ApprovalRefused):
+        approve(backend, shop, signer, acknowledged=[*shop.flag_ids, fail])
+    with backend.session(shop.tenant.id) as s:
+        assert s.list(Approval) == [] and s.get(Bundle, shop.bundle.id).state is BundleState.IN_REVIEW
+
+
+def test_an_older_fail_superseded_by_a_pass_does_not_block(backend, signer):
+    shop = seed(backend, "Iota")
+    add_check(backend, shop, CheckVerdict.FAIL, attempt=1, like_flag=False)
+    add_check(backend, shop, CheckVerdict.PASS, attempt=2, like_flag=False)
+    assert approve(backend, shop, signer).acknowledged_flag_ids == shop.flag_ids
+
+
+def test_pass_and_fail_of_one_check_at_the_latest_attempt_blocks(backend, signer):
+    shop = seed(backend, "Kappa")
+    add_check(backend, shop, CheckVerdict.FAIL, attempt=2, like_flag=False)
+    add_check(backend, shop, CheckVerdict.PASS, attempt=2, like_flag=False)  # newer row, same attempt
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        approve(backend, shop, signer)
 
 
 def test_missing_signing_key_blocks(backend, shop, monkeypatch):

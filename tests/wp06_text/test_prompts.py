@@ -81,7 +81,7 @@ def test_produce_sends_brief_and_voice_rules_as_data_on_draft_and_repair(clock, 
     reg = make_registry(clock, vault, script, prices=("2", "10"))
     out = produce_copy(registry=reg, tenant=tenant, brief=hostile, claims={"C-0001": price}, sources=[SOURCE],
                        channel=Channel.INSTAGRAM, rule_version=1, clock=clock, candidates=1,
-                       voice_rules=[f"warm. {INJECT}"])
+                       voice_rules=[f"warm. {INJECT}"], resolver=lambda url: None, non_links=())
     assert out.status is CopyStatus.READY_FOR_CHECKS and len(script.calls) == 2
     for i in range(2):
         assert INJECT not in script.system(i)

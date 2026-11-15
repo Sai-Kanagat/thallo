@@ -269,7 +269,9 @@ def test_output_run_fonts(job):
 def test_check_result_rows(job, clock):
     data = layout_for(job, font_px=10.0)
     rep = lint_static(job).merged(lint_layout(job, parse_layout(data)))
-    rows = to_check_results(rep, tenant_id=T, variant_id=V, clock=clock, attempt=2)
+    sha = "0f" * 32
+    rows = to_check_results(rep, tenant_id=T, variant_id=V, content_sha256=sha, clock=clock, attempt=2)
+    assert all(r.content_sha256 == sha for r in rows)
     names = [r.check_name for r in rows]
     assert len(names) == len(set(names)) and set(names) <= set(CHECKS)
     assert all(r.layer is CheckLayer.CODE and r.attempt == 2 and r.variant_id == V for r in rows)

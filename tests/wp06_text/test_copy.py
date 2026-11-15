@@ -16,9 +16,11 @@ from thallo.contracts.models import Brief, Tenant
 from thallo.contracts.states import VariantState
 from thallo.contracts.testing.samples import T, _id
 from thallo.copy import CopyStatus, SlopKind, cost_cap_eur, find_slop, produce_copy, write_outcome
+from thallo.gate import CheckHashError, ContentType, VariantContent, check_hash, review_checks, variant_hash
 from thallo.providers.text import claude, gemini, openai_compatible
 from thallo.providers.text.base import USD_TO_EUR, HttpReply
 from thallo.truth import new_candidate, verify_claim
+from thallo.truth.findings import FindingKind
 from thallo.truth.repository import InMemoryClaimRepository
 
 from .conftest import FAKE_KEY, reply
@@ -84,6 +86,10 @@ def brief(clock, price):
                  language=Language.EN)
 
 
+def NO_REPO_LINKS(url):  # noqa: N802 - the test repository's resolver: it knows no link
+    return None
+
+
 def make_registry(clock, vault, script, *, prices=("0", "0"), configure=True):
     providers = ProviderRegistry.with_discovered()
     providers.register(Capability.TEXT, "claude", ConnectionMode.HOSTED,
@@ -103,10 +109,15 @@ def produce(clock, vault, tenant, brief, price):
         script = Script(*texts, output_tokens=output_tokens)
         reg = make_registry(clock, vault, script, prices=prices, configure=configure)
         kw.setdefault("sources", [SOURCE])
+        kw.setdefault("resolver", NO_REPO_LINKS)
+        kw.setdefault("non_links", ())
         out = produce_copy(registry=reg, tenant=tenant, brief=brief, claims={"C-0001": price},
                            channel=Channel.INSTAGRAM, rule_version=1, clock=clock, **kw)
         return out, script
     return _produce
+
+
+TRUTH_KEYS = frozenset({"truth.compile", *(f"truth.compile.{k.value}" for k in FindingKind)})
 
 
 def verdicts(out):
@@ -124,7 +135,7 @@ def test_three_candidates_select_one_and_store_the_reason(produce, price):
     assert "2 slop hit(s)" in out.asset.selection_reason  # candidate 1 lost on slop
     assert [c["status"] for c in out.asset.candidates] == ["built"] * 3
     assert [v.claim_id for v in out.variant_claims] == [price.id]
-    assert verdicts(out) == [(1, "truth.compile", CheckVerdict.PASS)]
+    assert sorted(verdicts(out)) == sorted([(1, name, CheckVerdict.PASS) for name in TRUTH_KEYS])
     assert out.variant.model_id == "claude-sonnet-5-5"
 
 
@@ -156,6 +167,45 @@ def test_repair_feeds_findings_back_as_data(produce):
     assert "compiled on attempt 2" in out.asset.selection_reason
 
 
+def test_every_row_is_bound_to_the_stored_variant_and_the_last_attempt_decides(produce, price):
+    """Ruling 3: no hash is guessed for a draft that is never stored. Every row, both attempts,
+    carries the gate's hash of the variant as stored; the repaired attempt writes under every key
+    the first used, so the first attempt's FAIL is history and the grant is not refused by it."""
+    out, _ = produce(DIGIT, CLEAN, candidates=1)
+    stored = VariantContent(variant=out.variant, claims=(price,))  # what the gate loads: no media, no links
+    final = check_hash(stored, resolver=NO_REPO_LINKS, non_links=())
+    assert final == variant_hash(stored, NO_REPO_LINKS)
+    assert {r.content_sha256 for r in out.check_results} == {final}
+    assert {r.attempt for r in out.check_results} == {1, 2}
+    first_keys = {r.check_name for r in out.check_results if r.attempt == 1}
+    assert first_keys <= {r.check_name for r in out.check_results if r.attempt == 2}
+    review = review_checks(out.check_results, tenant_id=out.variant.tenant_id, hashes={out.variant.id: final},
+                           types={out.variant.id: {ContentType.TEXT}})
+    assert not review.failing and not review.flags and not review.unchecked
+    only_first = [r for r in out.check_results if r.attempt == 1]
+    review = review_checks(only_first, tenant_id=out.variant.tenant_id, hashes={out.variant.id: final},
+                           types={out.variant.id: {ContentType.TEXT}})
+    assert review.failing  # without the repaired attempt, the first draft's FAIL decides
+
+
+def test_produce_without_the_repository_inputs_raises_before_any_call(clock, vault, tenant, brief, price):
+    for missing in ({"resolver": None, "non_links": ()}, {"resolver": NO_REPO_LINKS, "non_links": None}):
+        script = Script(CLEAN)
+        reg = make_registry(clock, vault, script)
+        with pytest.raises(CheckHashError):
+            produce_copy(registry=reg, tenant=tenant, brief=brief, claims={"C-0001": price}, sources=[SOURCE],
+                         channel=Channel.INSTAGRAM, rule_version=1, clock=clock, **missing)
+        assert script.calls == []  # nothing was spent on rows that could never match
+
+
+def test_a_variant_sent_to_a_person_keeps_its_fail_bound_to_its_own_text(produce):
+    out, _ = produce(*[DIGIT] * 12)
+    final = check_hash(VariantContent(variant=out.variant), resolver=NO_REPO_LINKS, non_links=())
+    review = review_checks(out.check_results, tenant_id=out.variant.tenant_id, hashes={out.variant.id: final},
+                           types={out.variant.id: {ContentType.TEXT}})
+    assert review.failing and not review.unchecked  # the same text at every attempt: the FAIL counts
+
+
 def test_three_repair_loops_then_a_person_with_the_check_named(produce):
     out, script = produce(*[DIGIT] * 12)
     assert out.status is CopyStatus.NEEDS_HUMAN
@@ -163,7 +213,11 @@ def test_three_repair_loops_then_a_person_with_the_check_named(produce):
     assert out.variant.state is VariantState.DRAFTING and out.variant.rendered_text is None
     assert "Failing check: truth.compile.digit" in out.asset.selection_reason
     assert sorted({r.attempt for r in out.check_results}) == [1, 2, 3, 4]
-    assert all(r.verdict is CheckVerdict.FAIL for r in out.check_results)
+    for attempt in (1, 2, 3, 4):  # every attempt: the raised kind and the summary FAIL, every other key PASS
+        rows = {(r.check_name, r.verdict) for r in out.check_results if r.attempt == attempt}
+        assert {n for n, _ in rows} == TRUTH_KEYS
+        assert {n for n, v in rows if v is CheckVerdict.FAIL} == {"truth.compile", "truth.compile.digit"}
+        assert all(v in (CheckVerdict.PASS, CheckVerdict.FAIL) for _, v in rows)
     assert [c["status"] for c in out.asset.candidates] == ["failed"] * 3
     assert out.variant_claims == ()
 
@@ -324,6 +378,8 @@ def registry_with(clock, vault, *configs):
 
 def run_copy(reg, tenant, brief, price, clock, **kw):
     kw.setdefault("sources", [SOURCE])
+    kw.setdefault("resolver", NO_REPO_LINKS)
+    kw.setdefault("non_links", ())
     return produce_copy(registry=reg, tenant=tenant, brief=brief, claims={"C-0001": price},
                         channel=Channel.INSTAGRAM, rule_version=1, clock=clock, **kw)
 
@@ -398,7 +454,7 @@ def test_library_error_fails_the_candidate_and_keeps_the_costs(clock, vault, ten
     reg = make_registry(clock, vault, script, prices=("2", "10"))
     foreign = price.model_copy(update={"tenant_id": _id(2)})
     out = produce_copy(registry=reg, tenant=tenant, brief=brief, claims={"C-0001": foreign}, sources=[SOURCE],
-                       channel=Channel.INSTAGRAM, rule_version=1, clock=clock)
+                       channel=Channel.INSTAGRAM, rule_version=1, clock=clock, resolver=NO_REPO_LINKS, non_links=())
     assert len(script.calls) == 1  # the run stops: the same library would fail every draft
     assert out.status is CopyStatus.NEEDS_HUMAN and out.variant.state is VariantState.DRAFTING
     assert "Failing check: truth.library" in out.asset.selection_reason

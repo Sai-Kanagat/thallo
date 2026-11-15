@@ -258,9 +258,9 @@ class MemoryGate:
         return [e for e in MemoryAuditStore(self.s).entries(tenant_id)
                 if e.subject_kind == subject_kind and e.subject_id == subject_id]
 
-    def get_check_results(self, tenant_id, variant_id):
+    def get_check_results(self, tenant_id, variant_id, content_sha256):
         self._o(tenant_id)
-        return self.s.list(CheckResult, variant_id=variant_id)
+        return self.s.list(CheckResult, variant_id=variant_id, content_sha256=content_sha256)
 
     def get_audit_chain(self, tenant_id, from_seq):
         return [e for e in MemoryAuditStore(self.s).entries(tenant_id) if e.seq >= from_seq]

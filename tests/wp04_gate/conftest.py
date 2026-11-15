@@ -16,6 +16,7 @@ from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import (
     ApprovalMethod,
     Channel,
+    CheckVerdict,
     ClaimKind,
     ConsentBasis,
     ConsentScope,
@@ -43,13 +44,22 @@ from thallo.gate import (
     GateChange,
     approve_bundle_from_repo,
     bundle_hash,
+    content_hashes,
     load_bundle,
     void_bundle_approvals,
 )
 from thallo.gate.signing import GateSigner
+from thallo.media.lint import CHECKS as LINT_CHECKS
+from thallo.media.lint import Finding as LintFinding
+from thallo.media.lint import LintReport
+from thallo.media.lint import to_check_results as lint_rows
 from thallo.trust.audit import AuditLog, InMemoryAuditStore
+from thallo.truth import compile_text, to_check_results
 
 _counter = itertools.count(1)
+
+# A design lint in which every check passed (the render itself is WP-05's; here only its rows).
+PASSING_LINT = LintReport(findings=tuple(LintFinding(check=n, verdict=CheckVerdict.PASS) for n in LINT_CHECKS))
 
 
 def ident(clock: FakeClock) -> str:
@@ -168,9 +178,10 @@ class World:
         self._ok("non_link_allowlist")
         return frozenset(self.non_links)
 
-    def get_check_results(self, tenant_id, variant_id):
+    def get_check_results(self, tenant_id, variant_id, content_sha256):
         self._ok("get_check_results")
-        return [c for c in self.checks if c.variant_id == variant_id and c.tenant_id == tenant_id]
+        return [c for c in self.checks if c.variant_id == variant_id and c.tenant_id == tenant_id
+                and c.content_sha256 == content_sha256]
 
     def resolve_link(self, tenant_id, url):
         self._ok("resolve_link")
@@ -202,8 +213,37 @@ class World:
         for v in change.variants:
             self.variants[v.id] = v
 
-    def approve(self, *, return_change: bool = False, **kw):
-        """Approve as the verified human through the repository path, then commit the change."""
+    def current_hash(self, vid: str) -> str:
+        """The variant's leaf hash as the gate computes it now (what a check row binds to)."""
+        failing, self.fail_on = self.fail_on, None
+        try:
+            return content_hashes(self, self.tenant.id, self.bundle.id)[vid]
+        finally:
+            self.fail_on = failing
+
+    def code_check(self, vids=None, *, lint: bool = True) -> list[CheckResult]:
+        """What the WP-07 check stack does before review: the real truth compile on each variant's
+        current text, written through the real `to_check_results`, bound to the current hash; and,
+        for a variant with media (unless `lint` is False), a passing design lint written through
+        the real `media.lint.to_check_results`."""
+        rows: list[CheckResult] = []
+        for vid in vids or list(self.variants):
+            v = self.variants[vid]
+            sha = self.current_hash(vid)
+            result = compile_text(v.text, tenant_id=self.tenant.id, language=v.language,
+                                  claims=list(self.claims.values()), clock=self.clock)
+            rows += to_check_results(result, variant_id=vid, content_sha256=sha, clock=self.clock)
+            if lint and self.variant_media.get(vid):
+                rows += lint_rows(PASSING_LINT, tenant_id=self.tenant.id, variant_id=vid, content_sha256=sha,
+                                  clock=self.clock)
+        self.checks += rows
+        return rows
+
+    def approve(self, *, return_change: bool = False, run_checks: bool = True, **kw):
+        """Approve as the verified human through the repository path, then commit the change.
+        By default the code checks run first on the current content, as the check stack does."""
+        if run_checks:
+            self.code_check()
         shown = bundle_hash(self.content(), self.links.get, frozenset(self.non_links)).root
         change = approve_bundle_from_repo(
             self, tenant_id=self.tenant.id, bundle_id=self.bundle.id, actor=self.human(), verifier=self.verifier(),

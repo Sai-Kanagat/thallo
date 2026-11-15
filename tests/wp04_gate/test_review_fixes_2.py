@@ -287,7 +287,8 @@ def test_resolver_is_called_once_per_link_and_payload_matches_the_hash(world):
                           audit_entries=tuple(world.get_audit_entries(world.tenant.id, "approval", a.id)),
                           chain=tuple(world.get_audit_chain(world.tenant.id, 1)), anchor=None)
     d = decide(content, ev, tenant=world.tenant, variant_id=vid0(world), now=world.clock.now(),
-               system_paused=False, resolver=resolver, non_links=frozenset(), signer=world.signer)
+               system_paused=False, resolver=resolver, non_links=frozenset(), signer=world.signer,
+               check_reader=world.get_check_results)
     assert calls and all(n == 1 for n in calls.values()), calls
     assert d.allowed, d.blocks
     assert d.payload.variant_hash == d.bundle_hash.variants[vid0(world)]
@@ -402,7 +403,8 @@ def _flag(world, vid=None):
     from thallo.contracts.models import CheckResult
     r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
                     variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name="universal_claim",
-                    verdict=CheckVerdict.FLAG, reason="'always' is a universal claim")
+                    verdict=CheckVerdict.FLAG, reason="'always' is a universal claim",
+                    content_sha256=world.current_hash(vid or vid0(world)))
     world.checks.append(r)
     return r.id
 
@@ -443,6 +445,56 @@ def test_a_newer_pass_closes_an_older_flag(world):
     old = world.checks[-1]
     world.checks.append(old.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2}))
     assert world.approve().acknowledged_flag_ids == []
+
+
+def _check(world, verdict, *, attempt=1, name="truth.compile.flag_word", vid=None):
+    from thallo.contracts.enums import CheckLayer
+    from thallo.contracts.models import CheckResult
+    r = CheckResult(id=ident(world.clock), created_at=world.clock.now(), tenant_id=world.tenant.id,
+                    variant_id=vid or vid0(world), layer=list(CheckLayer)[0], check_name=name,
+                    verdict=verdict, reason=f"{verdict.value} at attempt {attempt}", attempt=attempt,
+                    content_sha256=world.current_hash(vid or vid0(world)))
+    world.checks.append(r)
+    return r.id
+
+
+def test_two_same_name_flags_at_one_attempt_each_need_acknowledging(world):
+    from thallo.contracts.enums import CheckVerdict
+    first, only = _check(world, CheckVerdict.FLAG), _check(world, CheckVerdict.FLAG)
+    for one in (first, only):
+        with pytest.raises(ApprovalRefused, match="1 open flag"):
+            world.approve(acknowledged_flag_ids=[one])
+    a = world.approve(acknowledged_flag_ids=[first, only])
+    assert sorted(a.acknowledged_flag_ids) == sorted([first, only])
+
+
+def test_a_fail_at_the_latest_attempt_refuses_even_with_every_flag_acknowledged(world):
+    from thallo.contracts.enums import CheckVerdict
+    flag = _check(world, CheckVerdict.FLAG)
+    fail = _check(world, CheckVerdict.FAIL, name="truth.compile.unbound_number")
+    before = dict(world.approvals)
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        world.approve(acknowledged_flag_ids=[flag])
+    with pytest.raises(ApprovalRefused):  # a FAIL cannot be acknowledged away
+        world.approve(acknowledged_flag_ids=[flag, fail])
+    assert world.approvals == before
+
+
+def test_an_older_fail_superseded_by_a_pass_does_not_block(world):
+    from thallo.contracts.enums import CheckVerdict
+    _check(world, CheckVerdict.FAIL, attempt=1)
+    _check(world, CheckVerdict.PASS, attempt=2)
+    assert world.approve().acknowledged_flag_ids == []
+
+
+def test_pass_and_fail_of_one_check_at_the_latest_attempt_blocks(world):
+    from thallo.contracts.enums import CheckVerdict
+    _check(world, CheckVerdict.FAIL, attempt=1)
+    _check(world, CheckVerdict.PASS, attempt=2)
+    _check(world, CheckVerdict.FAIL, attempt=2)
+    _check(world, CheckVerdict.PASS, attempt=2)  # created last, still does not hide the FAIL
+    with pytest.raises(ApprovalRefused, match="1 check"):
+        world.approve()
 
 
 def test_earliest_host_wins_and_allowlist_cannot_vouch_for_hosts():

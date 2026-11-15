@@ -80,12 +80,27 @@ def test_build_returns_flags_with_spans(built, lib, clock, tenant):
 
 def test_check_results_carry_fail_flag_and_pass(run, clock, tenant):
     variant = new_id(clock)
-    rows = to_check_results(run("Il top. The best.", IT), variant_id=variant, clock=clock)
-    assert {(r.verdict, r.layer) for r in rows} == {(CheckVerdict.FLAG, CheckLayer.CODE),
-                                                    (CheckVerdict.FAIL, CheckLayer.CODE)}
-    assert all(r.tenant_id == tenant and r.variant_id == variant and r.reason.startswith("[") for r in rows)
-    [ok] = to_check_results(run("Calm weeks."), variant_id=variant, clock=clock)
-    assert ok.verdict is CheckVerdict.PASS
+    first, second = "a1" * 32, "b2" * 32
+    compiled = run("Il top. The best.", IT)
+    rows = to_check_results(compiled, variant_id=variant, content_sha256=first, clock=clock)
+    raised = [r for r in rows if r.verdict is not CheckVerdict.PASS and r.check_name != "truth.compile"]
+    assert {r.verdict for r in raised} == {CheckVerdict.FLAG, CheckVerdict.FAIL}
+    assert len(raised) == len(compiled.findings) and all(r.reason.startswith("[") for r in raised)
+    assert all(r.tenant_id == tenant and r.variant_id == variant and r.layer is CheckLayer.CODE for r in rows)
+    assert all(r.content_sha256 == first for r in rows)
+    # every kind the compiler has gets a row: PASS when it raised none; plus the FAIL summary
+    names = {r.check_name for r in rows}
+    assert names == {"truth.compile", *(f"truth.compile.{k.value}" for k in FindingKind)}
+    raised_names = {r.check_name for r in raised}
+    assert all(r.verdict is CheckVerdict.PASS for r in rows
+               if r.check_name not in raised_names and r.check_name != "truth.compile")
+    [summary] = [r for r in rows if r.check_name == "truth.compile"]
+    assert summary.verdict is CheckVerdict.FAIL
+    ok = to_check_results(run("Calm weeks."), variant_id=variant, content_sha256=second, clock=clock)
+    assert {r.check_name for r in ok} == names
+    assert all(r.verdict is CheckVerdict.PASS and r.content_sha256 == second for r in ok)
+    with pytest.raises(ValueError):  # a row must name real content
+        to_check_results(run("Calm weeks."), variant_id=variant, content_sha256="unbound-before-0021", clock=clock)
 
 
 def test_legacy_gate_ignores_flags():

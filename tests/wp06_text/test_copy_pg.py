@@ -3,6 +3,7 @@ every row satisfies the schema, the foreign keys and the tenant policy. Skipped 
 DATABASE_URL (scripts/ci.sh sets it)."""
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import sys
@@ -18,6 +19,8 @@ from thallo.contracts.enums import (
     ClaimKind,
     FunnelStage,
     Language,
+    MediaKind,
+    MediaProvenance,
     TextRole,
     UserRole,
 )
@@ -30,13 +33,19 @@ from thallo.contracts.models import (
     CostEntry,
     Idea,
     Identity,
+    Media,
     Operator,
     Tenant,
     Variant,
+    VariantMedia,
 )
 from thallo.copy import CopyStatus, produce_copy, write_outcome
+from thallo.gate import ContentType, content_hashes, content_types, load_bundle, review_checks
+from thallo.gate.canonical import build_snapshot
+from thallo.store.adapters import LocalBlobStore
 from thallo.store.adapters.claims import PgClaimRepository
-from thallo.truth import library, new_candidate, verify_claim
+from thallo.store.adapters.gate import PgGateRepository
+from thallo.truth import library, new_candidate, to_check_results, verify_claim
 
 from .test_copy import CLEAN, DIGIT, SOURCE, Script, Verifier, make_registry
 
@@ -75,7 +84,17 @@ def pg_urls():
             admin.execute(f"DROP ROLE IF EXISTS {role}")
 
 
-def test_outcome_round_trips_through_postgres(pg_urls, clock, vault):
+def gate_review(gate, t: str, bundle_id: str):
+    """What approval decides about checks, read back from storage exactly as approval loads it."""
+    content = load_bundle(gate, t, gate.get_bundle(t, bundle_id))
+    snap = build_snapshot(content, lambda url: gate.resolve_link(t, url), frozenset(gate.non_link_allowlist(t)))
+    hashes = dict(snap.hash.variants)
+    rows = [r for vid, sha in hashes.items() for r in gate.get_check_results(t, vid, sha)]
+    return review_checks(rows, tenant_id=t, hashes=hashes,
+                         types={vid: content_types(snap.payload(vid)) for vid in hashes})
+
+
+def test_outcome_round_trips_through_postgres(pg_urls, clock, vault, tmp_path):
     import psycopg
 
     from thallo.store import Database
@@ -113,8 +132,12 @@ def test_outcome_round_trips_through_postgres(pg_urls, clock, vault):
     reg = make_registry(clock, vault, script, configure=False)
     reg.add(t, Capability.TEXT, "claude", role=TextRole.DRAFT, model="claude-sonnet-5-5", secret="fake-key-for-tests",
             settings={"input_usd_per_mtok": "2", "output_usd_per_mtok": "10"})
-    out = produce_copy(registry=reg, tenant=tenant, brief=brief, claims=lib, sources=[SOURCE],
-                       channel=Channel.INSTAGRAM, rule_version=1, clock=clock, candidates=1)
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    with db.tenant(t) as repo:  # the repository's own resolver and allowlist, as approval uses them
+        gate = PgGateRepository(repo, blobs)
+        out = produce_copy(registry=reg, tenant=tenant, brief=brief, claims=lib, sources=[SOURCE],
+                           channel=Channel.INSTAGRAM, rule_version=1, clock=clock, candidates=1,
+                           resolver=lambda url: gate.resolve_link(t, url), non_links=gate.non_link_allowlist(t))
     assert out.status is CopyStatus.READY_FOR_CHECKS
 
     with db.tenant(t) as repo:
@@ -127,3 +150,30 @@ def test_outcome_round_trips_through_postgres(pg_urls, clock, vault):
         assert {(r.attempt, r.check_name, r.verdict) for r in rows} >= {
             (1, "truth.compile.digit", CheckVerdict.FAIL), (2, "truth.compile.digit", CheckVerdict.PASS)}
         assert len(repo.list(CostEntry)) == 2
+        # Ruling 3: every row carries the hash the gate computes from storage, nothing guessed.
+        gate = PgGateRepository(repo, blobs)
+        stored = content_hashes(gate, t, out.bundle.id)[out.variant.id]
+        assert {r.content_sha256 for r in rows} == {stored}
+        review = gate_review(gate, t, out.bundle.id)
+        assert not review.unchecked and not review.failing  # the repaired attempt decides every key
+
+        # Ruling 1: the copy rows checked text only. Once media is attached the hash changes and
+        # they cover nothing; even rows for the new hash need a design-lint row besides truth.
+        data = b"\x89PNG\r\n\x1a\nimage"
+        uri = blobs.write(t, "hero.png", data)
+        media = repo.insert(Media(id=new_id(clock), created_at=clock.now(), tenant_id=t, kind=MediaKind.IMAGE,
+                                  sha256=hashlib.sha256(data).hexdigest(), mime="image/png", size_bytes=len(data),
+                                  storage_uri=uri, provenance=MediaProvenance.CLIENT_PHOTO, alt_text="Bread"))
+        repo.insert(VariantMedia(id=new_id(clock), created_at=clock.now(), tenant_id=t, variant_id=out.variant.id,
+                                 media_id=media.id))
+        review = gate_review(gate, t, out.bundle.id)
+        assert review.unchecked == (out.variant.id,)
+        assert review.missing[out.variant.id] == (ContentType.MEDIA, ContentType.TEXT)
+        with_media = content_hashes(gate, t, out.bundle.id)[out.variant.id]
+        assert with_media != stored
+        winner = out.candidates[0].built
+        for r in to_check_results(winner.compiled, variant_id=out.variant.id, content_sha256=with_media,
+                                  clock=clock, attempt=3):
+            repo.insert(r)
+        review = gate_review(gate, t, out.bundle.id)
+        assert review.missing[out.variant.id] == (ContentType.MEDIA,)  # truth rows alone never cover media

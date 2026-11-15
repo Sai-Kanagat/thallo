@@ -119,10 +119,11 @@ class PgGateRepository:
     def get_audit_entries(self, tenant_id: str, subject_kind: str, subject_id: str) -> Sequence[AuditEntry]:
         return self.audit.about(tenant_id, subject_kind, subject_id)
 
-    def get_check_results(self, tenant_id: str, variant_id: str) -> Sequence[CheckResult]:
+    def get_check_results(self, tenant_id: str, variant_id: str, content_sha256: str) -> Sequence[CheckResult]:
         own(self.repo, tenant_id)
-        return self.repo.query_all(CheckResult, "SELECT * FROM check_result WHERE variant_id = %s ORDER BY id",
-                               (variant_id,))
+        return self.repo.query_all(
+            CheckResult, "SELECT * FROM check_result WHERE variant_id = %s AND content_sha256 = %s ORDER BY id",
+            (variant_id, content_sha256))
 
     def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:
         return self.audit.since(tenant_id, from_seq)

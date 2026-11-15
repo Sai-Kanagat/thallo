@@ -7,9 +7,10 @@ from decimal import Decimal
 
 import pytest
 
-from tests.wp04_gate.conftest import make_world
+from tests.wp04_gate.conftest import ident, make_world
+from thallo.contracts.enums import CheckVerdict
 from thallo.contracts.states import BundleState, ClaimState, VariantState
-from thallo.gate import ApprovalEvidence, BlockReason, SpendCheck, check_publish, void_bundle_approvals
+from thallo.gate import ApprovalEvidence, ApprovalRefused, BlockReason, SpendCheck, check_publish, void_bundle_approvals
 from thallo.gate import decide as _decide
 
 
@@ -26,6 +27,7 @@ def evidence(world, approval):
 
 def decide(content, approval, *, world, **kw):
     ev = evidence(world, approval) if approval is not None else None
+    kw.setdefault("check_reader", world.get_check_results)
     return _decide(content, ev, system_paused=False, resolver=world.links.get, non_links=frozenset(),
                    signer=world.signer, **kw)
 
@@ -315,7 +317,15 @@ def test_unrendered_slot_in_outgoing_text_blocks(world):
 def test_slot_without_linked_claim_blocks(world):
     vid = list(world.variants)[1]
     world.edit_variant(vid, text="Now {{C-0099}} more.", rendered_text="Now 3x more.")
-    a = world.approve()
+    with pytest.raises(ApprovalRefused, match="FAIL"):  # the truth compile refuses the unknown slot
+        world.approve()
+    # Even past a forged later PASS under the FAIL's own key for this content (an app-role writer
+    # can insert one), publish still refuses the unlinked slot on its own.
+    fails = [r for r in world.checks if r.variant_id == vid and r.verdict is CheckVerdict.FAIL]
+    assert fails
+    world.checks += [r.model_copy(update={"id": ident(world.clock), "verdict": CheckVerdict.PASS, "attempt": 2,
+                                          "reason": "forged"}) for r in fails]
+    a = world.approve(run_checks=False)
     assert_blocked(publish(world, a.id, variant_id=vid), BlockReason.CLAIM_SLOT_UNLINKED)
 
 

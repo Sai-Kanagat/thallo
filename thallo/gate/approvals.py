@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 from thallo.contracts.actors import Actor, ActorRef, SessionVerifier, require_human
 from thallo.contracts.clock import Clock
-from thallo.contracts.enums import ApprovalMethod, ApprovalSubject, CheckVerdict, HumanOnlyAction, UserRole
+from thallo.contracts.enums import ApprovalMethod, ApprovalSubject, HumanOnlyAction, UserRole
 from thallo.contracts.ids import is_id, new_id
 from thallo.contracts.models import Approval, AppUser, AuditEntry, Bundle, CheckResult, Variant
 from thallo.contracts.states import (
@@ -28,7 +28,16 @@ from thallo.contracts.states import (
     IllegalTransition,
     VariantState,
 )
-from thallo.gate.canonical import BundleContent, BundleHash, LinkResolver, Snapshot, build_snapshot
+from thallo.gate.canonical import (
+    BundleContent,
+    BundleHash,
+    CanonicalFormError,
+    LinkResolver,
+    MemoResolver,
+    Snapshot,
+    build_snapshot,
+)
+from thallo.gate.checks import content_types, review_checks
 from thallo.gate.consent import consent_problem
 from thallo.gate.repository import GateRepository, load_bundle
 from thallo.gate.signing import GateSigner, grant_fields, void_fields
@@ -65,17 +74,6 @@ class GateChange:
     audit_entries: tuple[AuditEntry, ...]
     new_approval: Approval | None = None
     bundle_hash: BundleHash | None = None
-
-
-def open_flag_ids(results: Sequence[CheckResult]) -> frozenset[str]:
-    """FLAG verdicts still open: for each (variant, layer, check), the latest attempt is a FLAG."""
-    latest: dict[tuple[str, str, str], CheckResult] = {}
-    for r in results:
-        key = (r.variant_id, r.layer.value, r.check_name)
-        if key not in latest or (r.attempt, r.created_at, r.id) > (latest[key].attempt, latest[key].created_at,
-                                                                   latest[key].id):
-            latest[key] = r
-    return frozenset(r.id for r in latest.values() if r.verdict is CheckVerdict.FLAG)
 
 
 def approver_problem(user: AppUser | None, approver_id: str, tenant_id: str) -> str | None:
@@ -153,15 +151,22 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
     if not isinstance(signer, GateSigner):
         raise ApprovalRefused("no gate signing key: approvals cannot be signed")
     now = clock.now()
-    current = {vc.variant.id for vc in content.variants}
-    flags = open_flag_ids([r for r in check_results if r.variant_id in current
-                           and r.tenant_id == bundle.tenant_id])
+    snapshot = build_snapshot(content, resolver, frozenset(non_links))  # one resolution for checks and hash
+    # Only rows about the content as it is now count (gate/checks.py).
+    types = {vid: content_types(snapshot.payload(vid)) for vid in snapshot.hash.variants}
+    review = review_checks(check_results, tenant_id=bundle.tenant_id, hashes=snapshot.hash.variants, types=types)
+    if review.unchecked:
+        gaps = {vid: [k.value for k in kinds] for vid, kinds in review.missing.items()}
+        raise ApprovalRefused(f"{len(review.unchecked)} variant(s) not checked: no code check result for the "
+                              f"current content: {list(review.unchecked)} (missing {gaps})")
+    if review.failing:
+        raise ApprovalRefused(f"{len(review.failing)} check(s) FAIL for the current content: {sorted(review.failing)}")
+    flags = review.flags
     acked = frozenset(acknowledged_flag_ids)
     if unknown := acked - flags:
         raise ApprovalRefused(f"acknowledged ids are not open flags on this bundle: {sorted(unknown)}")
     if missing := flags - acked:
         raise ApprovalRefused(f"{len(missing)} open flag(s) not acknowledged: {sorted(missing)}")
-    snapshot = build_snapshot(content, resolver, frozenset(non_links))  # one resolution for checks and hash
     if problems := _content_problems(content, now, snapshot, frozenset(non_links)):
         raise ApprovalRefused("; ".join(problems))
     hashed = snapshot.hash
@@ -212,13 +217,18 @@ def approve_bundle_from_repo(repo: GateRepository, *, tenant_id: str, bundle_id:
         raise ApprovalRefused("bundle not found")
     content = load_bundle(repo, tenant_id, bundle)
     approver = repo.get_user(tenant_id, actor.id)
+    resolver = MemoResolver(lambda url: repo.resolve_link(tenant_id, url))  # one resolution for read and grant
+    non_links = frozenset(repo.non_link_allowlist(tenant_id))
+    try:
+        hashes = build_snapshot(content, resolver, non_links).hash.variants
+    except CanonicalFormError:
+        hashes = {}  # approve_bundle refuses this content itself, with its own reason
+    checks = [r for vid, h in hashes.items() for r in repo.get_check_results(tenant_id, vid, h)]
     return approve_bundle(content, actor=actor, approver=approver, verifier=verifier, shown_hash=shown_hash,
                           method=method, seconds_on_screen=seconds_on_screen, clock=clock, audit=audit,
-                          resolver=lambda url: repo.resolve_link(tenant_id, url), signer=signer,
-                          non_links=frozenset(repo.non_link_allowlist(tenant_id)),
+                          resolver=resolver, signer=signer, non_links=non_links,
                           prior_approvals=tuple(repo.get_approvals(tenant_id, bundle_id)), ttl=ttl,
-                          check_results=[r for vc in content.variants
-                                         for r in repo.get_check_results(tenant_id, vc.variant.id)],
+                          check_results=checks,
                           acknowledged_flag_ids=acknowledged_flag_ids)
 
 

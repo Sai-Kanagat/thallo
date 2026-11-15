@@ -465,8 +465,12 @@ def variant_leaf(vc: VariantContent, resolver: LinkResolver,
     }
 
 
-def variant_hash(vc: VariantContent, resolver: LinkResolver) -> str:
-    return _digest(VARIANT_DOMAIN, variant_leaf(vc, resolver))
+def variant_hash(vc: VariantContent, resolver: LinkResolver, non_links: frozenset[str] = frozenset()) -> str:
+    """The variant's leaf hash: the value `build_snapshot` puts in `BundleHash.variants` and in the
+    root, and the value every `check_result.content_sha256` must carry. Pass the same resolver and
+    non-link allowlist the gate uses (the repository's), or the hash will not match."""
+    memo = resolver if isinstance(resolver, MemoResolver) else MemoResolver(resolver)
+    return _digest(VARIANT_DOMAIN, variant_leaf(vc, memo, frozenset(non_links)))
 
 
 @dataclass(frozen=True)
