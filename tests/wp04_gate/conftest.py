@@ -16,6 +16,7 @@ from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import (
     ApprovalMethod,
     Channel,
+    CheckVerdict,
     ClaimKind,
     ConsentBasis,
     ConsentScope,
@@ -48,10 +49,17 @@ from thallo.gate import (
     void_bundle_approvals,
 )
 from thallo.gate.signing import GateSigner
+from thallo.media.lint import CHECKS as LINT_CHECKS
+from thallo.media.lint import Finding as LintFinding
+from thallo.media.lint import LintReport
+from thallo.media.lint import to_check_results as lint_rows
 from thallo.trust.audit import AuditLog, InMemoryAuditStore
 from thallo.truth import compile_text, to_check_results
 
 _counter = itertools.count(1)
+
+# A design lint in which every check passed (the render itself is WP-05's; here only its rows).
+PASSING_LINT = LintReport(findings=tuple(LintFinding(check=n, verdict=CheckVerdict.PASS) for n in LINT_CHECKS))
 
 
 def ident(clock: FakeClock) -> str:
@@ -213,15 +221,21 @@ class World:
         finally:
             self.fail_on = failing
 
-    def code_check(self, vids=None) -> list[CheckResult]:
+    def code_check(self, vids=None, *, lint: bool = True) -> list[CheckResult]:
         """What the WP-07 check stack does before review: the real truth compile on each variant's
-        current text, written through the real `to_check_results`, bound to the current hash."""
+        current text, written through the real `to_check_results`, bound to the current hash; and,
+        for a variant with media (unless `lint` is False), a passing design lint written through
+        the real `media.lint.to_check_results`."""
         rows: list[CheckResult] = []
         for vid in vids or list(self.variants):
             v = self.variants[vid]
+            sha = self.current_hash(vid)
             result = compile_text(v.text, tenant_id=self.tenant.id, language=v.language,
                                   claims=list(self.claims.values()), clock=self.clock)
-            rows += to_check_results(result, variant_id=vid, content_sha256=self.current_hash(vid), clock=self.clock)
+            rows += to_check_results(result, variant_id=vid, content_sha256=sha, clock=self.clock)
+            if lint and self.variant_media.get(vid):
+                rows += lint_rows(PASSING_LINT, tenant_id=self.tenant.id, variant_id=vid, content_sha256=sha,
+                                  clock=self.clock)
         self.checks += rows
         return rows
 

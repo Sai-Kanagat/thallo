@@ -37,7 +37,7 @@ from thallo.gate.canonical import (
     Snapshot,
     build_snapshot,
 )
-from thallo.gate.checks import review_checks
+from thallo.gate.checks import content_types, review_checks
 from thallo.gate.consent import consent_problem
 from thallo.gate.repository import GateRepository, load_bundle
 from thallo.gate.signing import GateSigner, grant_fields, void_fields
@@ -153,10 +153,12 @@ def approve_bundle(content: BundleContent, *, actor: Actor, approver: AppUser | 
     now = clock.now()
     snapshot = build_snapshot(content, resolver, frozenset(non_links))  # one resolution for checks and hash
     # Only rows about the content as it is now count (gate/checks.py).
-    review = review_checks(check_results, tenant_id=bundle.tenant_id, hashes=snapshot.hash.variants)
+    types = {vid: content_types(snapshot.payload(vid)) for vid in snapshot.hash.variants}
+    review = review_checks(check_results, tenant_id=bundle.tenant_id, hashes=snapshot.hash.variants, types=types)
     if review.unchecked:
+        gaps = {vid: [k.value for k in kinds] for vid, kinds in review.missing.items()}
         raise ApprovalRefused(f"{len(review.unchecked)} variant(s) not checked: no code check result for the "
-                              f"current content: {list(review.unchecked)}")
+                              f"current content: {list(review.unchecked)} (missing {gaps})")
     if review.failing:
         raise ApprovalRefused(f"{len(review.failing)} check(s) FAIL for the current content: {sorted(review.failing)}")
     flags = review.flags

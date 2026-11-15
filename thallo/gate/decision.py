@@ -41,7 +41,7 @@ from thallo.gate.canonical import (
     has_unrendered_slot,
     outgoing_text,
 )
-from thallo.gate.checks import CheckReader, review_checks
+from thallo.gate.checks import CheckReader, content_types, review_checks
 from thallo.gate.consent import consent_problem
 from thallo.gate.repository import GateRepository, MediaUnreadable, load_bundle
 from thallo.gate.signing import GateKeyMissing, GateSigner, grant_fields
@@ -278,12 +278,14 @@ def _check_blocks(payload: PublishPayload, *, tenant_id: str, check_reader: Chec
     want = payload.variant_hash
     try:
         rows = list(check_reader(tenant_id, payload.variant_id, want))
-        review = review_checks(rows, tenant_id=tenant_id, hashes={payload.variant_id: want})
+        review = review_checks(rows, tenant_id=tenant_id, hashes={payload.variant_id: want},
+                               types={payload.variant_id: content_types(payload)})
     except Exception as exc:  # any read failure blocks; it never passes
         return [Block(BlockReason.CHECKS_UNREADABLE, f"{type(exc).__name__}: {exc}")]
     out: list[Block] = []
     if review.unchecked:
-        out.append(Block(BlockReason.NOT_CHECKED, "no code check result for the content being sent"))
+        kinds = ", ".join(k.value for k in review.missing[payload.variant_id])
+        out.append(Block(BlockReason.NOT_CHECKED, f"no code check result for the content being sent ({kinds})"))
     if review.failing:
         out.append(Block(BlockReason.CHECK_FAILED, f"check(s) FAIL for this content: {sorted(review.failing)}"))
     # A FLAG raised after the grant blocks nothing here (AUDIT.md): flags are settled at approval.

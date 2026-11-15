@@ -6,9 +6,10 @@ from __future__ import annotations
 import pytest
 
 from tests.wp04_gate.conftest import ident
-from thallo.contracts.enums import CheckVerdict
-from thallo.gate import ApprovalRefused, BlockReason, check_publish, decide, load_bundle
+from thallo.contracts.enums import CheckVerdict, Language
+from thallo.gate import ApprovalRefused, BlockReason, ContentType, check_publish, decide, load_bundle, review_checks
 from thallo.gate.decision import ApprovalEvidence
+from thallo.truth import compile_text, to_check_results
 
 
 def vid0(w):
@@ -78,3 +79,52 @@ def test_decide_without_a_check_reader_blocks(world):
     d = decide(content, ev, **kw)
     assert not d.allowed and d.reasons == (BlockReason.CHECKS_UNREADABLE,)
     assert decide(content, ev, check_reader=world.get_check_results, **kw).allowed
+
+
+def test_review_checks_filters_hashes_itself(world):
+    """Ruling 4: rows with mixed hashes go straight to `review_checks`, no repository in between, so
+    only the gate's own filter keeps stale rows out. Removing that filter fails every assert here."""
+    a, b = list(world.variants)
+    t = world.tenant.id
+    now_a, now_b, old = world.current_hash(a), world.current_hash(b), "e" * 64
+    bad = compile_text("Fino a 130 km.", tenant_id=t, language=Language.IT, claims=list(world.claims.values()),
+                       clock=world.clock)  # a digit outside a slot: FAIL
+    clean = compile_text("Calme settimane.", tenant_id=t, language=Language.IT, claims=list(world.claims.values()),
+                         clock=world.clock)
+
+    def rows(result, vid, sha, attempt):
+        return to_check_results(result, variant_id=vid, content_sha256=sha, clock=world.clock, attempt=attempt)
+
+    current_fail = rows(bad, a, now_a, 1)  # the current content fails at attempt 1
+    stale_pass = rows(clean, a, old, 2)  # a later PASS under the same keys, but about other content
+    stale_fail = rows(bad, b, old, 1)  # a FAIL about b's old content
+    stale_only = rows(clean, b, old, 2)  # b has nothing for its current content
+    foreign = [r.model_copy(update={"id": ident(world.clock), "tenant_id": world.bundle.id})
+               for r in rows(clean, b, now_b, 3)]  # right hash, another tenant
+    mixed = [*current_fail, *stale_pass, *stale_fail, *stale_only, *foreign]
+    types = {a: {ContentType.TEXT}, b: {ContentType.TEXT}}
+    review = review_checks(mixed, tenant_id=t, hashes={a: now_a, b: now_b}, types=types)
+    assert review.failing == {r.id for r in current_fail if r.verdict is CheckVerdict.FAIL}
+    assert review.unchecked == (b,) and review.missing[b] == (ContentType.TEXT,)
+    assert {r.content_sha256 for r in review.counted} == {now_a}
+    assert all(r.tenant_id == t for r in review.counted)
+
+
+def test_publish_applies_the_same_coverage_rule(world):
+    """Ruling 1 in `check_publish`: a variant with media and only truth rows is not checked; with
+    only lint rows its text is not checked."""
+    vid = next(v for v in world.variants if world.variant_media.get(v))
+    a = world.approve()
+    rows = list(world.checks)
+    world.checks = [r for r in rows if not (r.variant_id == vid and r.check_name.startswith("design."))]
+    d = check_publish(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id, variant_id=vid,
+                      approval_id=a.id, clock=world.clock, signer=world.signer)
+    assert not d.allowed and d.reasons == (BlockReason.NOT_CHECKED,) and "media" in d.blocks[0].detail
+    world.checks = [r for r in rows if not (r.variant_id == vid and r.check_name.startswith("truth."))]
+    d = check_publish(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id, variant_id=vid,
+                      approval_id=a.id, clock=world.clock, signer=world.signer)
+    assert not d.allowed and d.reasons == (BlockReason.NOT_CHECKED,) and "text" in d.blocks[0].detail
+    world.checks = rows
+    d = check_publish(world, tenant_id=world.tenant.id, bundle_id=world.bundle.id, variant_id=vid,
+                      approval_id=a.id, clock=world.clock, signer=world.signer)
+    assert d.allowed

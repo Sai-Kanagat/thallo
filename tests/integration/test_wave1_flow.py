@@ -65,11 +65,19 @@ from thallo.gate import (
 from thallo.gate.approvals import ACTION_GRANTED, ACTION_VOIDED, AUDIT_SUBJECT
 from thallo.gate.canonical import build_snapshot
 from thallo.gate.signing import ENV_KEY, GateSigner
+from thallo.media.lint import CHECKS as LINT_CHECKS
+from thallo.media.lint import Finding as LintFinding
+from thallo.media.lint import LintReport
+from thallo.media.lint import to_check_results as lint_rows
 from thallo.store.adapters import ClaimWriteRefused, LocalBlobStore, TenantMismatch
 from thallo.trust.audit import AuditConflict, verify_chain
 from thallo.truth import build, change_claim, library, new_candidate, to_check_results, verify_claim
 
 from .backends import REDIRECT, MemoryBackend, PgBackend
+
+# The variant carries an image, so it needs a design-lint row too (gate/checks.py COVERAGE). A lint
+# in which every check passed, written through the lint's real `to_check_results`.
+PASSING_LINT = LintReport(findings=tuple(LintFinding(check=n, verdict=CheckVerdict.PASS) for n in LINT_CHECKS))
 
 TEXT = "Fino a {{C-0001}} con una carica, il top. Scopri di più: " + REDIRECT + "SLUG"
 DESTINATION = "https://bici-demo.example/offerta"
@@ -182,6 +190,7 @@ def seed(b, name: str, *, checks: bool = True) -> Shop:
         # The code checks run on the finished variant, bound to the hash the gate computes for it.
         sha = content_hashes(s.gate, t, bundle.id)[variant.id]
         rows = to_check_results(built.compiled, variant_id=variant.id, content_sha256=sha, clock=clock)
+        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock)
         flag_ids: list[str] = []
         if checks:
             for row in rows:

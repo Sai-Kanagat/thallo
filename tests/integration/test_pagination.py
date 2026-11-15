@@ -12,7 +12,7 @@ import pytest
 
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Variant
+from thallo.contracts.models import CheckResult, Variant
 from thallo.contracts.states import VariantState
 from thallo.gate import BlockReason
 from thallo.store import db as store_db
@@ -33,6 +33,13 @@ def _more_variants(backend, shop, n):
         for _ in range(n):
             backend.clock.advance(seconds=1)
             s.insert(shop.variant.model_copy(update={"id": new_id(backend.clock), "state": VariantState.REVIEW}))
+
+
+def _check_rows(backend, shop) -> int:
+    """How many check rows the seeded variant has (truth keys plus design lint): publish reads them
+    all in one statement, so the lowered ceiling must sit at or above this count."""
+    with backend.session(shop.tenant.id) as s:
+        return len(s.repo.list_all(CheckResult, variant_id=shop.variant.id))
 
 
 def _more_audit(backend, shop, n):
@@ -108,9 +115,10 @@ def test_over_the_ceiling_raises_and_publish_blocks(backend, signer, monkeypatch
     shop = seed(backend, "PageC")
     t = shop.tenant.id
     approve(backend, shop, signer)
-    monkeypatch.setattr(store_db, "MAX_ROWS", 3)
-    assert publish(backend, shop, signer).allowed  # below the ceiling nothing changes
-    _more_variants(backend, shop, 4)  # 5 variants, ceiling 3
+    ceiling = _check_rows(backend, shop)
+    monkeypatch.setattr(store_db, "MAX_ROWS", ceiling)
+    assert publish(backend, shop, signer).allowed  # at or below the ceiling nothing changes
+    _more_variants(backend, shop, ceiling)  # one variant more than the ceiling
     with backend.session(t) as s:
         with pytest.raises(TooManyRows):
             s.gate.get_variants(t, shop.bundle.id)
@@ -141,14 +149,16 @@ def test_an_audit_chain_longer_than_the_general_ceiling_verifies_and_publishes(b
     shop = seed(backend, "PageB")
     t = shop.tenant.id
     approve(backend, shop, signer)
-    _more_audit(backend, shop, 6)  # 7 entries in all
-    monkeypatch.setattr(store_db, "MAX_ROWS", 3)
+    ceiling = _check_rows(backend, shop)
+    total = ceiling + 4  # longer than the general ceiling
+    _more_audit(backend, shop, total - 1)  # the grant is entry 1
+    monkeypatch.setattr(store_db, "MAX_ROWS", ceiling)
     monkeypatch.setattr(store_db, "STREAM_BATCH", 2)
     with backend.session(t) as s:
         entries = s.audit.store.entries(t)
-        assert [e.seq for e in entries] == list(range(1, 8))
+        assert [e.seq for e in entries] == list(range(1, total + 1))
         assert s.audit.verify(t).ok
-        assert [e.seq for e in s.gate.get_audit_chain(t, 4)] == [4, 5, 6, 7]
+        assert [e.seq for e in s.gate.get_audit_chain(t, 4)] == list(range(4, total + 1))
     decision = publish(backend, shop, signer)
     assert decision.allowed, decision.blocks
 

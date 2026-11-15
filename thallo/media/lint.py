@@ -421,7 +421,7 @@ def lint_output_fonts(job: Job, fonts: dict[str, bool] | None) -> LintReport:
 def to_check_results(report: LintReport, *, tenant_id: str, variant_id: str, content_sha256: str, clock: Clock,
                      attempt: int = 1) -> list[CheckResult]:
     """One `check_result` row per check in layer CODE. PASS or FAIL only. `content_sha256` is the
-    hash of the variant content the rendered media belongs to (`thallo.gate.variant_hash`, or
+    hash of the variant content the rendered media belongs to (`thallo.gate.check_hash`, or
     `thallo.gate.content_hashes` once the media is linked); the gate counts the rows only while the
     variant still hashes to it."""
     rows = []
