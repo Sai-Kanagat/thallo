@@ -32,12 +32,12 @@ PRICES = {"input_usd_per_mtok": "1", "output_usd_per_mtok": "1"}
 
 
 def catch(fn, *args) -> BaseException:
-    """Runs fn and returns what it raised. The traceback then starts in this frame, whose locals
-    hold no plaintext, so `capture_locals` sees only the code under test."""
+    """Runs fn and returns what it raised. This harness frame, whose args are the test's input, is
+    dropped from the traceback, so `capture_locals` sees only the code under test."""
     try:
         fn(*args)
     except TextProviderError as exc:
-        return exc
+        return exc.with_traceback(exc.__traceback__.tb_next)  # drop this harness frame
     raise AssertionError("expected TextProviderError")
 
 
