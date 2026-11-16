@@ -25,7 +25,7 @@ import hashlib
 import os
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,7 +39,7 @@ from api.backend import PgBackend  # noqa: E402
 from api.media_store import TenantMediaStore  # noqa: E402
 from api.review import _card  # noqa: E402
 from thallo.connections.pg import PostgresConnectionStore  # noqa: E402
-from thallo.connections.registry import ConnectionRegistry, NoSettings, ProviderContext, ProviderRegistry  # noqa: E402
+from thallo.connections.registry import ConnectionRegistry, NoSettings, ProviderRegistry  # noqa: E402
 from thallo.connections.stores import InMemoryConnectionStore  # noqa: E402
 from thallo.contracts import connection as c  # noqa: E402
 from thallo.contracts.clock import SystemClock  # noqa: E402
@@ -254,7 +254,8 @@ def main() -> int:  # noqa: C901, PLR0915
         gm = repo.insert(GrowthModel(id=ident(clock), created_at=now, tenant_id=t, version=1))
         bread = repo.insert(Pillar(id=ident(clock), created_at=now, tenant_id=t, growth_model_id=gm.id,
                                    name="Daily bread", stage=FunnelStage.CONSIDERATION, target_share=Decimal("0.6")))
-        repo.insert(Pillar(id=ident(clock), created_at=now, tenant_id=t, growth_model_id=gm.id, name="Behind the counter",
+        repo.insert(Pillar(id=ident(clock), created_at=now, tenant_id=t, growth_model_id=gm.id,
+                           name="Behind the counter",
                            stage=FunnelStage.AWARENESS, target_share=Decimal("0.4")))
         plan = ((0, Channel.INSTAGRAM, FunnelStage.CONSIDERATION, PlanSlotState.MISSED, None),
                 (1, Channel.INSTAGRAM, FunnelStage.CONSIDERATION, PlanSlotState.FILLED, "sourdough"),
@@ -266,7 +267,7 @@ def main() -> int:  # noqa: C901, PLR0915
                 PLAN_SLOT.check(PlanSlotState.OPEN, state)
             repo.insert(PlanSlot(id=ident(clock), created_at=now, tenant_id=t, week_start=week, channel=channel,
                                  pillar_id=bread.id, stage=stage, state=state,
-                                 starts_at=datetime.combine(week + timedelta(days=day), time(8, 30), timezone.utc),
+                                 starts_at=datetime.combine(week + timedelta(days=day), time(8, 30), UTC),
                                  variant_id=variants[key].id if key else None))
 
     # Connections: the manual floor only. No provider, no key.
@@ -281,7 +282,7 @@ def main() -> int:  # noqa: C901, PLR0915
     flagged = [x for x in cards if x["can_approve"] and x["flags"]]
     failed = [x for x in cards if any(b["kind"] == "fail" for b in x["blocking"])]
     unchecked = [x for x in cards if any(b["kind"] != "fail" for b in x["blocking"])]
-    print(f"  deck: {len(cards)} cards, {len(clean)} clean, {len(flagged)} with a flag, {len(failed)} blocked by a FAIL")
+    print(f"  deck: {len(cards)} cards, {len(clean)} clean, {len(flagged)} flagged, {len(failed)} blocked by a FAIL")
     if not (clean and flagged and failed) or unchecked:
         print("The demo deck is not as expected; see the counts above.")
         return 1
