@@ -10,9 +10,9 @@
     "scrim": "rgba(16, 18, 28, 0.92)",
     "on_scrim": "#F4F3EF"
   },
-  "type_scale": {"display": 64, "h1": 48, "h2": 36, "body": 18, "small": 14},
+  "type_scale": {"display": 128, "h1": 96, "h2": 72, "body": 36, "small": 28},
   "spacing": {"margin": 48, "gap": 24},
   "radii": {"r1": 2, "r2": 4, "r3": 8, "r4": 12, "full": 999},
-  "logo": {"file": "assets/favicon.svg", "aspect": 1},
+  "logo": {"file": "assets/favicon.svg", "aspect": 1, "width": 128, "min_width": 32, "clear_space": 1.0},
   "photo_scrim": "scrim"
 }

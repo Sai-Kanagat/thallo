@@ -4,6 +4,8 @@ Read 2026-11-16 from /Users/saikanagat/code/portfolio-live (read only) and check
 
 ## 1. Does brand.json load?
 
+Update: it loads now. The missing values are filled as labelled proposals in `PROPOSED.md`, for Sai to approve. The text below is the state when the pack was first written.
+
 No, on purpose. `load_brand("demo_brands/sai")` fails with exactly these errors, because the site states none of them:
 
 - `logo.width`: rendered width of the logo on a 1080 px canvas
