@@ -116,3 +116,17 @@ Not only verifiable content: nothing sloppy, off-brand or carrying AI telltale s
 3. Generated imagery: provenance is always recorded; proposal is off by default in v1, and if ever on, an artefact check plus a mandatory FLAG the approver must acknowledge.
 4. Client photos: technical checks (resolution, blur, exposure, crop inside safe zones) plus human sign-off.
 5. The six template families themselves need a human design review of real rendered output; lint cannot make a weak template good.
+
+## WP-08 and WP-09 merged (16 Nov)
+Both merged after independent security reviews and fix rounds; CI on main 2,482 passed, 5 skipped with Postgres. Migration 0022 (publisher) run on Docker only, NOT on Supabase.
+WP-08 publisher: only caller of `check_publish`, exactly-once sends (claim before call, attempt-guarded state writes, unknown outcomes never resent), readback, Postiz hosted and self-hosted plus manual. Gate rule: a FAIL is cleared only by a newer PASS or FLAG at the top attempt above it; a clearing FLAG must be acknowledged.
+WP-09 web app: `api/` (FastAPI) and `web/` (Next.js PWA). Sign-in by 8-digit code, review deck, week plan, connections. Web checks: `scripts/ci_web.sh` (needs network for npm ci).
+Open, in order:
+1. Design and accessibility review of the running app (quality bar section 6), with Sai. Never opened in a browser yet.
+2. Sign-in on Supabase: the identity lookup relies on the owner bypassing RLS (true on Docker only). Needs a narrow login role; fails closed today.
+3. Sessions live in API process memory: a restart signs everyone out. Fine for a pilot.
+4. Deployment rule: browsers reach `web/server.mjs` directly; no plain reverse proxy in front, or every client shares one rate-limit bucket. The API accepts connections only from the web server.
+5. Existing WP-01/WP-02 bug: updating a saved connection on Postgres crashes; WP-09 works around it in `api/backend.py`. Fix at the source.
+6. Postiz key now goes into the vault through the connections screen, not `.env`.
+7. `tests/wp03_truth/test_speed.py` fails under machine load (0.17 s against 0.15 s). Make the limit load-tolerant or mark it so CI is not flaky.
+New env vars: THALLO_POSTIZ_SELF_HOSTED_ORIGIN, THALLO_ENVIRONMENT, THALLO_DEV_CONSOLE_LOGIN, THALLO_WEB_ORIGIN, THALLO_REDIRECT_PREFIXES, THALLO_WEB_PROXY_HOSTS, THALLO_PROXY_STAMP_KEY, THALLO_DEVICE_KEY, THALLO_API_ORIGIN.
