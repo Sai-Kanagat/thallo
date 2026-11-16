@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Try Thallo on this laptop with one fictional bakery. Nothing is published, sent or spent.
+# Try Thallo on this laptop. Nothing is published, sent or spent.
 #
-#   scripts/demo.sh          start: throwaway Postgres, demo data, API and web app
-#   scripts/demo.sh stop     stop everything and delete the demo's data and keys
+#   scripts/demo.sh                  start with the fictional bakery: throwaway Postgres, demo data, API, web app
+#   scripts/demo.sh --brand sai      start with Sai Kanagat's own brand and the facts his site states
+#   scripts/demo.sh stop             stop everything and delete the demo's data and keys
 #
 # It never reads .env and never touches Supabase or any DATABASE_URL you have set: the database is
 # a Docker container of its own (thallo-demo-pg, port 54339). Keys are made fresh for this run in
@@ -12,12 +13,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 
-STATE="$(cd "${TMPDIR:-/tmp}" && pwd -P)/thallo-demo"
-CONTAINER="thallo-demo-pg"
+STATE="${DEMO_STATE:-$(cd "${TMPDIR:-/tmp}" && pwd -P)/thallo-demo}"
+CONTAINER="${DEMO_CONTAINER:-thallo-demo-pg}"
 PG_PORT="${DEMO_PG_PORT:-54339}"
 API_PORT="${DEMO_API_PORT:-8765}"
 WEB_PORT="${DEMO_WEB_PORT:-3300}"
 WEB_URL="http://localhost:$WEB_PORT"
+case "$(basename "$STATE")" in  # stop deletes this folder, so it must look like a demo folder
+  thallo-demo*) ;;
+  *) echo "DEMO_STATE must be a folder named thallo-demo or thallo-demo-something."; exit 2 ;;
+esac
 
 PY="${PYTHON:-.venv/bin/python}"
 if [ ! -x "$PY" ] && git rev-parse --git-common-dir >/dev/null 2>&1; then
@@ -35,11 +40,20 @@ stop() {
   echo "Demo stopped: processes, database container, demo keys and demo files are gone."
 }
 
-if [ "${1:-}" = "stop" ]; then
-  stop
-  exit 0
-fi
-[ -z "${1:-}" ] || { echo "usage: scripts/demo.sh [stop]"; exit 2; }
+BRAND="bakery"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    stop) stop; exit 0 ;;
+    --brand) [ $# -ge 2 ] || { echo "usage: scripts/demo.sh [--brand bakery|sai] | stop"; exit 2; }; BRAND="$2"; shift 2 ;;
+    --brand=*) BRAND="${1#--brand=}"; shift ;;
+    *) echo "usage: scripts/demo.sh [--brand bakery|sai] | stop"; exit 2 ;;
+  esac
+done
+case "$BRAND" in
+  bakery) WHAT="the fictional bakery Forno Finto" ;;
+  sai) WHAT="Sai Kanagat, from the facts his site states" ;;
+  *) echo "Unknown brand '$BRAND'. Use bakery or sai."; exit 2 ;;
+esac
 
 # ---------------------------------------------------------------- preflight
 [ -x "$PY" ] || { echo "No Python venv found (.venv). Create it first, see README."; exit 1; }
@@ -106,8 +120,9 @@ with psycopg.connect(url, autocommit=True) as conn:  # like scripts/provision_db
                  .format(sql.Literal(os.environ["DEMO_APP_PASSWORD"])))
 EOF
 
-echo "3/5 demo data (fictional bakery Forno Finto)"
-DEMO_ADMIN_URL="$ADMIN_URL" DEMO_APP_URL="$APP_URL" THALLO_BRAND_ROOT="$STATE/brand" PYTHONPATH="$REPO" \
+echo "3/5 demo data ($WHAT)"
+DEMO_BRAND="$BRAND" DEMO_ADMIN_URL="$ADMIN_URL" DEMO_APP_URL="$APP_URL" THALLO_BRAND_ROOT="$STATE/brand" \
+  PYTHONPATH="$REPO" \
   "$PY" scripts/demo_seed.py
 
 # ---------------------------------------------------------------- web build
@@ -156,7 +171,7 @@ trap - ERR
 
 cat <<EOF
 
-Thallo demo is running (fictional data only; nothing is published, sent or spent).
+Thallo demo is running: $WHAT. Nothing is published, sent or spent.
 
   Open      $WEB_URL      (Chrome, Edge or Firefox; Safari refuses the secure cookie on http)
   Email     demo@thallo.test
