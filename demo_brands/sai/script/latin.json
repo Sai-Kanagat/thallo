@@ -2,7 +2,8 @@
   "script": "latin",
   "languages": ["en", "it"],
   "fonts": {
-    "display": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "weight": 700},
-    "body": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "weight": 400}
-  }
+    "display": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "files": ["fonts/BricolageGrotesque-Bold.ttf"], "weight": 700},
+    "body": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "files": ["fonts/BricolageGrotesque-Regular.ttf"], "weight": 400}
+  },
+  "line_height": 1.3
 }
