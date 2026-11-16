@@ -23,7 +23,7 @@ from thallo.contracts.testing.contract_suite import assert_provider_contract
 from thallo.contracts.testing.samples import T, _id
 from thallo.providers.publishing import manual, postiz_hosted, postiz_self_hosted
 from thallo.providers.publishing.postiz_base import PostizTransport, RawCall, RawReply, TransportError
-from thallo.publish import LookupFailed, NotSent, OutcomeUnknown, SendContext, StagedMedia, staged
+from thallo.publish import AmbiguousLookup, LookupFailed, NotSent, OutcomeUnknown, SendContext, StagedMedia, staged
 
 FIX = json.loads((Path(__file__).parent / "postiz_fixtures.json").read_text())
 FAKE_KEY = "fake-postiz-key-for-tests-only"  # not a real key; never sent anywhere
@@ -238,6 +238,17 @@ def test_reconcile_with_nothing_found_says_so(clock, vault):
     with staged(context(clock)):
         result = hosted(clock, vault, Fixtures(**{**OK, "GET posts": "list_empty"})).run(lookup)
     assert result.output.live_text is None and result.external_ids == {}
+
+
+def test_reconcile_skips_earlier_posts_ids_other_publications_hold_and_undated_posts(clock, vault):
+    lookup = READBACK.model_copy(update={"external_id": None})
+    ctx_ = context(clock)
+    taken = SendContext(**{**ctx_.__dict__, "taken_external_ids": frozenset({"taken-1"})})
+    with staged(taken):
+        result = hosted(clock, vault, Fixtures(**{**OK, "GET posts": "list_with_repost"})).run(lookup)
+    assert result.external_ids["external_id"] == "mine"
+    with staged(ctx_), pytest.raises(AmbiguousLookup):  # without the exclusion two candidates remain
+        hosted(clock, vault, Fixtures(**{**OK, "GET posts": "list_with_repost"})).run(lookup)
 
 
 def test_two_matching_posts_are_never_guessed(clock, vault):

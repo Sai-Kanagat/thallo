@@ -507,6 +507,19 @@ def test_a_fail_at_attempt_one_written_after_a_pass_at_attempt_three_blocks(back
         approve(backend, shop, signer, acknowledged=[])
 
 
+def test_a_flag_below_the_top_attempt_never_clears_a_late_fail(backend, signer):
+    shop, fixed = fixed_shop(backend, "Upsilon")
+    clean = run_truth(backend, shop, fixed.compiled.text, attempt=3)  # PASS at 3, oldest
+    summary = next(r for r in clean if r.check_name == "truth.compile")
+    insert(backend, shop, [summary.model_copy(update={"id": _id(backend), "verdict": CheckVerdict.FAIL,
+                                                      "attempt": 1, "reason": "late fail"})])
+    flag = summary.model_copy(update={"id": _id(backend), "verdict": CheckVerdict.FLAG, "attempt": 2,
+                                      "reason": "a flag after the fail"})
+    insert(backend, shop, [flag])
+    with pytest.raises(ApprovalRefused, match="FAIL"):
+        approve(backend, shop, signer, acknowledged=[flag.id])
+
+
 def test_the_repair_loop_fail_at_one_then_pass_at_two_still_grants(backend, signer):
     shop, fixed = fixed_shop(backend, "Omicron")
     first = run_truth(backend, shop, fixed.compiled.text, attempt=1)

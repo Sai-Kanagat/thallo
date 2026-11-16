@@ -284,8 +284,7 @@ class Publisher:
             s.store.update_publication(existing.id, approval_id=approval_id, idempotency_key=key,
                                        content_sha256=payload.variant_hash, connection_id=row.id)
             publication_id = existing.id
-        if not s.store.move_variant(variant_id, VariantState.SCHEDULED):
-            raise RuntimeError("the variant cannot move to scheduled")  # rolls the claim back
+        s.store.must_move(variant_id, VariantState.SCHEDULED)  # rolls the claim back if it cannot
         return _Prepared(tenant_id, publication_id, attempts, request, ctx, provider, row)
 
     def pick(self, tenant_id: str, request: c.Request) -> tuple[Connection, c.Provider]:
@@ -358,7 +357,7 @@ class Publisher:
         s.store.emit(EventName.PUBLICATION_BLOCKED,
                      BlockedPayload(variant_id=variant_id, reason=(", ".join(reasons) + ": " + detail)[:1000]))
         if recheck:
-            s.store.move_variant(variant_id, VariantState.CHECKING)
+            s.store.must_move(variant_id, VariantState.CHECKING)
         return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, _next_step(reasons),
                        reasons=tuple(reasons), detail=detail)
 
@@ -396,7 +395,7 @@ class Publisher:
             s.store.update_publication(p.publication_id, external_id=out.external_id, live_url=out.live_url,
                                        sent_at=now)
             if published:
-                s.store.move_variant(vid, VariantState.PUBLISHED)
+                s.store.must_move(vid, VariantState.PUBLISHED)
             s.store.emit(EventName.PUBLICATION_SENT,
                          PublicationPayload(publication_id=p.publication_id, variant_id=vid))
         return Outcome(Status.SENT if published else Status.SCHEDULED, vid, WaitingOn.PUBLISHER,
@@ -439,7 +438,7 @@ class Publisher:
             if not self._swap_mine(s, p, state=SendState.RETRY if retry else SendState.FAILED,
                                    next_try_at=next_try, detail=detail):
                 return self._conflict(s, p, detail)
-            s.store.move_variant(vid, VariantState.FAILED)
+            s.store.must_move(vid, VariantState.FAILED)
             s.store.emit(EventName.PUBLICATION_BLOCKED, BlockedPayload(variant_id=vid, reason=detail))
         if retry:
             assert next_try is not None
@@ -472,8 +471,10 @@ class Publisher:
     def _lookup(self, tenant_id: str, pub: Publication, send: PublicationSend, text: str, channel: str
                 ) -> c.RunResult:
         provider = self._connection_provider(tenant_id, pub)
+        with self.sessions(tenant_id) as s:
+            taken = s.store.external_ids_except(pub.id)
         ctx = SendContext(tenant_id=tenant_id, idempotency_key=pub.idempotency_key, channel=channel, text=text,
-                          text_sha256=send.text_sha256, requested_at=send.requested_at)
+                          text_sha256=send.text_sha256, requested_at=send.requested_at, taken_external_ids=taken)
         req = c.ReadbackRequest(tenant_id=tenant_id, idempotency_key=pub.idempotency_key, publication_id=pub.id,
                                 external_id=pub.external_id, live_url=pub.live_url)
         with staged(ctx):
@@ -525,7 +526,7 @@ class Publisher:
                                 if_requested_at=send.requested_at, state=SendState.SENT, detail="found by reconcile"):
                 return Outcome(Status.IN_FLIGHT, variant_id, WaitingOn.PUBLISHER, "settled by another process", pub.id)
             s.store.update_publication(pub.id, external_id=found, live_url=live_url, sent_at=send.requested_at)
-            s.store.move_variant(variant_id, VariantState.PUBLISHED)
+            s.store.must_move(variant_id, VariantState.PUBLISHED)
             s.store.emit(EventName.PUBLICATION_SENT, PublicationPayload(publication_id=pub.id, variant_id=variant_id))
         return Outcome(Status.SENT, variant_id, WaitingOn.PUBLISHER, "found the post; read back the live text",
                        pub.id, external_id=found, live_url=live_url)
@@ -566,7 +567,7 @@ class Publisher:
                                    "this send is not waiting on a person, or it changed since it was shown",
                                    pub.id, reasons=("not_open",))
                 s.store.update_publication(pub.id, live_url=live_url, external_id=external_id, sent_at=self.clock.now())
-                s.store.move_variant(variant_id, VariantState.PUBLISHED)
+                s.store.must_move(variant_id, VariantState.PUBLISHED)
                 s.store.emit(EventName.PUBLICATION_SENT,
                              PublicationPayload(publication_id=pub.id, variant_id=variant_id))
                 return Outcome(Status.SENT, variant_id, WaitingOn.PUBLISHER, "read back the live text", pub.id,
@@ -576,16 +577,17 @@ class Publisher:
                 return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY,
                                "this send is not waiting on a person, or it changed since it was shown",
                                pub.id, reasons=("not_open",))
-            s.store.move_variant(variant_id, VariantState.FAILED)
+            s.store.must_move(variant_id, VariantState.FAILED)
         return Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
                        "nothing went out; publish again to send the approved bytes", pub.id)
 
     def reopen(self, tenant_id: str, variant_id: str, *, actor: HumanActor, verifier: SessionVerifier,
-               attempt: int, requested_at: datetime, by_hand: bool) -> Outcome:
+               attempt: int, requested_at: datetime) -> Outcome:
         """The way out of FAILED, which only a definite "not sent" reaches, so reopening cannot
-        double post. `by_hand` hands the person the manual pack's job (MANUAL_PENDING; they post
-        it and `settle`); otherwise the same bytes may be tried again (RETRY, due now). Guarded on
-        the attempt the person was shown, like `settle`."""
+        double post. It only moves the send to RETRY (due now), guarded on the attempt the person
+        was shown. Nothing is sent or scheduled here: the next `publish()` runs `check_publish`
+        again (kill switches, voids and new FAILs all block) and picks the connection, falling to
+        the manual pack when nothing else can serve."""
         if actor.tenant_id != tenant_id or not verifier.is_live_human_session(actor):
             return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "only the signed-in person can reopen a send",
                            reasons=("not_a_person",))
@@ -594,20 +596,14 @@ class Publisher:
             if pub is None:
                 return Outcome(Status.BLOCKED, variant_id, WaitingOn.PERSON, "there is no send to reopen",
                                reasons=("no_publication",))
-            target = SendState.MANUAL_PENDING if by_hand else SendState.RETRY
             if not s.store.swap(pub.id, {SendState.FAILED}, if_attempts=attempt, if_requested_at=requested_at,
-                                state=target, next_try_at=None if by_hand else self.clock.now(),
-                                detail=f"reopened by {actor.id}" + (" to post by hand" if by_hand else "")):
+                                state=SendState.RETRY, next_try_at=self.clock.now(),
+                                detail=f"reopened by {actor.id}"):
                 return Outcome(Status.BLOCKED, variant_id, WaitingOn.NOBODY,
                                "this send is not failed, or it changed since it was shown", pub.id,
                                reasons=("not_open",))
-            if by_hand:
-                s.store.move_variant(variant_id, VariantState.SCHEDULED)
-        if by_hand:
-            return Outcome(Status.MANUAL_PENDING, variant_id, WaitingOn.PERSON,
-                           "post the approved text and files exactly, then confirm the live link", pub.id)
         return Outcome(Status.RETRY_LATER, variant_id, WaitingOn.PUBLISHER,
-                       "publish again to send the approved bytes", pub.id)
+                       "publish again: the gate is checked again before anything is sent", pub.id)
 
     # ================================================================== readback
 
@@ -668,8 +664,11 @@ class Publisher:
             if live_url and not pub.live_url:
                 fields["live_url"] = live_url
             s.store.update_publication(pub.id, **fields)
-            s.store.move_variant(vid, VariantState.PUBLISHED)  # a scheduled post that is now live
-            s.store.move_variant(vid, VariantState.READ_BACK_OK if ok else VariantState.READ_BACK_MISMATCH)
+            current = s.store.variant(vid)
+            if current is not None and current.state not in (VariantState.READ_BACK_OK,
+                                                             VariantState.READ_BACK_MISMATCH):
+                s.store.must_move(vid, VariantState.PUBLISHED)  # a scheduled post that is now live
+                s.store.must_move(vid, VariantState.READ_BACK_OK if ok else VariantState.READ_BACK_MISMATCH)
             if ok:
                 s.store.emit(EventName.PUBLICATION_READ_BACK, PublicationPayload(publication_id=pub.id, variant_id=vid))
             else:

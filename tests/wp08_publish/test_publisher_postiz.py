@@ -41,6 +41,7 @@ class PostizDouble:
             self.creates.append(body)
             post = body["posts"][0]
             self.posts.append({"id": f"post-{len(self.creates)}", "content": post["value"][0]["content"],
+                               "publishDate": body["date"],
                                "state": "PUBLISHED", "releaseURL": "https://instagram.invalid/p/1",
                                "integration": {"id": post["integration"]["id"]}})
             if self.create_times_out:

@@ -15,7 +15,12 @@
      "releaseURL": null, "state": "QUEUE", "error": null,
      "integration": {"id": "ig-1", "providerIdentifier": "instagram", "name": "Shop", "picture": null}}]}},
   "list_twice": {"status": 200, "body": {"posts": [
-    {"id": "post-1", "content": "Hello from the shop", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
-    {"id": "post-2", "content": "Hello  from the shop", "state": "PUBLISHED", "integration": {"id": "ig-1"}}]}},
+    {"id": "post-1", "content": "Hello from the shop", "publishDate": "2026-01-05T09:00:00.000Z", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
+    {"id": "post-2", "content": "Hello  from the shop", "publishDate": "2026-01-05T09:00:05.000Z", "state": "PUBLISHED", "integration": {"id": "ig-1"}}]}},
+  "list_with_repost": {"status": 200, "body": {"posts": [
+    {"id": "old-1", "content": "Hello from the shop", "publishDate": "2026-01-04T18:00:00.000Z", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
+    {"id": "taken-1", "content": "Hello from the shop", "publishDate": "2026-01-05T09:00:00.000Z", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
+    {"id": "undated", "content": "Hello from the shop", "state": "PUBLISHED", "integration": {"id": "ig-1"}},
+    {"id": "mine", "content": "Hello from the shop", "publishDate": "2026-01-05T09:00:02.000Z", "state": "PUBLISHED", "integration": {"id": "ig-1"}}]}},
   "list_empty": {"status": 200, "body": {"posts": []}}
 }

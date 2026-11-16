@@ -49,6 +49,9 @@ class SendContext:
     text_sha256: str
     requested_at: datetime  # the date the provider is given, and the centre of any lookup window
     media: tuple[StagedMedia, ...] = ()
+    # Reconcile only: external ids other publications of this tenant already hold, which a lookup
+    # must never claim for this one.
+    taken_external_ids: frozenset[str] = frozenset()
 
     def verify(self, request: c.Request) -> None:
         """Raise `NotSent` unless the request is the one this context was made for."""

@@ -463,24 +463,59 @@ def test_a_reconcile_whose_connection_is_gone_holds_for_a_person(rig):
 
 # ---------------------------------------------------------------- the way out of FAILED
 
-@pytest.mark.parametrize("by_hand", [True, False])
-def test_a_failed_send_can_be_reopened_by_a_person(rig, by_hand):
+def reopen_failed(rig):
     rig.poster.behaviour = "not_sent_final"
     assert rig.publish().status is Status.FAILED
     actor, verifier = person(rig)
     shown = rig.publisher.status(rig.t, rig.shop.variant.id)
-    stale = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, by_hand=by_hand,
+    stale = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier,
                                  attempt=shown.attempt + 1, requested_at=shown.requested_at)
     assert stale.status is Status.BLOCKED and send_row(rig).state is SendState.FAILED
-    out = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, by_hand=by_hand,
+    out = rig.publisher.reopen(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier,
                                attempt=shown.attempt, requested_at=shown.requested_at)
+    assert out.status is Status.RETRY_LATER and send_row(rig).state is SendState.RETRY
+    assert variant(rig).state is VariantState.FAILED  # reopening schedules nothing
     rig.poster.behaviour = "ok"
-    if by_hand:
-        assert out.status is Status.MANUAL_PENDING and rig.publish().status is Status.MANUAL_PENDING
-        done = rig.publisher.settle(rig.t, rig.shop.variant.id, actor=actor, verifier=verifier, posted=True,
-                                    live_url="https://instagram.invalid/p/2", attempt=shown.attempt,
-                                    requested_at=shown.requested_at)
-        assert done.status is Status.SENT and len(rig.poster.calls) == 1
-    else:
-        assert out.status is Status.RETRY_LATER
-        assert rig.publish().status is Status.SENT and len(rig.poster.calls) == 2
+
+
+def test_a_failed_send_reopens_to_retry_and_goes_through_the_gate_again(rig):
+    reopen_failed(rig)
+    assert rig.publish().status is Status.SENT and len(rig.poster.calls) == 2
+
+
+def test_reopen_after_a_kill_switch_sends_and_schedules_nothing(rig):
+    reopen_failed(rig)
+    rig.backend.set_paused(True)
+    try:
+        out = rig.publish()
+    finally:
+        rig.backend.set_paused(False)
+    assert out.status is Status.BLOCKED and BlockReason.SYSTEM_PAUSED.value in out.reasons
+    assert len(rig.poster.calls) == 1 and variant(rig).state is VariantState.FAILED
+    assert send_row(rig).state is SendState.RETRY
+
+
+def test_reopen_after_a_voided_approval_sends_and_schedules_nothing(rig):
+    reopen_failed(rig)
+    with rig.backend.session(rig.t) as s:
+        s.write(void_bundle_approvals(s.get(Bundle, rig.shop.bundle.id), s.list(Variant, bundle_id=rig.shop.bundle.id),
+                                      s.gate.get_approvals(rig.t, rig.shop.bundle.id), reason="edited",
+                                      actor=rig.shop.human, clock=rig.backend.clock, audit=s.audit, signer=rig.signer))
+    out = rig.publish()
+    assert out.status is Status.BLOCKED and BlockReason.APPROVAL_VOIDED.value in out.reasons
+    assert len(rig.poster.calls) == 1 and variant(rig).state is not VariantState.SCHEDULED
+
+
+def test_a_state_move_the_machine_refuses_rolls_the_whole_record_back(rig, monkeypatch):
+    from thallo.publish.store import PublishStore
+
+    real = PublishStore.move_variant
+
+    def refuse_published(self, variant_id, target):
+        return False if target is VariantState.PUBLISHED else real(self, variant_id, target)
+    monkeypatch.setattr(PublishStore, "move_variant", refuse_published)
+    with pytest.raises(Exception, match="cannot move"):
+        rig.publish()
+    (pub,) = rows(rig, Publication)
+    assert pub.external_id is None and send_row(rig).state is SendState.SENDING  # nothing half-written
+    assert events(rig, "publication.sent") == []

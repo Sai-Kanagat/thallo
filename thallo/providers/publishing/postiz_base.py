@@ -205,6 +205,16 @@ def multipart(field_name: str, filename: str, mime: str, data: bytes) -> tuple[b
     return head + data + tail, f"multipart/form-data; boundary={boundary}"
 
 
+def _when(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
 def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -394,7 +404,8 @@ class PostizProvider:
         integ = self.settings.integrations.get(Channel(ctx.channel))
         if integ is None:
             raise LookupFailed("no Postiz integration for the channel on this connection")
-        query = urlencode({"startDate": _iso(ctx.requested_at - LOOKUP_WINDOW),
+        query = urlencode({"startDate": _iso(ctx.requested_at - timedelta(minutes=1)) if req.external_id is None
+                           else _iso(ctx.requested_at - LOOKUP_WINDOW),
                            "endDate": _iso(ctx.requested_at + LOOKUP_WINDOW)})
         try:
             reply = self._call(RawCall("GET", f"{self.base()}/posts?{query}", auth=self._auth(),
@@ -410,10 +421,17 @@ class PostizProvider:
         if req.external_id is not None:
             match = [p for p in posts if p.get("id") == req.external_id]
         else:
+            # Reconcile: a post of this integration with the exact canonical text, dated at or
+            # after the moment of the send (to the second, as the date was sent), whose id no
+            # other publication holds. A repost of the same text cannot be claimed this way, and
+            # a post with no readable date never matches.
             want = canonical_text(ctx.text)
+            since = ctx.requested_at.astimezone(UTC).replace(microsecond=0)
             match = [p for p in posts if isinstance(p.get("integration"), dict)
                      and p["integration"].get("id") == integ.id
-                     and isinstance(p.get("content"), str) and canonical_text(p["content"]) == want]
+                     and isinstance(p.get("content"), str) and canonical_text(p["content"]) == want
+                     and str(p.get("id")) not in ctx.taken_external_ids
+                     and (_when(p.get("publishDate")) or since - timedelta(seconds=1)) >= since]
         if len(match) > 1:
             raise AmbiguousLookup("more than one post matches; a person must check")
         if not match:

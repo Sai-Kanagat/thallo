@@ -87,6 +87,43 @@ def test_a_newer_fail_at_a_higher_attempt_does_not_clear_an_older_fail():
     assert review([first, second]).failing == {first.id, second.id}
 
 
+def test_a_flag_below_the_top_attempt_does_not_clear_a_fail():
+    """Review repro: PASS at 3 (older), FAIL at 1 (written later), FLAG at 2 (after the FAIL). The
+    FLAG is not at the top attempt, so it clears nothing and the FAIL decides."""
+    passed = row(CheckVerdict.PASS, 3)
+    fail = row(CheckVerdict.FAIL, 1)
+    flag = row(CheckVerdict.FLAG, 2)
+    r = review([passed, fail, flag])
+    assert r.failing == {fail.id}
+
+
+VERDICTS = (CheckVerdict.FAIL, CheckVerdict.FLAG, CheckVerdict.PASS)
+
+
+def test_every_ordering_of_up_to_four_rows_fails_closed():
+    """All write orders of up to four rows of one key (FAIL, FLAG, PASS at attempts 1 to 3).
+    Oracle: a FAIL is superseded only by a newer non-FAIL row at the top attempt, above the
+    FAIL's own; an unsuperseded FAIL fails the key; every FLAG at the top attempt is in flags;
+    and no key ever comes out clean while it holds an unsuperseded FAIL."""
+    import itertools
+
+    kinds = [(v, a) for v in VERDICTS for a in (1, 2, 3)]
+    for n in range(1, 5):
+        for seq in itertools.product(kinds, repeat=n):
+            rows_ = [row(v, a, "prop") for v, a in seq]  # ids rise with write order
+            top = max(r.attempt for r in rows_)
+            r = review(rows_)
+            for i, f in enumerate(rows_):
+                if f.verdict is not CheckVerdict.FAIL:
+                    continue
+                superseded = any(p.verdict is not CheckVerdict.FAIL and p.attempt == top > f.attempt
+                                 for p in rows_[i + 1:])
+                assert (f.id in r.failing) == (not superseded), seq
+            top_flags = {x.id for x in rows_ if x.verdict is CheckVerdict.FLAG and x.attempt == top}
+            assert top_flags <= r.flags, seq
+            assert r.flags <= top_flags, seq  # nothing below the top asks for acknowledgement
+
+
 def test_lower_attempt_flags_still_do_not_decide():
     flag = row(CheckVerdict.FLAG, 1)
     passed = row(CheckVerdict.PASS, 2)

@@ -29,6 +29,10 @@ from thallo.publish.records import PublicationSend, SendState
 ACTOR_ID = "publisher"
 
 
+class IllegalMove(RuntimeError):
+    """A variant state write the machine does not allow; the transaction is rolled back."""
+
+
 class RowSession(Protocol):
     def insert(self, row: Row) -> Row: ...
 
@@ -62,6 +66,11 @@ class PublishStore:
             return False
         return self.rows.update(Variant, variant_id, state=target)
 
+    def must_move(self, variant_id: str, target: VariantState) -> None:
+        """`move_variant` or raise, so the caller's transaction rolls back as a whole."""
+        if not self.move_variant(variant_id, target):
+            raise IllegalMove(f"the variant cannot move to {target.value} from where it is")
+
     def bench_variants(self, channel: Any) -> list[Variant]:
         return [v for v in self.rows.list(Variant, state=VariantState.BENCHED, channel=channel) if not v.is_canary]
 
@@ -73,6 +82,10 @@ class PublishStore:
     def publication_for_variant(self, variant_id: str) -> Publication | None:
         found = self.rows.list(Publication, variant_id=variant_id)
         return found[0] if found else None
+
+    def external_ids_except(self, publication_id: str) -> frozenset[str]:
+        return frozenset(p.external_id for p in self.rows.list(Publication)
+                         if p.id != publication_id and p.external_id)
 
     def send(self, publication_id: str) -> PublicationSend | None:
         return self.rows.get(PublicationSend, publication_id)
@@ -130,6 +143,11 @@ class PublishStore:
 class PgPublishStore(PublishStore):
     """The same store over `TenantRepo`, with the atomic writes in SQL."""
 
+    def external_ids_except(self, publication_id: str) -> frozenset[str]:
+        rows = self.rows.fetch_all(  # type: ignore[attr-defined]
+            "SELECT external_id FROM publication WHERE id <> %s AND external_id IS NOT NULL", (publication_id,))
+        return frozenset(r[0] for r in rows)
+
     def claim(self, publication: Publication, send: PublicationSend) -> bool:
         p = publication
         row = self.rows.execute(  # type: ignore[attr-defined]
@@ -179,4 +197,4 @@ class PgPublishStore(PublishStore):
         return cur.rowcount == 1
 
 
-__all__ = ["ACTOR_ID", "PgPublishStore", "PublishStore", "RowSession"]
+__all__ = ["ACTOR_ID", "IllegalMove", "PgPublishStore", "PublishStore", "RowSession"]
