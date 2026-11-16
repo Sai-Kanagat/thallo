@@ -1,17 +1,37 @@
-"""The weekly state machine. Call tick() on a schedule; it is safe to repeat."""
+"""The weekly state machine. Call tick() on a schedule; it is safe to repeat.
+
+The original engine. It no longer sends anything: its old publish path (the legacy `Gate` and
+`publishing.deliver`) was removed in WP-08, so the only way out is `thallo.publish`, which calls
+`gate.check_publish` on approved bundle rows. When a scheduled item comes due, the engine tells
+the cockpit once that it is due and leaves it SCHEDULED; a person marks it Published (with its
+link) once it is live, and measurement then runs as before."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from thallo.analytics import MetricStore
-from thallo.contracts import (BrandSettings, Cockpit, Item, MetricsSource, Passport,
-                                       Publisher, Status, Writer, week_offsets)
+from thallo.contracts import BrandSettings, Cockpit, Item, MetricsSource, Passport, Status, Writer, week_offsets
 from thallo.foresight import ForecastLedger
-from thallo.gate import Gate, content_hash
-from thallo.publishing import deliver, preflight
+from thallo.gate.legacy import content_hash
 from thallo.taste import TasteLedger
-from thallo.truth import ClaimLedger
+from thallo.truth import ClaimLedger, render
+
+LIMITS = {"linkedin": 3000, "instagram": 2200, "tiktok": 2200, "x": 280}
+DUE = "Due now. The engine does not send: publish it through the publisher, or post it by hand and mark it Published"
+
+
+def preflight(item: Item) -> list[str]:
+    errors = []
+    text = render(item.text)
+    if not text.strip():
+        errors.append("empty text")
+    limit = LIMITS.get(item.channel)
+    if limit and len(text) > limit:
+        errors.append(f"over {limit} characters")
+    if item.channel in ("instagram", "tiktok") and not item.media:
+        errors.append("media required")
+    return errors
 
 
 @dataclass
@@ -19,18 +39,14 @@ class Engine:
     brand: BrandSettings
     cockpit: Cockpit
     writer: Writer
-    publisher: Publisher
     metrics_source: MetricsSource
     claims: ClaimLedger
     taste: TasteLedger = field(default_factory=TasteLedger)
     forecasts: ForecastLedger = field(default_factory=ForecastLedger)
     metrics: MetricStore = field(default_factory=MetricStore)
-    gate: Gate | None = None
     passports: dict[str, Passport] = field(default_factory=dict)
     drafts: dict[str, str] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        self.gate = self.gate or Gate(self.claims)
+    announced: set[str] = field(default_factory=set)
 
     def tick(self, now: datetime) -> None:
         for item in self.cockpit.items():
@@ -44,7 +60,7 @@ class Engine:
             elif item.status is Status.APPROVED and now >= times["schedule"]:
                 self._schedule(item, now)
             elif item.status is Status.SCHEDULED and now >= item.publish_at:
-                self._publish(item, now)
+                self._due(item)
             elif item.status is Status.PUBLISHED:
                 self._measure(item, now)
             self.cockpit.save(item)
@@ -107,27 +123,27 @@ class Engine:
         return passport
 
     def _schedule(self, item: Item, now: datetime) -> None:
+        """Scheduling only: nothing here can send. The publisher re-checks everything at send time."""
         errors = preflight(item)
-        decision = self.gate.evaluate(item, self.passports.get(item.id), self.brand, now)
-        if errors or not decision.allowed:
+        passport = self.passports.get(item.id)
+        if self.brand.paused:
+            errors.append("brand paused")
+        if item.channel not in self.brand.channels:
+            errors.append("channel not allowed")
+        if passport is None:
+            errors.append("no approval")
+        else:
+            errors += [p for cid in passport.claim_ids if (p := self.claims.problem(cid, now))]
+        if errors:
             item.status = Status.FAILED
-            self.cockpit.notify(item, "; ".join(errors) or decision.reason)
+            self.cockpit.notify(item, "; ".join(errors))
             return
         item.status = Status.SCHEDULED
 
-    def _publish(self, item: Item, now: datetime) -> None:
-        decision = self.gate.evaluate(item, self.passports.get(item.id), self.brand, now)
-        if not decision.allowed:
-            item.status = Status.FAILED
-            self.cockpit.notify(item, decision.reason)
-            return
-        url = deliver(self.publisher, f"{item.brand}:{item.id}", item)
-        if url is None:
-            item.status = Status.FAILED
-            self.cockpit.notify(item, "Delivery failed, reschedule needed")
-            return
-        item.url, item.status = url, Status.PUBLISHED
-        self.cockpit.notify(item, f"Live: {url}")
+    def _due(self, item: Item) -> None:
+        if item.id not in self.announced:
+            self.announced.add(item.id)
+            self.cockpit.notify(item, DUE)
 
     def _measure(self, item: Item, now: datetime) -> None:
         for day in (2, 7):

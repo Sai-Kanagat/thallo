@@ -32,7 +32,6 @@ PROVIDERS = "thallo/providers/"
 LEGACY: dict[str, set[str]] = {
     "thallo/run.py": {"clock"},  # ported by the worker package
     "thallo/notion.py": {"clock", "vendor"},  # WP-17 calendar mirror
-    "thallo/postiz.py": {"clock", "vendor"},  # WP-08 publisher
     "thallo/writer.py": {"vendor"},  # WP-06 text providers
 }
 
