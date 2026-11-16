@@ -23,6 +23,22 @@ Then open http://localhost:3300 in Chrome, Edge or Firefox (tested in Chromium o
 
 The script never reads `.env` and ignores any `DATABASE_URL` you have set. Keys (vault, gate signing, proxy stamp, device) are made fresh in a private temporary folder outside the repo, used for this run only, and never printed. Ports can be changed with `DEMO_PG_PORT`, `DEMO_API_PORT` and `DEMO_WEB_PORT`.
 
+## Sai's own brand
+    scripts/demo.sh --brand sai
+
+Same app and the same safety (local Docker database, temporary keys, no `.env`, nothing sent), with Sai Kanagat's brand instead of the bakery:
+- his brand tokens and Bricolage Grotesque files from `demo_brands/sai/`, rendered by the real template renderer;
+- the 32 claims in `demo_brands/sai/claims.json`, each with its page as source. Twenty-six are verified. The six the site contradicts itself on (C04, C07, C09, C13, C14, C18; see `GAPS.md`) are stored as candidates, so no piece can use them;
+- his voice rules and retired words from `voice.md`;
+- five LinkedIn pieces written by the scripted mock writer: a project post, a case-study card, a quote card, a stat card with a flag to read, and a draft that typed numbers instead of using the claim, which stays blocked by a FAIL.
+
+The brand values that are proposals, not facts from his site, are in `demo_brands/sai/PROPOSED.md`. Renders to judge them by eye are in `docs/demo_screens/sai/`; `python scripts/demo_sai_renders.py` redraws the family samples.
+
+A demo already running (for example the bakery) blocks a second one on the same names. To run both, give the second its own folder, container and ports, and use the same `DEMO_STATE` and `DEMO_CONTAINER` with `stop`:
+
+    DEMO_STATE="$TMPDIR/thallo-demo-sai" DEMO_CONTAINER=thallo-demo-sai-pg DEMO_PG_PORT=54349 \
+      DEMO_API_PORT=8775 DEMO_WEB_PORT=3310 scripts/demo.sh --brand sai
+
 ## Stop
     scripts/demo.sh stop
 
