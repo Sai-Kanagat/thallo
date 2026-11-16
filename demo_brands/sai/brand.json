@@ -1,0 +1,18 @@
+{
+  "brand": "sai",
+  "name": "Sai Kanagat",
+  "fictional": false,
+  "colors": {
+    "ink": "#0E1116",
+    "paper": "#F4F3EF",
+    "accent": "#1F40C7",
+    "on_accent": "#F4F3EF",
+    "scrim": "rgba(16, 18, 28, 0.92)",
+    "on_scrim": "#F4F3EF"
+  },
+  "type_scale": {"display": 64, "h1": 48, "h2": 36, "body": 18, "small": 14},
+  "spacing": {"margin": 48, "gap": 24},
+  "radii": {"r1": 2, "r2": 4, "r3": 8, "r4": 12, "full": 999},
+  "logo": {"file": "assets/favicon.svg", "aspect": 1},
+  "photo_scrim": "scrim"
+}

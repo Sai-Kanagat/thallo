@@ -1,0 +1,147 @@
+{
+  "_about": "Everything the site states that BrandTokens (thallo/brand/tokens.py) has no slot for, plus provenance for each brand.json value. Not read by load_brand. Values are copied from the site, never rescaled or invented. Where the site gives oklch only, the oklch string is kept and no hex is derived here.",
+  "site": "https://saikanagat.com",
+  "checked_against_live": "2026-11-16: css/brand-overlay.css, css/brand-identity-system.css, favicon.svg and llms.txt are byte-identical to the live files. The HTML pages differ only where Cloudflare rewrites the email address.",
+  "provenance": {
+    "colors.ink": "#0E1116: favicon.svg (stop-color). The brand book and overlay CSS define ink as oklch(0.16 0.012 260), no hex.",
+    "colors.paper": "#F4F3EF: css/brand-overlay.css :root --paper and site.webmanifest background_color. brand-identity-system.css says oklch(0.975 0.004 260); favicon.svg uses #F4F5F7.",
+    "colors.accent": "#1F40C7: meta theme-color on brand-identity.html, site.webmanifest theme_color, favicon.svg stop-color. The brand book defines accent as oklch(0.42 0.21 265), no hex.",
+    "colors.on_accent": "Brand book, contrast table: 'paper on ultramarine 8.4 : 1'. So paper, same hex as colors.paper.",
+    "colors.scrim": "rgba(16, 18, 28, 0.92): the end stop of the live .work-card-overlay gradient in css/brand-overlay.css. It is a site implementation, not a brand-book rule. The brand book says 'No text overlays.' with an exception for social captions on full-bleed visuals.",
+    "colors.on_scrim": "css/brand-overlay.css: .work-card-title color var(--paper). Same hex as colors.paper.",
+    "type_scale": "brand-identity.html section 04 (web px): display 64, h1 48, h2 36, body 18, small 14. h3 28 and mono label 12 are in extras below. These are web px, not px on a 1080 px canvas.",
+    "spacing": "brand-identity.html section 05 grid line: '12 columns, 24 px gutter, max 1240 px, outer 48 px'. margin = outer 48, gap = gutter 24. The site does not call them margin and gap.",
+    "radii": "brand-identity-system.css --r-1 2, --r-2 4, --r-3 8, --r-4 12, --r-full 999. brand-overlay.css overrides r-4 to 14 and adds r-5 22 (brand-identity-system.css has r-5 20).",
+    "logo.file": "favicon.svg as published at https://saikanagat.com/favicon.svg (64 x 64 viewBox, so aspect 1).",
+    "script/latin.json": "Bricolage Grotesque for display and body per brand-identity.html section 04. Display weight 700 and body 400 are the brand book specimen values; the live overlay CSS sets headings to 500."
+  },
+  "palette_oklch": {
+    "_note": "Verbatim from css/brand-identity-system.css and brand-identity.html. Not converted.",
+    "ink": "oklch(0.16 0.012 260)",
+    "paper": "oklch(0.975 0.004 260)",
+    "accent": "oklch(0.42 0.21 265)",
+    "accent_ink": "oklch(0.28 0.18 268)",
+    "accent_up": "oklch(0.55 0.22 262)",
+    "accent_soft": "oklch(0.93 0.04 265)",
+    "positive": "oklch(0.55 0.13 145)",
+    "negative": "oklch(0.50 0.18 25)",
+    "warning": "oklch(0.70 0.14 70)",
+    "neutral_scale": {
+      "n-50": "oklch(0.985 0.003 260)",
+      "n-100": "oklch(0.955 0.004 260)",
+      "n-200": "oklch(0.915 0.006 260)",
+      "n-300": "oklch(0.85 0.008 260) in brand-identity-system.css, oklch(0.86 0.008 260) in brand-overlay.css",
+      "n-400": "oklch(0.72 0.010 260)",
+      "n-500": "oklch(0.56 0.012 260)",
+      "n-600": "oklch(0.44 0.012 260)",
+      "n-700": "oklch(0.32 0.012 260)",
+      "n-800": "oklch(0.235 0.012 260)",
+      "n-900": "oklch(0.16 0.012 260)",
+      "n-950": "oklch(0.10 0.011 260) (brand-identity-system.css only)"
+    },
+    "usage_rules_quoted": [
+      "Anchor in ink. Breathe in paper.",
+      "Paper-on-ink is for hero moments",
+      "No gradients. No drop-shadow glows.",
+      "If it appears more than once per visible region, the layout is wrong.",
+      "System colors (positive / negative / warning) are reserved for function"
+    ],
+    "contrast_pairs_quoted": [
+      {"pair_quoted": "ink on paper", "ratio_quoted": "17.2 : 1"},
+      {"pair_quoted": "paper on ultramarine", "ratio_quoted": "8.4 : 1"},
+      {"pair_quoted": "ultramarine-deep on paper", "ratio_quoted": "11.6 : 1"},
+      {"pair_quoted": "n-500 on paper", "ratio_quoted": "4.6 : 1"}
+    ]
+  },
+  "type": {
+    "families": {
+      "sans": {"family": "Bricolage Grotesque", "role": "display, headlines, body, UI", "weights": "200-800"},
+      "serif": {"family": "Newsreader", "role": "italic accents only, one per surface", "weights": "400 / 400 italic"},
+      "mono": {"family": "IBM Plex Mono", "role": "labels, dates, page numbers, metadata", "weights": "400 / 500"}
+    },
+    "css_stacks": {
+      "sans": "'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif",
+      "serif": "'Newsreader', 'Source Serif Pro', Georgia, serif",
+      "mono": "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace"
+    },
+    "delivery": "Google Fonts @import (no font files in the site repo).",
+    "scale_px_web": {
+      "display_sans": "64px, 700, line-height 1.0, tracking -0.04, UPPER",
+      "display_serif": "64px, italic, line-height 1.0, tracking -0.025",
+      "h1": "48px, 700, 1.05, -0.03, UPPER",
+      "h2": "36px, 600, 1.10, -0.022",
+      "h3": "28px, 600, 1.20, -0.012",
+      "body": "18px, 400, 1.55 (1.4 for short marketing lines, 1.7 for long-form)",
+      "small": "14px, 400, 1.50, n-700",
+      "mono_label": "12px, 400, tracking 0.16, UPPER"
+    },
+    "css_scale_px": {"xs": 12, "sm": 14, "base": 16, "md": 18, "lg": 22, "xl": 28, "2xl": 36, "3xl": 48, "4xl": 64, "5xl": 88, "6xl": 128},
+    "rules_quoted": [
+      "One italic moment per surface.",
+      "Headlines, navigation, and mono labels are uppercase. Body, lede, and captions are sentence-case.",
+      "Avoid going smaller than 14 px on screen."
+    ]
+  },
+  "spacing_scale_px": {"s-1": 4, "s-2": 8, "s-3": 12, "s-4": 16, "s-5": 24, "s-6": 32, "s-7": 48, "s-8": 64, "s-9": 96, "s-10": 128},
+  "grid": {"columns": 12, "gutter_px": 24, "max_width_px": 1240, "outer_px": 48},
+  "radii_defaults_quoted": "Defaults: r-3 for cards & inputs · r-4 for surfaces & modals · r-full for buttons & pills · r-0 for tables, print, ads",
+  "shadows": {
+    "brand_identity_system_css": {
+      "shadow-1": "0 1px 0 rgba(8,12,28,0.04), 0 1px 2px rgba(8,12,28,0.06)",
+      "shadow-2": "0 1px 1px rgba(8,12,28,0.04), 0 4px 12px rgba(8,12,28,0.07)",
+      "shadow-3": "0 2px 4px rgba(8,12,28,0.06), 0 12px 32px rgba(8,12,28,0.09)",
+      "shadow-4": "0 4px 8px rgba(8,12,28,0.07), 0 24px 60px rgba(8,12,28,0.11)"
+    },
+    "brand_overlay_css_differs": "Same five steps, tinted rgba(20,14,8,...) instead of rgba(8,12,28,...).",
+    "rule_quoted": "All shadows are cast cool"
+  },
+  "icons": {"box_px": 24, "stroke_px": 1.4, "caps": "round", "color": "single colour only: ink, accent, or paper", "corner_radius_px": 2},
+  "logo": {
+    "description_quoted": "A geometric mark",
+    "files_published": ["favicon.svg", "favicon-32.png", "favicon-16.png", "apple-touch-icon.png (180 x 180)"],
+    "colors_in_favicon_svg": {"ink_half": "#0E1116", "hairline": "#F4F5F7", "accent_half": "#1F40C7"},
+    "wordmark": "Set in HTML text, not a file: the mark, then SAI KANAGAT in Bricolage Grotesque 700 uppercase, tracking -0.04em (brand-identity-system.css .wm-hero). The nav on the live pages shows the text 'SK.' with an accent period.",
+    "variants_shown_in_brand_book": ["primary lockup", "reversed on ink", "tinted on soft accent", "on ultramarine", "mark alone", "stacked with sub-line", "rotated diamond"],
+    "clear_space_quoted": "minimum padding = x · height of the mark",
+    "clear_space_x": "not stated",
+    "min_size_quoted": {
+      "screen_full_lockup": "≥ 20 px tall",
+      "screen_mark": "≥ 16 px square",
+      "print_full_lockup": "≥ 9 mm tall",
+      "print_mark": "≥ 8 mm square"
+    },
+    "misuse_labels_quoted": ["no distortion", "no substitutions", "no gradients"],
+    "note": "The published favicon.svg draws the split with a hard-stop linear gradient. The brand book says 'no gradients' about the logo."
+  },
+  "photo_treatment": {
+    "modes_quoted": [
+      "Object & material for the design side",
+      "Editorial portrait for the marketing side"
+    ],
+    "rules_quoted": [
+      "natural light, deep shadows, no overlays",
+      "single subject, off-center, room to crop for stories",
+      "Color comes from the subject, never the filter.",
+      "A single soft source from window-left.",
+      "Mixed lighting reads as stock.",
+      "Fill the frame with one subject, or give it five times the room.",
+      "No text overlays.",
+      "stock photography that isn't yours · auto-generated AI imagery · gradients on brand surfaces"
+    ],
+    "aspect_ratios_shown": ["4:3 object and material", "3:4 portrait", "4:5 feed (1080 x 1350)", "1:1 (1080 x 1080)", "9:16 story and reel (1080 x 1920)", "1200 x 627 LinkedIn card"],
+    "brand_image_files_on_site": "assets/images/BRAND/01-cover.jpg to 07-fitall.jpg (brand book page images, JPEG). Not copied: they are page screenshots, not photography to reuse."
+  },
+  "components_quoted": {
+    "cta": "One per page, max. The big confident gesture.",
+    "cta_copy_approved": ["START A PROJECT", "BOOK A CALL", "DOWNLOAD FREE", "SEE THE WORK"],
+    "cta_format": "2\u20133 words, action verb, ALL CAPS in mono."
+  },
+  "social_formats_quoted": {
+    "instagram_feed": "4 : 5 (1080 × 1350)",
+    "instagram_square": "1 : 1 (1080 × 1080)",
+    "instagram_story": "9 : 16 (1080 × 1920)",
+    "linkedin_post_card": "1200 × 627",
+    "hashtag_rule": "Cap at 8 per post.",
+    "handle_shown": "@saikanagat"
+  }
+}

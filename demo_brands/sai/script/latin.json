@@ -1,0 +1,8 @@
+{
+  "script": "latin",
+  "languages": ["en", "it"],
+  "fonts": {
+    "display": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "weight": 700},
+    "body": {"family": "Bricolage Grotesque", "local": ["Bricolage Grotesque"], "weight": 400}
+  }
+}
