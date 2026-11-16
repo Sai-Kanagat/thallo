@@ -1,12 +1,13 @@
-"""Generate Thallo's two local keys straight into .env. Prints names, never values.
+"""Generate Thallo's local keys straight into .env. Prints names, never values.
 
     .venv/bin/python scripts/gen_keys.py
 
 THALLO_VAULT_KEY         base64 of 32 random bytes; encrypts stored tokens (WP-02)
 THALLO_GATE_SIGNING_KEY  hex of 32 random bytes; signs approvals (WP-04)
+THALLO_PROXY_STAMP_KEY   hex of 32 random bytes; the web server signs the client address (WP-09)
 
 A key that already exists is left alone, because replacing it would make stored secrets
-unreadable or invalidate every approval. Back both up in your password manager.
+unreadable or invalidate every approval. Back them up in your password manager.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import envfile  # noqa: E402
 GENERATORS = {
     "THALLO_VAULT_KEY": lambda: base64.b64encode(secrets.token_bytes(32)).decode(),
     "THALLO_GATE_SIGNING_KEY": lambda: secrets.token_bytes(32).hex(),
+    "THALLO_PROXY_STAMP_KEY": lambda: secrets.token_bytes(32).hex(),
 }
 
 

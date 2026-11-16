@@ -1,0 +1,13 @@
+{
+  "name": "Thallo",
+  "short_name": "Thallo",
+  "description": "Grown, not generated.",
+  "start_url": "/review",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3efe6",
+  "theme_color": "#2f5d3e",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
