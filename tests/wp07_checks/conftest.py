@@ -231,7 +231,8 @@ def make_piece(clock, price, brief):
             except Exception:  # noqa: BLE001 - a piece that does not compile keeps its source text
                 rendered = text
         variant = Variant(id=_id(50), created_at=clock.now(), tenant_id=T, bundle_id=_id(51),
-                          channel=Channel.INSTAGRAM, language=Language.EN, state=VariantState.CHECKING, text=text,
+                          channel=Channel.LINKEDIN_COMPANY, language=Language.EN, state=VariantState.CHECKING,
+                          text=text,
                           rendered_text=rendered, task_type="post", model_id=WRITER)
         items = tuple(media_item(clock, data, prov, position=i, mime=mime) for i, (data, prov) in enumerate(media))
         content = VariantContent(variant=variant, media=items, claims=(price,) if "C-0001" in text else ())
@@ -254,6 +255,7 @@ def make_ctx(clock, vault, tenant, price, vendors):
     def _make(*, registry=None, **kw) -> Context:
         reg = registry or make_registry(clock, vault, vendors)
         kw.setdefault("settings", Settings())
+        kw.setdefault("existing", ())
         return Context(tenant=tenant, claims={"C-0001": price}, clock=clock, resolver=NO_LINKS, non_links=(),
                        registry=reg, **kw)
     return _make

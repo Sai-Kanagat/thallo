@@ -36,6 +36,7 @@ photo measurements for anything but PNG (no image library is a dependency).
 """
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -55,6 +56,7 @@ from thallo.gate.canonical import (
     MediaItem,
     VariantContent,
     canonical_text,
+    claim_slots,
     find_unresolved_links,
     outgoing_text,
 )
@@ -117,8 +119,10 @@ class Context:
     resolver: LinkResolver  # repo.resolve_link
     non_links: Collection[str]  # repo.non_link_allowlist
     registry: ConnectionRegistry
+    # Every row already written for this variant, any hash (`repo.list_all(CheckResult, variant_id=)`).
+    # Required: attempts and ids must rise above them, or a new row could sit unseen below the top.
+    existing: Sequence[CheckResult]
     recent_texts: Sequence[str] = ()  # the brand's last pieces, oldest first
-    existing: Sequence[CheckResult] = ()  # this variant's rows already written (any hash)
     vision: m.VisionGrader | None = None
     settings: Settings = Settings()
     brand_id: str | None = None
@@ -183,9 +187,13 @@ def _truth(piece: FinishedPiece, ctx: Context, *, variant_id: str, sha: str) -> 
                 Finding(FILL, CheckVerdict.PASS, "not filled: the library is not usable")]
     rows: list[CheckResult | Finding] = list(to_check_results(built.compiled, variant_id=variant_id,
                                                               content_sha256=sha, clock=ctx.clock))
-    if v.rendered_text is None or canonical_text(v.rendered_text) != canonical_text(built.filled.text):
-        rows.append(Finding(FILL, CheckVerdict.FAIL, "the rendered text is not what the claims fill to: it was "
-                                                     "changed after filling, or never filled"))
+    if v.rendered_text is None and claim_slots(v.text):
+        rows.append(Finding(FILL, CheckVerdict.FAIL, "the text has claim slots but was never filled"))
+    elif v.rendered_text is not None and canonical_text(v.rendered_text) != canonical_text(built.filled.text):
+        # Links or a call to action may be added after filling; the outgoing text is still screened
+        # by every other check here, so this asks a person to look rather than blocking.
+        rows.append(Finding(FILL, CheckVerdict.FLAG, "the outgoing text differs from what the claims fill to: "
+                                                     "read the changes"))
     else:
         rows.append(Finding(FILL, CheckVerdict.PASS))
     rows.append(Finding(LIBRARY, CheckVerdict.PASS))
@@ -241,7 +249,7 @@ def code_checks(piece: FinishedPiece, ctx: Context, *, sha: str) -> list[CheckRe
         Finding(LINKS, CheckVerdict.PASS)]
     out += text.slop(outgoing, v.language, ctx.settings.extra_slop)
     out += text.sameness(outgoing, ctx.recent_texts)
-    out += text.length(outgoing, v.channel, max_chars=piece.max_chars)
+    out += text.length(outgoing, v.channel, media_count=len(piece.content.media), max_chars=piece.max_chars)
     out += text.screen(outgoing, allowed_contacts=ctx.settings.allowed_contacts)
     for item in sorted(piece.content.media, key=lambda i: (i.position, i.bytes_sha256)):
         out += _media(piece, ctx, item, sha)
@@ -351,6 +359,10 @@ def check_once(piece: FinishedPiece, ctx: Context, ledger: m.Ledger, *, ids: _Id
                attempts: dict[tuple[str, str], int], dropped: list[str]) -> Run:
     """One pass of the stack, in order. Every row is bound to the hash approval will compute."""
     sha = check_hash(piece.content, resolver=ctx.resolver, non_links=ctx.non_links)
+    # Bytes are read by the caller: keep only those whose hash is the one approval binds. A mismatch
+    # counts as "not read" (the photo check FAILs, the vision grader FLAGs), never as checked.
+    verified = {k: d for k, d in piece.media_bytes.items() if hashlib.sha256(d).hexdigest() == k}
+    piece = replace(piece, media_bytes=verified)
     v = piece.content.variant
     items: list[tuple[CheckLayer, CheckResult | Finding]] = [(CheckLayer.CODE, x)
                                                              for x in code_checks(piece, ctx, sha=sha)]
@@ -392,13 +404,20 @@ def run_stack(piece: FinishedPiece, ctx: Context, *, repair: Repairer | None = N
             note = f"sent to a person {why}. Failing check(s): {', '.join(names)}"
             status = StackStatus.NEEDS_HUMAN
             break
-        fixed = repair.repair(piece, run.failing)
-        drain = getattr(repair, "drain_costs", None)
-        if callable(drain):
-            ledger.absorb(list(drain()))
+        try:
+            fixed = repair.repair(piece, run.failing)
+        except Exception as exc:  # noqa: BLE001 - a broken repair sends the piece to a person, costs kept
+            fixed, note_err = None, f"the repair raised {type(exc).__name__}"
+        else:
+            note_err = None
+        finally:
+            drain = getattr(repair, "drain_costs", None)
+            if callable(drain):
+                ledger.absorb(list(drain()))
         loops += 1
         if fixed is None:
-            note = f"sent to a person: the repair gave up on loop {loops}. Failing check(s): {', '.join(names)}"
+            why = note_err or "the repair gave up"
+            note = f"sent to a person: {why} on loop {loops}. Failing check(s): {', '.join(names)}"
             status = StackStatus.NEEDS_HUMAN
             break
         if fixed.content.variant.id != v.id or fixed.content.variant.tenant_id != v.tenant_id:

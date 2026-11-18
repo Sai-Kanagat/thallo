@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from thallo.contracts.enums import Channel, CheckVerdict, Language
 from thallo.copy.slop import find_slop
+from thallo.publish.preflight import channel_problems
 
 SLOP = "copy.slop"
 SAMENESS = "copy.sameness"
@@ -138,33 +139,13 @@ def sameness(text: str, recent: Sequence[str], *, limit: float = SAMENESS_LIMIT,
 
 # ---------------------------------------------------------------- length
 
-# Characters the platform accepts for the text of one post or message. From the platforms'
-# published limits as known in Nov 2026; verify before a pilot. None: no hard limit we check.
-CHANNEL_LIMITS: Mapping[Channel, int | None] = {
-    Channel.INSTAGRAM: 2200,
-    Channel.FACEBOOK: 63206,
-    Channel.LINKEDIN_PERSONAL: 3000,
-    Channel.LINKEDIN_COMPANY: 3000,
-    Channel.GOOGLE_BUSINESS_PROFILE: 1500,
-    Channel.WHATSAPP: 4096,
-    Channel.YOUTUBE: 5000,
-    Channel.EMAIL: None,
-    Channel.NEWSLETTER: None,
-    Channel.WEBSITE: None,
-    Channel.SEARCH_ADS: 90,
-    Channel.SOCIAL_ADS: 2200,
-}
-
-
-def length(text: str, channel: Channel, *, max_chars: int | None = None) -> list[Finding]:
-    """FAIL over the channel's limit (or the brief's own `max_chars`, whichever is lower)."""
-    limits = [x for x in (CHANNEL_LIMITS.get(channel), max_chars) if x]
-    if not limits:
-        return [_pass(LENGTH)]
-    limit, size = min(limits), len(text)
-    if size > limit:
-        return [Finding(LENGTH, CheckVerdict.FAIL, f"{size} characters, over the {limit} limit for {channel.value}")]
-    return [_pass(LENGTH)]
+def length(text: str, channel: Channel, *, media_count: int = 0, max_chars: int | None = None) -> list[Finding]:
+    """FAIL on anything the publisher's own preflight would refuse for this channel (its limits, one
+    table: `publish.preflight.channel_problems`), and over the brief's own `max_chars`."""
+    out = [Finding(LENGTH, CheckVerdict.FAIL, p) for p in channel_problems(channel.value, text, media_count)]
+    if max_chars and len(text) > max_chars:
+        out.append(Finding(LENGTH, CheckVerdict.FAIL, f"{len(text)} characters, over the brief's {max_chars}"))
+    return out or [_pass(LENGTH)]
 
 
 # ---------------------------------------------------------------- PII and injection screen
@@ -179,7 +160,7 @@ _INJECTION = [re.compile(p, re.IGNORECASE) for p in (
     r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:the\s+)?(?:previous|prior|above|earlier|your)\s+"
     r"(?:instructions|prompts?|rules)",
     r"\bsystem\s+prompt\b",
-    r"\byou\s+are\s+now\s+(?:a|an|in)\b",
+    r"\byou\s+are\s+now\s+(?:an?\s+)?(?:ai|assistant|chatbot|language\s+model|dan|unrestricted|unfiltered)\b",
     r"\bdeveloper\s+mode\b",
     r"\bjailbreak",
     r"\bas\s+an\s+ai\s+(?:language\s+)?model\b",
@@ -248,6 +229,6 @@ def screen(text: str, *, allowed_contacts: Iterable[str] = ()) -> list[Finding]:
 
 
 __all__ = [
-    "CHANNEL_LIMITS", "EXTRA_SLOP", "GENERIC_CORPUS", "INJECTION", "LENGTH", "PII", "RECENT_PIECES", "SAMENESS",
+    "EXTRA_SLOP", "GENERIC_CORPUS", "INJECTION", "LENGTH", "PII", "RECENT_PIECES", "SAMENESS",
     "SAMENESS_LIMIT", "SLOP", "Finding", "length", "sameness", "screen", "similarity", "slop",
 ]

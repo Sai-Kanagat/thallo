@@ -9,13 +9,14 @@ import secrets
 import psycopg  # noqa: F401 - the db extra; the fixture skips without DATABASE_URL first
 
 from tests.wp06_text.test_copy_pg import gate_review, pg_urls  # noqa: F401 - the shared per-run database
-from thallo.checks import Context, FinishedPiece, StackStatus, run_stack, write_stack
+from thallo.checks import Context, FinishedPiece, StackStatus, run_stack, weekly_agreement, write_stack
 from thallo.contracts.actors import HumanActor, SystemActor
 from thallo.contracts.enums import (
     Channel,
     CheckLayer,
     CheckVerdict,
     ClaimKind,
+    EditKind,
     FunnelStage,
     Language,
     MediaKind,
@@ -24,12 +25,14 @@ from thallo.contracts.enums import (
 )
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import (
+    Approval,
     AppUser,
     Asset,
     Brief,
     Bundle,
     CheckResult,
     CostEntry,
+    Edit,
     Idea,
     Identity,
     Media,
@@ -41,7 +44,8 @@ from thallo.contracts.models import (
 )
 from thallo.contracts.states import VariantState
 from thallo.gate import load_bundle
-from thallo.gate.checks import PHOTO_ATTESTATION
+from thallo.gate.canonical import build_snapshot
+from thallo.gate.checks import PHOTO_ATTESTATION, content_types, review_checks
 from thallo.store.adapters import LocalBlobStore
 from thallo.store.adapters.claims import PgClaimRepository
 from thallo.store.adapters.gate import PgGateRepository
@@ -89,7 +93,8 @@ def test_stack_rows_cover_the_finished_piece_in_postgres(pg_urls, clock, vault, 
         bundle = repo.insert(Bundle(id=new_id(clock), created_at=now, tenant_id=t, asset_id=asset.id,
                                     rule_version=1))
         variant = repo.insert(Variant(id=new_id(clock), created_at=now, tenant_id=t, bundle_id=bundle.id,
-                                      channel=Channel.INSTAGRAM, language=Language.EN, state=VariantState.CHECKING,
+                                      channel=Channel.LINKEDIN_COMPANY, language=Language.EN,
+                                      state=VariantState.CHECKING,
                                       text=CLEAN, rendered_text=built.filled.text, task_type="post",
                                       model_id="claude-sonnet-5-5"))
         repo.insert(VariantClaim(id=new_id(clock), created_at=now, tenant_id=t, variant_id=variant.id,
@@ -115,7 +120,7 @@ def test_stack_rows_cover_the_finished_piece_in_postgres(pg_urls, clock, vault, 
                               lint={render_sha: PASSING_LINT}, sources=(SOURCE,), brief=brief)
         ctx = Context(tenant=tenant, claims=lib, clock=clock, resolver=lambda url: gate.resolve_link(t, url),
                       non_links=gate.non_link_allowlist(t), registry=reg,
-                      existing=repo.list(CheckResult, variant_id=variant.id))
+                      existing=repo.list_all(CheckResult, variant_id=variant.id))
         out = run_stack(piece, ctx)
     assert out.status is StackStatus.READY_FOR_REVIEW
     with db.tenant(t) as repo:
@@ -133,3 +138,27 @@ def test_stack_rows_cover_the_finished_piece_in_postgres(pg_urls, clock, vault, 
         assert len(repo.list(CostEntry)) == len(vendors.grader.calls) + len(vendors.reader.calls) == 3
         assert {r.layer for r in stored} == {CheckLayer.CODE, CheckLayer.GRADER, CheckLayer.SECOND_READER}
         assert all(r.verdict is not CheckVerdict.FAIL for r in stored if r.layer is not CheckLayer.CODE)
+        ordered = sorted(stored, key=lambda r: r.id)
+        rank = [CheckLayer.CODE, CheckLayer.GRADER, CheckLayer.SECOND_READER]
+        assert [rank.index(r.layer) for r in ordered] == sorted(rank.index(r.layer) for r in ordered)
+
+        # Only truth rows, or only design and photo rows, read back from storage: refused.
+        content = load_bundle(gate, t, gate.get_bundle(t, bundle.id))
+        snap = build_snapshot(content, lambda url: gate.resolve_link(t, url), frozenset(gate.non_link_allowlist(t)))
+        hashes = dict(snap.hash.variants)
+        types = {vid: content_types(snap.payload(vid)) for vid in hashes}
+        truth_only = [r for r in stored if r.check_name.startswith("truth.compile")]
+        media_only = [r for r in stored if r.media_sha256 is not None]
+        assert review_checks(truth_only, tenant_id=t, hashes=hashes, types=types).unchecked
+        assert review_checks(media_only, tenant_id=t, hashes=hashes, types=types).unchecked
+
+        # The weekly agreement reads stored edit and approval rows.
+        repo.insert(Edit(id=new_id(clock), created_at=clock.now(), tenant_id=t, variant_id=variant.id,
+                         editor_id=founder.id, before_text="a", after_text="b", kind=EditKind.TONE_SHIFT))
+        clock.advance(minutes=1)
+        report = weekly_agreement(grader_rows=repo.list_all(CheckResult, variant_id=variant.id),
+                                  edits=repo.list_all(Edit), approvals=repo.list_all(Approval),
+                                  variant_bundles={variant.id: bundle.id}, clock=clock)
+        # No vision grader was connected: its ".not_run" rows are no judgment and not an item.
+        assert {s.grader: s.items for s in report.scores} == {"grader.specific": 1, "grader.voice": 1}
+        assert report.dropped == frozenset()  # one item is far below the 30 needed

@@ -139,6 +139,12 @@ def call(registry: ConnectionRegistry, ledger: Ledger, *, ref: str, role: TextRo
             ledger.record(ref=ref, capability=Capability.TEXT, provider=exc.provider or "unknown", model=exc.model,
                           units=exc.input_tokens + exc.output_tokens, cost=exc.cost_eur)
         return Answer(None, f"the provider failed: {type(exc).__name__}")
+    except Exception as exc:  # noqa: BLE001 - never abort the stack: rows and costs so far are kept
+        cost = getattr(exc, "cost_eur", None)
+        if isinstance(cost, Decimal):
+            ledger.record(ref=ref, capability=Capability.TEXT, provider=getattr(exc, "provider", None) or "unknown",
+                          model=getattr(exc, "model", None), units=0, cost=cost)
+        return Answer(None, f"the call failed: {type(exc).__name__}")
     ledger.record_served(ref, served)
     if served.result.status == "pending_person" or not isinstance(served.result.output, c.TextResult):
         return Answer(None, "a person must do this read (manual connection)")
