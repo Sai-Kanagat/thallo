@@ -5,7 +5,8 @@ Once a week, for each grader, every variant the reviewer judged in the window is
   rejection reason, or counts as a defect);
 - the reviewer found it fine when its bundle has an `approval` in the window and no such edit;
 - the grader raised a concern when its rows on that variant, at their highest attempt, hold a FLAG
-  that is a judgment (a "did not run" or "unreadable" FLAG is not one, and such items are skipped).
+  that is a judgment. A grader that could not judge writes under "<name>.not_run" (a name only code
+  sets, never model text), and those rows are not items.
 
 Agreement is the share of items where the two match. A grader under `MIN_AGREEMENT` over at least
 `MIN_ITEMS` items loses its vote: the stack stops writing its flags (`Settings.dropped_graders`)
@@ -19,6 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from thallo.checks.models import NOT_RUN
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import ApprovalSubject, CheckLayer, CheckVerdict, EditKind
 from thallo.contracts.models import Approval, CheckResult, Edit
@@ -26,9 +28,6 @@ from thallo.contracts.models import Approval, CheckResult, Edit
 MIN_AGREEMENT = 0.8
 MIN_ITEMS = 30
 WINDOW = timedelta(days=7)
-_NOT_A_JUDGMENT = ("grader did not run", "grader reply was unreadable", "no vision grader", "vision grader not run",
-                   "vision grader failed", "the image bytes were not read")
-
 
 @dataclass(frozen=True)
 class GraderScore:
@@ -89,18 +88,11 @@ def grader_verdicts(rows: Sequence[CheckResult]) -> dict[tuple[str, str], bool]:
             key = (r.check_name, r.variant_id)
             top[key] = max(top.get(key, 0), r.attempt)
     out: dict[tuple[str, str], bool] = {}
-    skipped: set[tuple[str, str]] = set()
     for r in rows:
         key = (r.check_name, r.variant_id)
-        if r.layer is not CheckLayer.GRADER or r.attempt != top[key]:
-            continue
-        if r.verdict is CheckVerdict.FLAG and (r.reason or "").startswith(_NOT_A_JUDGMENT):
-            skipped.add(key)
-            continue
+        if r.layer is not CheckLayer.GRADER or r.attempt != top[key] or r.check_name.endswith(NOT_RUN):
+            continue  # a ".not_run" row (name set by code, never by a model) is no judgment: not an item
         out[key] = out.get(key, False) or r.verdict is CheckVerdict.FLAG
-    for key in skipped:
-        if not out.get(key):
-            out.pop(key, None)  # no judgment made: not an item
     return out
 
 

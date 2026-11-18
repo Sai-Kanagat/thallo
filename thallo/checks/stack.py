@@ -279,7 +279,7 @@ def judgment(piece: FinishedPiece, ctx: Context, ledger: m.Ledger, *, sha: str,
             continue
         data = piece.media_bytes.get(item.bytes_sha256)
         if data is None:
-            graders.append(Finding(m.VISION, CheckVerdict.FLAG, "the image bytes were not read: look at it yourself",
+            graders.append(Finding(m.VISION_OFF, CheckVerdict.FLAG, "the image bytes were not read: look at it",
                                    item.bytes_sha256))
             continue
         graders += m.run_vision(ctx.vision, ledger=ledger, ref=f"checks:{v.id}:{sha[:16]}:vision:{item.bytes_sha256}",

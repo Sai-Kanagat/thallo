@@ -80,32 +80,66 @@ def _paeth(a: int, b: int, c: int) -> int:
     return b if pb <= pc else c
 
 
+MAX_SIDE = 16384
+MAX_PIXELS = 50_000_000
+MAX_IDAT_BYTES = 64 * 1024 * 1024
+
+
 def decode_png(data: bytes) -> Raster:
-    """8-bit, non-interlaced grey, grey-alpha, RGB or RGBA PNG to grey levels (Rec. 709 luma)."""
+    """8-bit, non-interlaced grey, grey-alpha, RGB or RGBA PNG to grey levels (Rec. 709 luma).
+    Any malformed input raises `PhotoUndecodable`; sizes and decompressed output are capped so a
+    small hostile file cannot exhaust memory."""
+    try:
+        return _decode_png(data)
+    except PhotoUndecodable:
+        raise
+    except (struct.error, IndexError, ValueError, zlib.error, OverflowError, MemoryError) as exc:
+        raise PhotoUndecodable(f"PNG is malformed ({type(exc).__name__})") from None
+
+
+def _chunks(data: bytes) -> tuple[tuple[int, ...], bytes]:
+    """(IHDR fields, IDAT bytes), with the size and length caps applied."""
     if not data.startswith(_PNG_SIG):
         raise PhotoUndecodable("not a PNG")
     pos, idat, header = 8, bytearray(), None
     while pos + 8 <= len(data):
         (size,) = struct.unpack(">I", data[pos:pos + 4])
         kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + size]
+        if len(body) != size:
+            raise PhotoUndecodable("PNG chunk is truncated")
         pos += 12 + size
         if kind == b"IHDR":
             header = struct.unpack(">IIBBBBB", body)
+            w, h = header[0], header[1]
+            if not (0 < w <= MAX_SIDE and 0 < h <= MAX_SIDE) or w * h > MAX_PIXELS:
+                raise PhotoUndecodable(f"PNG size {w}x{h} is outside the limits")
         elif kind == b"IDAT":
+            if header is None:
+                raise PhotoUndecodable("PNG data before its header")
             idat += body
+            if len(idat) > MAX_IDAT_BYTES:
+                raise PhotoUndecodable("PNG data is too large")
         elif kind == b"IEND":
             break
     if header is None:
         raise PhotoUndecodable("PNG without a header")
+    return header, bytes(idat)
+
+
+def _decode_png(data: bytes) -> Raster:
+    header, idat = _chunks(data)
     width, height, depth, colour, _, _, interlace = header
     if depth != 8 or colour not in _CHANNELS or interlace:
         raise PhotoUndecodable(f"PNG colour type {colour}, depth {depth}, interlace {interlace} is not read here")
     channels = _CHANNELS[colour]
     stride = width * channels
+    expected = height * (stride + 1)
     try:
-        raw = zlib.decompress(bytes(idat))
+        raw = zlib.decompressobj().decompress(idat, expected + 1)
     except zlib.error as exc:
         raise PhotoUndecodable(f"PNG data is corrupt: {exc}") from None
+    if len(raw) > expected:
+        raise PhotoUndecodable("PNG data is longer than its size")
     if len(raw) < height * (stride + 1):
         raise PhotoUndecodable("PNG data is shorter than its size")
     prev = bytearray(stride)

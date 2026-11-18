@@ -224,6 +224,7 @@ def screen(text: str, *, allowed_contacts: Iterable[str] = ()) -> list[Finding]:
     instruction-shaped text aimed at a model FAILs, since it means a source steered the writer.
     Reasons mask the values."""
     folded = _fold(text)
+    allowed_emails = {a.strip().casefold() for a in allowed_contacts}
     allowed = {re.sub(r"[\s().-]", "", a).casefold() for a in allowed_contacts}
     pii: list[Finding] = []
     for m in _CARD.finditer(folded):
@@ -235,7 +236,7 @@ def screen(text: str, *, allowed_contacts: Iterable[str] = ()) -> list[Finding]:
     pii += [Finding(PII, CheckVerdict.FAIL, f"a personal tax code: {_mask(m.group())}")
             for m in _CODICE_FISCALE.finditer(folded)]
     pii += [Finding(PII, CheckVerdict.FLAG, f"an email address the brand has not listed: {_mask(m.group())}")
-            for m in _EMAIL.finditer(folded) if m.group().casefold() not in allowed]
+            for m in _EMAIL.finditer(folded) if m.group().casefold() not in allowed_emails]
     for m in _PHONE.finditer(folded):
         digits = re.sub(r"[\s().-]", "", m.group())
         if sum(ch.isdigit() for ch in digits) >= 8 and digits.casefold() not in allowed and not any(
