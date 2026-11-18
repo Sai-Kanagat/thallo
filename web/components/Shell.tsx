@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { Mark } from "@/components/Mark";
 import { getSession } from "@/lib/api";
 import { signOut } from "@/lib/signout";
 import type { SessionView } from "@/lib/types";
@@ -53,22 +54,33 @@ export function Shell({ children }: { children: ReactNode }) {
   const signedIn = session?.authenticated && session.tenant;
   return (
     <div className="shell">
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
       <header className="topbar">
         <Link href="/review" className="brand" aria-label="Thallo, review deck">
-          <svg viewBox="0 0 24 24" aria-hidden="true" className="brand-mark">
-            <path d="M12 21V11M12 14c-3.5-.5-6-3-6.5-6.5 3.5.5 6 3 6.5 6.5zM12 11c3-.5 5-2.5 5.5-5.5-3 .5-5 2.5-5.5 5.5z" />
-          </svg>
+          <Mark />
           <span>Thallo</span>
         </Link>
         {signedIn ? (
-          <div className="who">
-            <Link href="/login?switch=1" className="tenant" title="Switch business">
-              {session.tenant?.tenant_name}
-            </Link>
-            <button type="button" className="link-button" onClick={onSignOut}>
-              Sign out
-            </button>
-          </div>
+          <>
+            <nav className="tabs" aria-label="Screens">
+              {NAV.map((n) => (
+                <Link key={n.href} href={n.href} className={path.startsWith(n.href) ? "tab active" : "tab"}
+                      aria-current={path.startsWith(n.href) ? "page" : undefined}>
+                  {n.label}
+                </Link>
+              ))}
+            </nav>
+            <div className="who">
+              <Link href="/login?switch=1" className="tenant" title="Switch business">
+                <span>{session.tenant?.tenant_name}</span>
+              </Link>
+              <button type="button" className="button quiet small" onClick={onSignOut}>
+                Sign out
+              </button>
+            </div>
+          </>
         ) : null}
       </header>
       {!online ? (
@@ -76,17 +88,9 @@ export function Shell({ children }: { children: ReactNode }) {
           You are offline. Nothing loads or sends until the connection is back.
         </p>
       ) : null}
-      <main className="main">{children}</main>
-      {signedIn ? (
-        <nav className="tabs" aria-label="Screens">
-          {NAV.map((n) => (
-            <Link key={n.href} href={n.href} className={path.startsWith(n.href) ? "tab active" : "tab"}
-                  aria-current={path.startsWith(n.href) ? "page" : undefined}>
-              {n.label}
-            </Link>
-          ))}
-        </nav>
-      ) : null}
+      <main id="main" className="main">
+        {children}
+      </main>
     </div>
   );
 }
