@@ -19,10 +19,10 @@ from typing import Any
 
 from thallo.contracts.models import Bundle, Claim, Consent, Media, TrackedLink, Variant
 
-CANONICAL_VERSION = 1
+CANONICAL_VERSION = 2  # 2: media provenance is hashed (WP-07 security review)
 
-ROOT_DOMAIN = b"thallo/bundle-root/v1\n"
-VARIANT_DOMAIN = b"thallo/variant/v1\n"
+ROOT_DOMAIN = b"thallo/bundle-root/v2\n"
+VARIANT_DOMAIN = b"thallo/variant/v2\n"
 
 LinkResolver = Callable[[str], "str | None"]
 
@@ -367,6 +367,9 @@ class PayloadMedia:
     alt_text: str | None
     disclosure_label: str | None
     consent_id: str | None
+    # Hashed (canonical form v2), not sent: where the file came from (media.provenance), so the
+    # gate picks the checks this item needs (gate/checks.py) and a relabel voids the approval.
+    provenance: str | None = None
 
 
 @dataclass(frozen=True)
@@ -436,6 +439,7 @@ def _media_leaf(m: MediaItem) -> dict[str, Any]:
         "alt_text": canonical_text(m.media.alt_text) if m.media.alt_text is not None else None,
         "disclosure_label": m.media.disclosure_label,
         "consent_id": m.media.consent_id,
+        "provenance": m.media.provenance.value,
     }
 
 

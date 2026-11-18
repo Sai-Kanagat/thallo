@@ -75,7 +75,7 @@ COST_CAP_USD: dict[str, Decimal] = {"short": Decimal("0.50"), "long": Decimal("3
 MAX_OUTPUT_TOKENS: dict[str, int] = {"short": 1500, "long": 4000}
 FILL_CHECK = "truth.fill"
 LIBRARY_CHECK = "truth.library"  # truth.build raised LibraryError: the claims library itself is wrong
-GRADER_CHECK = "copy.grader"  # the grader raised
+GRADER_CHECK = "copy.grader.not_run"  # the grader raised: a GRADER-layer FLAG, never a FAIL
 
 
 def cost_cap_eur(length: PieceLength) -> Decimal:
@@ -83,7 +83,11 @@ def cost_cap_eur(length: PieceLength) -> Decimal:
 
 
 class Grader(Protocol):
-    """Optional (WP-07 owns the graders). Higher is better; the note goes into the reason."""
+    """Optional (WP-07 owns the graders). Higher is better; the note goes into the reason.
+
+    A grader that calls a vendor also offers `drain_costs() -> Sequence[CostEntry]`: the cost rows
+    of the calls it made since the last drain, billed ones included when it then raised. They are
+    drained after every `grade`, whether it answered or raised, so a billed call is never lost."""
 
     def grade(self, text: str, brief: Brief) -> tuple[float, str]: ...
 
@@ -127,6 +131,7 @@ class CandidateRun:
     slop: list[SlopHit] = field(default_factory=list)
     status: Literal["open", "built", "failed", "stopped"] = "open"
     grade: tuple[float, str] | None = None
+    grader_error: str | None = None  # the grader raised; becomes a FLAG, never a FAIL
 
     @property
     def last(self) -> Attempt | None:
@@ -307,7 +312,7 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                 if built is not None:
                     cand.slop = find_slop(text, brief.language, extra_slop)
                     if grader is not None:
-                        _grade(cand, attempt, grader, built, brief)
+                        _grade(cand, attempt, grader, built, brief, run)
                     cand.built, cand.status = built, "built"
                     break
                 if number > MAX_REPAIR_LOOPS:
@@ -328,15 +333,26 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                    resolver=resolver, non_links=frozenset(non_links))
 
 
-def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief) -> None:
-    """A grader that raises fails the candidate with the check named; it never counts as a pass."""
+def _drain_grader_costs(grader: Grader, run: _Run) -> None:
+    drain = getattr(grader, "drain_costs", None)
+    if not callable(drain):
+        return
+    for entry in drain():
+        if not isinstance(entry, CostEntry) or entry.tenant_id != run.tenant.id:
+            raise ValueError("a grader returned a cost row that is not this tenant's")
+        run.costs.append(entry)
+        run.spent += entry.cost_eur
+
+
+def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief, run: _Run) -> None:
+    """A grader that raises leaves the candidate ungraded with a FLAG (`copy.grader.not_run`): graders
+    never fail a build and never count as a pass. Its billed calls reach the ledger either way."""
     try:
         cand.grade = grader.grade(built.filled.text, brief)
-    except Exception as exc:  # noqa: BLE001 - any grader failure is a FAIL
-        attempt.error_check = GRADER_CHECK
-        attempt.fill_problems = (f"the grader raised {type(exc).__name__}",)
-        cand.status = "failed"
-        raise _Stop(CopyStatus.NEEDS_HUMAN, f"{GRADER_CHECK} failed: the grader raised {type(exc).__name__}") from None
+    except Exception as exc:  # noqa: BLE001 - any grader failure is a FLAG
+        cand.grader_error = f"the grader raised {type(exc).__name__}"
+    finally:
+        _drain_grader_costs(grader, run)
 
 
 # ---------------------------------------------------------------------------- selection
@@ -412,6 +428,12 @@ def _check_rows(cand: CandidateRun, variant: Variant, sha: str, clock: Clock) ->
     # The gate orders rows of one key by id as well as attempt (a PASS clears a FAIL only when it
     # is newer, gate/checks.py). These rows are made in one pass, often in one millisecond, where
     # uuid7 order is random, so give them ids that rise with the attempt.
+    if cand.grader_error is not None and cand.attempts:
+        last = cand.attempts[-1]
+        rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id, variant_id=variant_id,
+                                layer=CheckLayer.GRADER, check_name=GRADER_CHECK, verdict=CheckVerdict.FLAG,
+                                reason=f"{cand.grader_error}: read this piece yourself", attempt=last.number,
+                                model_id=last.model, content_sha256=sha))
     ids = sorted(r.id for r in rows)
     ordered = sorted(rows, key=lambda r: r.attempt)
     return [r.model_copy(update={"id": i}) for r, i in zip(ordered, ids, strict=True)]

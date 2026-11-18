@@ -302,7 +302,8 @@ def main() -> int:  # noqa: C901, PLR0915
             sha = content_hashes(tx.gate, t, out.bundle.id)[variant.id]  # the final hash, media included
             rows = to_check_results(compiled, variant_id=variant.id, content_sha256=sha, clock=clock,
                                     attempt=attempt, model_id=model)
-            rows += lint_rows(report, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock)
+            rows += lint_rows(report, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock,
+                              media_sha256=image.sha256 if image is not None else None)
             for row in rows:
                 tx.insert(row)
             if not p.blocked_draft:  # a draft nothing compiled stays DRAFTING: it can never be approved

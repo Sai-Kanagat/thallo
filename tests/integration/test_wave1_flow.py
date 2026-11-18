@@ -183,14 +183,15 @@ def seed(b, name: str, *, checks: bool = True) -> Shop:
         uri = b.blobs.write(t, blob_name, IMAGE)
         media = s.insert(Media(id=_id(b), created_at=now, tenant_id=t, kind=MediaKind.IMAGE,
                                sha256=hashlib.sha256(IMAGE).hexdigest(), mime="image/png", size_bytes=len(IMAGE),
-                               storage_uri=uri, provenance=MediaProvenance.CLIENT_PHOTO, alt_text="Bici rossa"))
+                               storage_uri=uri, provenance=MediaProvenance.TEMPLATE_RENDER, alt_text="Bici rossa"))
         s.insert(VariantMedia(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, media_id=media.id))
         s.insert(TrackedLink(id=_id(b), created_at=now, tenant_id=t, variant_id=variant.id, slug=slug,
                              destination=DESTINATION))
         # The code checks run on the finished variant, bound to the hash the gate computes for it.
         sha = content_hashes(s.gate, t, bundle.id)[variant.id]
         rows = to_check_results(built.compiled, variant_id=variant.id, content_sha256=sha, clock=clock)
-        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock)
+        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock,
+                          media_sha256=media.sha256)
         flag_ids: list[str] = []
         if checks:
             for row in rows:

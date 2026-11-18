@@ -1,6 +1,6 @@
-# Canonical form for the bundle root hash (version 1)
+# Canonical form for the bundle root hash (version 2)
 
-Code: `thallo/gate/canonical.py`. BUILD_PLAN section 5, revision 4. The approval binds to the root defined here; any change to these rules changes every root, so once approvals are stored it needs a new `CANONICAL_VERSION`, new domain strings, and a lead decision. `tests/wp04_gate/test_canonical.py::test_golden_root_is_stable` pins one root so an accidental change fails CI. (Version 1 was extended with `consent_id`, `tracked_links` and the claim `version` and `supersedes_id` before any approval was stored. A new claim version is a new row with a new id, so it always changes the root and voids the approval.)
+Code: `thallo/gate/canonical.py`. BUILD_PLAN section 5, revision 4. The approval binds to the root defined here; any change to these rules changes every root, so once approvals are stored it needs a new `CANONICAL_VERSION`, new domain strings, and a lead decision. `tests/wp04_gate/test_canonical.py::test_golden_root_is_stable` pins one root so an accidental change fails CI. (Version 2, 18 Nov 2026, WP-07 security review: each media entry also carries `provenance`, where the file came from, so relabelling an approved file changes the root and voids the approval; the domain strings moved to `v2`, so every root over version 1 differs and any approval stored over it fails closed. Version 1 was extended with `consent_id`, `tracked_links` and the claim `version` and `supersedes_id` before any approval was stored. A new claim version is a new row with a new id, so it always changes the root and voids the approval.)
 
 ## What the root covers
 
@@ -15,7 +15,7 @@ For every variant in the bundle:
 | `links` | every link in the outgoing text, in order of appearance, as `[url, destination]` |
 | `vouched_non_links` | the tenant allowlist keys this variant's text relies on, sorted |
 | `tracked_links` | every tracked link row whose `variant_id` is this variant, as `[slug, destination, whatsapp_code]`, sorted, duplicates removed |
-| `media` | one entry per file in position order: `position`, `sha256` of the bytes, `kind`, `mime` (lowercase), canonical `alt_text`, `disclosure_label`, `consent_id` |
+| `media` | one entry per file in position order: `position`, `sha256` of the bytes, `kind`, `mime` (lowercase), canonical `alt_text`, `disclosure_label`, `consent_id`, `provenance` (since v2) |
 | `claims` | one entry per linked claim, sorted by code then id, duplicates removed: `id`, `code`, `version`, `supersedes_id`, `value` (NFC), `unit`, `as_of` (ISO date), `evidence_sha256`, `wording` (canonical text per language) |
 
 Then the bundle: `tenant_id`, `bundle_id`, `rule_version`, and the sorted list of variant leaf hashes.
@@ -70,8 +70,8 @@ Order carries no meaning for variants (leaf hashes are sorted), claims (sorted b
 ## Encoding
 
 - Each structure is JSON with sorted keys, separators `,` and `:` and no spaces, UTF-8 without `\u` escaping, no NaN or infinity. Floats are refused: every number is an int, every other value a string or `null`.
-- Variant leaf: `sha256("thallo/variant/v1\n" + json(leaf))`, lowercase hex.
-- Root: `sha256("thallo/bundle-root/v1\n" + json({v, tenant_id, bundle_id, rule_version, variants}))`, lowercase hex.
+- Variant leaf: `sha256("thallo/variant/v2\n" + json(leaf))`, lowercase hex.
+- Root: `sha256("thallo/bundle-root/v2\n" + json({v, tenant_id, bundle_id, rule_version, variants}))`, lowercase hex.
 - The domain prefixes keep a leaf hash from ever being taken for a root and the reverse.
 
 Binding the tenant and bundle id means an approval cannot be reused for a copy of the same content in another bundle or tenant, even before the explicit subject and tenant checks in `decision.py`.

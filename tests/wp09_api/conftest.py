@@ -213,11 +213,12 @@ def _seed(kind: str, backend, provision, clock: FakeClock, name: str, media: Ten
         uri = media.write(t, "hero.png", IMAGE)
         m = tx.insert(Media(id=_ident(clock), created_at=now, tenant_id=t, kind=MediaKind.IMAGE,
                             sha256=hashlib.sha256(IMAGE).hexdigest(), mime="image/png", size_bytes=len(IMAGE),
-                            storage_uri=uri, provenance=MediaProvenance.CLIENT_PHOTO, alt_text="Bici rossa"))
+                            storage_uri=uri, provenance=MediaProvenance.TEMPLATE_RENDER, alt_text="Bici rossa"))
         tx.insert(VariantMedia(id=_ident(clock), created_at=now, tenant_id=t, variant_id=variant.id, media_id=m.id))
         sha = content_hashes(tx.gate, t, bundle.id)[variant.id]
         rows = to_check_results(built.compiled, variant_id=variant.id, content_sha256=sha, clock=clock)
-        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock)
+        rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=variant.id, content_sha256=sha, clock=clock,
+                          media_sha256=m.sha256)
         for row in rows:
             tx.insert(row)
         flag_ids = [r.id for r in rows if r.verdict is CheckVerdict.FLAG]

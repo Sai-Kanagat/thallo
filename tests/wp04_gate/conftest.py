@@ -234,8 +234,14 @@ class World:
                                   claims=list(self.claims.values()), clock=self.clock)
             rows += to_check_results(result, variant_id=vid, content_sha256=sha, clock=self.clock)
             if lint and self.variant_media.get(vid):
-                rows += lint_rows(PASSING_LINT, tenant_id=self.tenant.id, variant_id=vid, content_sha256=sha,
-                                  clock=self.clock)
+                failing, self.fail_on = self.fail_on, None
+                try:
+                    items = self.content().variant(vid).media
+                finally:
+                    self.fail_on = failing
+                for item in items:  # one lint per attached file, keyed on its bytes (gate MEDIA_COVERAGE)
+                    rows += lint_rows(PASSING_LINT, tenant_id=self.tenant.id, variant_id=vid, content_sha256=sha,
+                                      clock=self.clock, media_sha256=item.bytes_sha256)
         self.checks += rows
         return rows
 
@@ -298,7 +304,7 @@ def make_world(clock: FakeClock | None = None) -> World:
     for uri, data in blobs.items():
         m = Media(id=ident(clock), created_at=now, tenant_id=t, kind=MediaKind.IMAGE,
                   sha256=hashlib.sha256(data).hexdigest(), mime="image/png", size_bytes=len(data),
-                  storage_uri=uri, provenance=MediaProvenance.CLIENT_PHOTO, alt_text="A red bike",
+                  storage_uri=uri, provenance=MediaProvenance.TEMPLATE_RENDER, alt_text="A red bike",
                   connection_id=None, consent_id=None)
         media[m.id] = m
     claim = Claim(id=ident(clock), created_at=now, tenant_id=t, code="C-0012", kind=ClaimKind.NUMBER,
