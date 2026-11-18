@@ -36,6 +36,7 @@ LABELS: dict[str, tuple[str, str]] = {
     "truth.fill": ("Facts could not be filled in", "The writer's draft could not be filled with your verified facts."),
     "truth.library": ("A problem in your fact library", "Your fact library has an error; fix the library first."),
     "copy.grader": ("The draft could not be scored", "The step that scores drafts stopped with an error."),
+    "copy.grader.not_run": ("A scoring step did not run", "The model that scores drafts was unavailable. Read the piece yourself before approving."),
     # the design lint on images
     "design.canvas_size": ("Wrong image size", "The image is not the size this channel asks for."),
     "design.contrast": ("Text hard to read", "Text and background are too close in colour to read easily."),
