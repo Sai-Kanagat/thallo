@@ -70,6 +70,8 @@ PHOTO_ATTESTATION = "media.photo.attestation"  # a FLAG the approver acknowledge
 PROVENANCE_CHECK = "media.provenance"  # generated imagery: FAIL while off, FLAG on every use when on
 
 GENERATED = frozenset({"generated", "generated_background"})
+# Names that only cover an item when their verdict is FLAG (a FAIL still blocks; a PASS never covers).
+MUST_FLAG = frozenset({PHOTO_ATTESTATION, PROVENANCE_CHECK})
 
 # Per media source (media.provenance), the families an item needs: every family must have at least
 # one counting CODE-layer row whose `media_sha256` is the item's bytes hash. A source missing here
@@ -132,7 +134,10 @@ def _media_covered(need: MediaNeed, rows: Sequence[CheckResult]) -> bool:
     families = need.families()
     if not families:
         return False  # an unknown source never satisfies coverage
-    names = {r.check_name for r in rows if r.layer is CheckLayer.CODE and r.media_sha256 == need.sha256}
+    # A row that stands for a person's look must be a FLAG the approver acknowledges, never a PASS:
+    # the photo attestation, and the provenance row of generated imagery.
+    names = {r.check_name for r in rows if r.layer is CheckLayer.CODE and r.media_sha256 == need.sha256
+             and (r.check_name not in MUST_FLAG or r.verdict is CheckVerdict.FLAG)}
     return all(names & family for family in families)
 
 
@@ -218,7 +223,8 @@ def review_checks(results: Sequence[CheckResult], *, tenant_id: str, hashes: Map
 
 
 __all__ = [
-    "ALL_TYPES", "COVERAGE", "GENERATED", "MEDIA_COVERAGE", "PHOTO_ATTESTATION", "PHOTO_CHECK", "PHOTO_CHECKS",
+    "ALL_TYPES", "COVERAGE", "GENERATED", "MEDIA_COVERAGE", "MUST_FLAG", "PHOTO_ATTESTATION", "PHOTO_CHECK",
+    "PHOTO_CHECKS",
     "PROVENANCE_CHECK", "CheckHashError", "CheckReader", "CheckReview", "ContentType", "MediaNeed", "Need",
     "check_hash", "content_types", "counting_rows", "covers", "decisive_rows", "review_checks",
 ]

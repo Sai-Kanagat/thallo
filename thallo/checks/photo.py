@@ -2,9 +2,9 @@
 safe zone. Code, no model. Layer CODE, every row keyed on the photo's bytes hash.
 
 The measurements are pure functions over a decoded `Raster` (grey levels). Decoding is separate:
-`decode` reads PNG with the standard library only. Other formats (JPEG, HEIC, WebP) need an image
-library that is not a dependency yet; for them the photo check FAILs with that reason named, since
-a row that measured nothing must never cover the photo.
+`decode` reads JPEG, PNG and WebP with Pillow under explicit size limits. Anything it cannot read
+FAILs the photo check with the reason named, since a row that measured nothing must never cover
+the photo.
 
 Verdicts: too small for the canvas, or a crop that cuts the marked subject or pushes it out of
 the safe zone, FAIL. Blur and exposure are estimates, so they FLAG for a person to look. The
@@ -12,8 +12,7 @@ summary row `media.photo` carries the worst verdict.
 """
 from __future__ import annotations
 
-import struct
-import zlib
+import io
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -41,7 +40,12 @@ class PhotoUndecodable(ValueError):
 class Raster:
     width: int
     height: int
-    grey: bytes  # one byte per pixel, row by row
+    grey: bytes  # one byte per pixel, row by row (a sample, at most SAMPLE_SIDE a side)
+    full: tuple[int, int] | None = None  # the image's own size in pixels
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return self.full or (self.width, self.height)
 
     def at(self, x: int, y: int) -> int:
         return self.grey[y * self.width + x]
@@ -68,113 +72,37 @@ class Target:
 
 # ---------------------------------------------------------------- decoding
 
-_PNG_SIG = b"\x89PNG\r\n\x1a\n"
-_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}
-
-
-def _paeth(a: int, b: int, c: int) -> int:
-    p = a + b - c
-    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-    if pa <= pb and pa <= pc:
-        return a
-    return b if pb <= pc else c
-
-
 MAX_SIDE = 16384
-MAX_PIXELS = 50_000_000
-MAX_IDAT_BYTES = 64 * 1024 * 1024
-
-
-def decode_png(data: bytes) -> Raster:
-    """8-bit, non-interlaced grey, grey-alpha, RGB or RGBA PNG to grey levels (Rec. 709 luma).
-    Any malformed input raises `PhotoUndecodable`; sizes and decompressed output are capped so a
-    small hostile file cannot exhaust memory."""
-    try:
-        return _decode_png(data)
-    except PhotoUndecodable:
-        raise
-    except (struct.error, IndexError, ValueError, zlib.error, OverflowError, MemoryError) as exc:
-        raise PhotoUndecodable(f"PNG is malformed ({type(exc).__name__})") from None
-
-
-def _chunks(data: bytes) -> tuple[tuple[int, ...], bytes]:
-    """(IHDR fields, IDAT bytes), with the size and length caps applied."""
-    if not data.startswith(_PNG_SIG):
-        raise PhotoUndecodable("not a PNG")
-    pos, idat, header = 8, bytearray(), None
-    while pos + 8 <= len(data):
-        (size,) = struct.unpack(">I", data[pos:pos + 4])
-        kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + size]
-        if len(body) != size:
-            raise PhotoUndecodable("PNG chunk is truncated")
-        pos += 12 + size
-        if kind == b"IHDR":
-            header = struct.unpack(">IIBBBBB", body)
-            w, h = header[0], header[1]
-            if not (0 < w <= MAX_SIDE and 0 < h <= MAX_SIDE) or w * h > MAX_PIXELS:
-                raise PhotoUndecodable(f"PNG size {w}x{h} is outside the limits")
-        elif kind == b"IDAT":
-            if header is None:
-                raise PhotoUndecodable("PNG data before its header")
-            idat += body
-            if len(idat) > MAX_IDAT_BYTES:
-                raise PhotoUndecodable("PNG data is too large")
-        elif kind == b"IEND":
-            break
-    if header is None:
-        raise PhotoUndecodable("PNG without a header")
-    return header, bytes(idat)
-
-
-def _decode_png(data: bytes) -> Raster:
-    header, idat = _chunks(data)
-    width, height, depth, colour, _, _, interlace = header
-    if depth != 8 or colour not in _CHANNELS or interlace:
-        raise PhotoUndecodable(f"PNG colour type {colour}, depth {depth}, interlace {interlace} is not read here")
-    channels = _CHANNELS[colour]
-    stride = width * channels
-    expected = height * (stride + 1)
-    try:
-        raw = zlib.decompressobj().decompress(idat, expected + 1)
-    except zlib.error as exc:
-        raise PhotoUndecodable(f"PNG data is corrupt: {exc}") from None
-    if len(raw) > expected:
-        raise PhotoUndecodable("PNG data is longer than its size")
-    if len(raw) < height * (stride + 1):
-        raise PhotoUndecodable("PNG data is shorter than its size")
-    prev = bytearray(stride)
-    grey = bytearray(width * height)
-    for y in range(height):
-        start = y * (stride + 1)
-        kind, line = raw[start], bytearray(raw[start + 1:start + 1 + stride])
-        for i in range(stride):
-            left = line[i - channels] if i >= channels else 0
-            up = prev[i]
-            corner = prev[i - channels] if i >= channels else 0
-            if kind == 1:
-                line[i] = (line[i] + left) & 0xFF
-            elif kind == 2:
-                line[i] = (line[i] + up) & 0xFF
-            elif kind == 3:
-                line[i] = (line[i] + ((left + up) >> 1)) & 0xFF
-            elif kind == 4:
-                line[i] = (line[i] + _paeth(left, up, corner)) & 0xFF
-            elif kind != 0:
-                raise PhotoUndecodable(f"PNG filter {kind} is unknown")
-        for x in range(width):
-            px = line[x * channels:(x + 1) * channels]
-            if channels >= 3:
-                grey[y * width + x] = min(255, round(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]))
-            else:
-                grey[y * width + x] = px[0]
-        prev = line
-    return Raster(width, height, bytes(grey))
+MAX_PIXELS = 40_000_000  # decoded as RGBA at most: 160 MB
 
 
 def decode(data: bytes, mime: str) -> Raster:
-    if mime.lower() == "image/png":
-        return decode_png(data)
-    raise PhotoUndecodable(f"no decoder for {mime}: an image library must be added before this can be measured")
+    """JPEG, PNG or WebP to a grey `Raster` sampled to at most `SAMPLE_SIDE` a side, with the
+    original size kept for the resolution and crop checks. Pillow reads it with an explicit pixel
+    limit; the size is checked from the header before any pixel is decoded, and JPEGs are decoded
+    at a reduced scale (`draft`), so work stays bounded. Any failure raises `PhotoUndecodable`."""
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover - Pillow is a dependency
+        raise PhotoUndecodable("no image library is installed") from None
+    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+    if mime.lower() not in ("image/jpeg", "image/jpg", "image/png", "image/webp"):
+        raise PhotoUndecodable(f"no decoder for {mime}")
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+            if not (0 < w <= MAX_SIDE and 0 < h <= MAX_SIDE) or w * h > MAX_PIXELS:
+                raise PhotoUndecodable(f"image size {w}x{h} is outside the limits")
+            if im.format not in ("JPEG", "PNG", "WEBP"):
+                raise PhotoUndecodable(f"{im.format} is not read here")
+            im.draft("L", (SAMPLE_SIDE, SAMPLE_SIDE))
+            grey = im.convert("L")
+            grey.thumbnail((SAMPLE_SIDE, SAMPLE_SIDE))
+            return Raster(grey.width, grey.height, grey.tobytes(), full=(w, h))
+    except PhotoUndecodable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any decoder failure, bomb warnings included, is "not measured"
+        raise PhotoUndecodable(f"image is malformed ({type(exc).__name__})") from None
 
 
 # ---------------------------------------------------------------- measurements
@@ -222,9 +150,10 @@ def check_photo(r: Raster, target: Target, *, subject: Box | None = None,
         return Finding(check, verdict, reason, media_sha256)
 
     out: list[Finding] = []
-    scale = max(target.width / r.width, target.height / r.height)
+    fw, fh = r.size
+    scale = max(target.width / fw, target.height / fh)
     if scale > 1.0:
-        out.append(f(RESOLUTION, CheckVerdict.FAIL, f"{r.width}x{r.height} must be enlarged {scale:.2f} times to "
+        out.append(f(RESOLUTION, CheckVerdict.FAIL, f"{fw}x{fh} must be enlarged {scale:.2f} times to "
                                                     f"fill {target.width}x{target.height}"))
     else:
         out.append(f(RESOLUTION, CheckVerdict.PASS))
@@ -240,8 +169,8 @@ def check_photo(r: Raster, target: Target, *, subject: Box | None = None,
     if clipped > CLIPPED_SHARE:
         problems.append(f"{clipped:.0%} of it is pure black or white")
     out.append(f(EXPOSURE, CheckVerdict.FLAG, "; ".join(problems)) if problems else f(EXPOSURE, CheckVerdict.PASS))
-    box = crop_box(r.width, r.height, target)
-    loss = 1 - ((box.right - box.left) * (box.bottom - box.top)) / (r.width * r.height)
+    box = crop_box(fw, fh, target)
+    loss = 1 - ((box.right - box.left) * (box.bottom - box.top)) / (fw * fh)
     if subject is not None:
         k = (box.right - box.left) / target.width  # photo pixels per canvas pixel
         top, right, bottom, left = target.safe
@@ -286,5 +215,5 @@ def worst(verdicts: Sequence[CheckVerdict] | object) -> CheckVerdict:
 
 __all__ = [
     "BLUR", "CROP", "EXPOSURE", "RESOLUTION", "Box", "PhotoUndecodable", "Raster", "Target", "attestation",
-    "blur_variance", "check_photo", "crop_box", "decode", "decode_png", "exposure", "undecodable", "worst",
+    "blur_variance", "check_photo", "crop_box", "decode", "exposure", "undecodable", "worst",
 ]

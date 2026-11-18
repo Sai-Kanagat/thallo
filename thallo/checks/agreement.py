@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from thallo.checks.models import NOT_RUN
+from thallo.checks.models import DROPPED, NOT_RUN
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import ApprovalSubject, CheckLayer, CheckVerdict, EditKind
 from thallo.contracts.models import Approval, CheckResult, Edit
@@ -90,17 +90,22 @@ def grader_verdicts(rows: Sequence[CheckResult]) -> dict[tuple[str, str], bool]:
     out: dict[tuple[str, str], bool] = {}
     for r in rows:
         key = (r.check_name, r.variant_id)
-        if r.layer is not CheckLayer.GRADER or r.attempt != top[key] or r.check_name.endswith(NOT_RUN):
+        if r.layer is not CheckLayer.GRADER or r.attempt != top[key] or r.check_name.endswith((NOT_RUN, DROPPED)):
             continue  # a ".not_run" row (name set by code, never by a model) is no judgment: not an item
         out[key] = out.get(key, False) or r.verdict is CheckVerdict.FLAG
     return out
 
 
-def weekly_agreement(*, grader_rows: Sequence[CheckResult], edits: Sequence[Edit], approvals: Sequence[Approval],
+def weekly_agreement(*, tenant_id: str, grader_rows: Sequence[CheckResult], edits: Sequence[Edit],
+                     approvals: Sequence[Approval],
                      variant_bundles: Mapping[str, str], clock: Clock, window: timedelta = WINDOW,
                      min_agreement: float = MIN_AGREEMENT, min_items: int = MIN_ITEMS) -> AgreementReport:
     end = clock.now()
     start = end - window
+    # One tenant at a time: another tenant's rows can never move this tenant's graders.
+    grader_rows = [r for r in grader_rows if r.tenant_id == tenant_id]
+    edits = [e for e in edits if e.tenant_id == tenant_id]
+    approvals = [a for a in approvals if a.tenant_id == tenant_id]
     reviewer = reviewer_verdicts(edits, approvals, variant_bundles, start, end)
     graded = grader_verdicts(grader_rows)
     names = sorted({g for g, _ in graded})

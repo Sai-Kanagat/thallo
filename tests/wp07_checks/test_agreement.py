@@ -40,7 +40,8 @@ def world(n: int, agree: int, *, grader: str = "grader.voice", reason: str = "ge
 
 
 def run(clock, rows, edits, approvals, bundles):
-    return weekly_agreement(grader_rows=rows, edits=edits, approvals=approvals, variant_bundles=bundles, clock=clock)
+    return weekly_agreement(tenant_id=T, grader_rows=rows, edits=edits, approvals=approvals, variant_bundles=bundles,
+                            clock=clock)
 
 
 def test_under_80_percent_over_30_items_loses_its_vote():

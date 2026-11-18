@@ -13,3 +13,24 @@
 ALTER TABLE check_result ADD COLUMN media_sha256 text;
 ALTER TABLE check_result ADD CONSTRAINT check_result_media_sha256_hex
   CHECK (media_sha256 IS NULL OR media_sha256 ~ '^[0-9a-f]{64}$');
+
+-- Where a media file came from is fixed when the row is written (WP-07 security review): the gate
+-- picks the checks an item needs from its provenance, and the canonical form (v2) hashes it. A
+-- trigger refuses any UPDATE that changes it, whoever runs it; changing that takes a migration
+-- run by the owner. A file from another source is a new media row.
+CREATE FUNCTION media_provenance_immutable() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  IF NEW.provenance IS DISTINCT FROM OLD.provenance THEN
+    RAISE EXCEPTION 'media.provenance is fixed at insert'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION media_provenance_immutable() FROM PUBLIC;
+
+CREATE TRIGGER media_provenance_immutable BEFORE UPDATE OF provenance ON media
+  FOR EACH ROW EXECUTE FUNCTION media_provenance_immutable();

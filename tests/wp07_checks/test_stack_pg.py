@@ -6,7 +6,8 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-import psycopg  # noqa: F401 - the db extra; the fixture skips without DATABASE_URL first
+import psycopg
+import pytest
 
 from tests.wp06_text.test_copy_pg import gate_review, pg_urls  # noqa: F401 - the shared per-run database
 from thallo.checks import Context, FinishedPiece, StackStatus, run_stack, weekly_agreement, write_stack
@@ -120,7 +121,8 @@ def test_stack_rows_cover_the_finished_piece_in_postgres(pg_urls, clock, vault, 
                               lint={render_sha: PASSING_LINT}, sources=(SOURCE,), brief=brief)
         ctx = Context(tenant=tenant, claims=lib, clock=clock, resolver=lambda url: gate.resolve_link(t, url),
                       non_links=gate.non_link_allowlist(t), registry=reg,
-                      existing=repo.list_all(CheckResult, variant_id=variant.id))
+                      existing=repo.list_all(CheckResult, variant_id=variant.id),
+                      prior_costs=repo.list_all(CostEntry, subject_id=variant.id))
         out = run_stack(piece, ctx)
     assert out.status is StackStatus.READY_FOR_REVIEW
     with db.tenant(t) as repo:
@@ -156,9 +158,18 @@ def test_stack_rows_cover_the_finished_piece_in_postgres(pg_urls, clock, vault, 
         repo.insert(Edit(id=new_id(clock), created_at=clock.now(), tenant_id=t, variant_id=variant.id,
                          editor_id=founder.id, before_text="a", after_text="b", kind=EditKind.TONE_SHIFT))
         clock.advance(minutes=1)
-        report = weekly_agreement(grader_rows=repo.list_all(CheckResult, variant_id=variant.id),
+        report = weekly_agreement(tenant_id=t, grader_rows=repo.list_all(CheckResult, variant_id=variant.id),
                                   edits=repo.list_all(Edit), approvals=repo.list_all(Approval),
                                   variant_bundles={variant.id: bundle.id}, clock=clock)
         # No vision grader was connected: its ".not_run" rows are no judgment and not an item.
         assert {s.grader: s.items for s in report.scores} == {"grader.specific": 1, "grader.voice": 1}
         assert report.dropped == frozenset()  # one item is far below the 30 needed
+
+    # Review ruling 1b: a media row's provenance cannot be relabelled by the app role.
+    photo_id = next(m.media.id for m in vc.media if m.media.provenance is MediaProvenance.CLIENT_PHOTO)
+    with pytest.raises(psycopg.Error, match="provenance is fixed"):
+        with db.tenant(t) as repo:
+            repo.update(Media, photo_id, provenance=MediaProvenance.GENERATED)
+    with db.tenant(t) as repo:
+        assert repo.get(Media, photo_id).provenance is MediaProvenance.CLIENT_PHOTO
+        assert repo.update(Media, photo_id, alt_text="Fresh bread")  # other columns still change

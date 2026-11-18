@@ -34,12 +34,13 @@ from thallo.contracts.clock import Clock
 from thallo.contracts.enums import Capability, CheckVerdict, ConnectionMode, Language, TextRole
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import CostEntry
-from thallo.providers.text.base import TextProviderError
 
 VISION = "grader.vision"
 # A grader that could not judge flags under "<name>.not_run", a name set by code only, so the agreement
 # job can tell "no judgment" apart without reading model text.
 NOT_RUN = ".not_run"
+# A grader the weekly agreement job dropped writes one "<name>.dropped" FLAG instead of its flags.
+DROPPED = ".dropped"
 VISION_OFF = "grader.vision" + NOT_RUN
 SECOND_READER = "second_reader"
 INDEPENDENCE = "second_reader.independence"
@@ -50,7 +51,8 @@ MAX_OUTPUT_TOKENS = 1200
 
 @dataclass
 class Ledger:
-    """Cost rows for one stack run, one per billed call. `cap` is the budget for the whole run."""
+    """Cost rows for one stack run, one per billed call. `cap` is the budget for the whole piece:
+    `spent` starts at what earlier runs on this piece already cost (`Context.prior_costs`)."""
 
     tenant_id: str
     clock: Clock
@@ -135,9 +137,12 @@ def call(registry: ConnectionRegistry, ledger: Ledger, *, ref: str, role: TextRo
     except c.CostCapExceeded:
         return Answer(None, "not run: over the check budget")
     except ConnectionsError as exc:
-        if isinstance(exc, TextProviderError) and exc.cost_eur is not None:
-            ledger.record(ref=ref, capability=Capability.TEXT, provider=exc.provider or "unknown", model=exc.model,
-                          units=exc.input_tokens + exc.output_tokens, cost=exc.cost_eur)
+        cost = getattr(exc, "cost_eur", None)
+        if isinstance(cost, Decimal):  # any error that says it was billed writes its row
+            ledger.record(ref=ref, capability=Capability.TEXT, provider=getattr(exc, "provider", None) or "unknown",
+                          model=getattr(exc, "model", None),
+                          units=int(getattr(exc, "input_tokens", 0) or 0) + int(getattr(exc, "output_tokens", 0) or 0),
+                          cost=cost)
         return Answer(None, f"the provider failed: {type(exc).__name__}")
     except Exception as exc:  # noqa: BLE001 - never abort the stack: rows and costs so far are kept
         cost = getattr(exc, "cost_eur", None)
@@ -184,7 +189,7 @@ class TextGrader:
     rubric: str
 
     def __post_init__(self) -> None:
-        if not self.name.startswith("grader.") or self.name.endswith(NOT_RUN):
+        if not self.name.startswith("grader.") or self.name.endswith((NOT_RUN, DROPPED)):
             raise ValueError(f"a grader name starts with 'grader.' and never ends with {NOT_RUN!r}")
 
     def instructions(self) -> str:

@@ -19,10 +19,10 @@ from typing import Any
 
 from thallo.contracts.models import Bundle, Claim, Consent, Media, TrackedLink, Variant
 
-CANONICAL_VERSION = 1
+CANONICAL_VERSION = 2  # 2: media provenance is hashed (WP-07 security review)
 
-ROOT_DOMAIN = b"thallo/bundle-root/v1\n"
-VARIANT_DOMAIN = b"thallo/variant/v1\n"
+ROOT_DOMAIN = b"thallo/bundle-root/v2\n"
+VARIANT_DOMAIN = b"thallo/variant/v2\n"
 
 LinkResolver = Callable[[str], "str | None"]
 
@@ -367,8 +367,8 @@ class PayloadMedia:
     alt_text: str | None
     disclosure_label: str | None
     consent_id: str | None
-    # Not hashed and not sent: where the file came from (media.provenance), so the gate can pick
-    # the checks this item needs (gate/checks.py). None when no single media row matches.
+    # Hashed (canonical form v2), not sent: where the file came from (media.provenance), so the
+    # gate picks the checks this item needs (gate/checks.py) and a relabel voids the approval.
     provenance: str | None = None
 
 
@@ -439,6 +439,7 @@ def _media_leaf(m: MediaItem) -> dict[str, Any]:
         "alt_text": canonical_text(m.media.alt_text) if m.media.alt_text is not None else None,
         "disclosure_label": m.media.disclosure_label,
         "consent_id": m.media.consent_id,
+        "provenance": m.media.provenance.value,
     }
 
 
@@ -542,18 +543,10 @@ def _payload_from_leaf(vc: VariantContent, leaf: Mapping[str, Any]) -> PublishPa
         channel=leaf["channel"],
         language=leaf["language"],
         text=outgoing_text(vc.variant),
-        media=tuple(PayloadMedia(**m, provenance=_provenance(vc, m)) for m in leaf["media"]),
+        media=tuple(PayloadMedia(**m) for m in leaf["media"]),
         links=tuple((u, d) for u, d in leaf["links"]),
         tracked_links=tuple((s, d, w) for s, d, w in leaf["tracked_links"]),
     )
-
-
-def _provenance(vc: VariantContent, leaf_media: Mapping[str, Any]) -> str | None:
-    """The provenance of the media row a leaf entry came from, matched on position and bytes
-    hash. None when no single provenance matches: never guessed."""
-    found = {m.media.provenance.value for m in vc.media
-             if m.position == leaf_media["position"] and m.bytes_sha256 == leaf_media["sha256"]}
-    return found.pop() if len(found) == 1 else None
 
 
 def media_hashes(vc: VariantContent) -> tuple[str, ...]:

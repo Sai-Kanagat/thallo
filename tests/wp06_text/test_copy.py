@@ -463,17 +463,19 @@ def test_library_error_fails_the_candidate_and_keeps_the_costs(clock, vault, ten
     assert len(out.cost_entries) == 1 and out.spent_eur == out.cost_entries[0].cost_eur > 0
 
 
-def test_grader_error_is_a_fail_never_a_pass(produce):
+def test_grader_error_is_a_flag_never_a_pass_or_a_fail(produce):
+    """WP-07 review ruling 5: graders never fail a build. A grader that raises leaves the candidate
+    ungraded with a GRADER-layer `copy.grader.not_run` FLAG the approver must see."""
     class Broken:
         def grade(self, text, brief):
             raise RuntimeError("grader down")
     out, script = produce(CLEAN, CLEAN_2, CLEAN_3, grader=Broken())
-    assert len(script.calls) == 1
-    assert out.status is CopyStatus.NEEDS_HUMAN and out.variant.state is VariantState.DRAFTING
-    assert out.variant.rendered_text is None and out.variant_claims == ()
-    assert (1, "copy.grader", CheckVerdict.FAIL) in verdicts(out)
-    assert "Failing check: copy.grader" in out.asset.selection_reason
-    assert len(out.cost_entries) == 1 and out.spent_eur > 0
+    assert len(script.calls) == 3
+    assert out.status is CopyStatus.READY_FOR_CHECKS
+    flags = [r for r in out.check_results if r.check_name == "copy.grader.not_run"]
+    assert len(flags) == 1 and flags[0].verdict is CheckVerdict.FLAG
+    assert not any(r.verdict is CheckVerdict.FAIL and r.check_name.startswith("copy.grader") for r in out.check_results)
+    assert len(out.cost_entries) == 3 and out.spent_eur > 0
 
 
 def test_slop_catalogue():

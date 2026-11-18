@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from tests.wp06_text.test_copy import CLEAN, SOURCE, Script
 from tests.wp06_text.test_copy import make_registry as copy_registry
-from thallo.contracts.enums import Capability, Channel
+from thallo.contracts.enums import Capability, Channel, CheckLayer, CheckVerdict
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import CostEntry
 from thallo.contracts.testing.samples import T
@@ -40,7 +40,10 @@ def _produce(clock, vault, tenant, brief, price, grader):
 
 def test_a_raising_grader_never_swallows_its_billed_cost(clock, vault, tenant, brief, price):
     out = _produce(clock, vault, tenant, brief, price, BilledGrader(clock, raises=True))
-    assert out.status is CopyStatus.NEEDS_HUMAN
+    assert out.status is CopyStatus.READY_FOR_CHECKS  # a grader never fails a build
+    flags = [r for r in out.check_results if r.check_name == "copy.grader.not_run"]
+    assert len(flags) == 1 and flags[0].verdict is CheckVerdict.FLAG and flags[0].layer is CheckLayer.GRADER
+    assert not any(r.verdict is CheckVerdict.FAIL for r in out.check_results)
     assert sum(1 for e in out.cost_entries if e.run_ref == "grade") == 1
     assert out.spent_eur == sum(e.cost_eur for e in out.cost_entries)
 

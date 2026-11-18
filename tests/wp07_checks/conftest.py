@@ -256,6 +256,7 @@ def make_ctx(clock, vault, tenant, price, vendors):
         reg = registry or make_registry(clock, vault, vendors)
         kw.setdefault("settings", Settings())
         kw.setdefault("existing", ())
+        kw.setdefault("prior_costs", ())
         return Context(tenant=tenant, claims={"C-0001": price}, clock=clock, resolver=NO_LINKS, non_links=(),
                        registry=reg, **kw)
     return _make

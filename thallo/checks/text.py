@@ -167,9 +167,30 @@ _INJECTION = [re.compile(p, re.IGNORECASE) for p in (
     r"<\|?(?:im_start|im_end|system|endoftext)\|?>",
     r"\[/?INST\]",
     r"</?(?:system|assistant|instructions?)>",
-    r"^\s*(?:system|assistant)\s*:",
+    r"(?m)^\s*(?:system|assistant|developer)\s*:",
     r"\bignora\s+(?:le\s+)?istruzioni\s+precedenti\b",
 )]
+
+
+# Zero-width and bidi control characters can split or hide a phrase from a pattern: removed before
+# the injection screen matches (the outgoing text itself is unchanged).
+_HIDDEN = re.compile("[" + "".join(chr(c) for c in (*range(0x200B, 0x2010), *range(0x202A, 0x202F),
+                                                     *range(0x2060, 0x2065), *range(0x2066, 0x206A), 0xFEFF,
+                                                     0x00AD, 0x180E)) + "]")
+SOURCE_INJECTION = "copy.source_injection"
+
+
+def _injections(text: str) -> list[str]:
+    plain = _HIDDEN.sub("", _fold(text))
+    return [m.group() for p in _INJECTION for m in p.finditer(plain)]
+
+
+def screen_sources(material: Sequence[str]) -> list[Finding]:
+    """Instruction-shaped text in a source (a brief, a transcript, a comment) FLAGs: the source is
+    untrusted data, so the approver should know it tried to steer the writer. PASS when clean."""
+    out = [Finding(SOURCE_INJECTION, CheckVerdict.FLAG, f"a source contains instruction-shaped text: {hit!r}")
+           for item in material for hit in _injections(item)]
+    return out or [_pass(SOURCE_INJECTION)]
 
 
 def _luhn(digits: str) -> bool:
@@ -223,12 +244,13 @@ def screen(text: str, *, allowed_contacts: Iterable[str] = ()) -> list[Finding]:
         if sum(ch.isdigit() for ch in digits) >= 8 and digits.casefold() not in allowed and not any(
                 f.reason and _mask(re.sub(r"\D", "", m.group())) in f.reason for f in pii):
             pii.append(Finding(PII, CheckVerdict.FLAG, f"a phone number the brand has not listed: {_mask(digits)}"))
-    injection = [Finding(INJECTION, CheckVerdict.FAIL, f"instruction-shaped text aimed at a model: {m.group()!r}")
-                 for p in _INJECTION for m in p.finditer(folded)]
+    injection = [Finding(INJECTION, CheckVerdict.FAIL, f"instruction-shaped text aimed at a model: {hit!r}")
+                 for hit in _injections(text)]
     return (pii or [_pass(PII)]) + (injection or [_pass(INJECTION)])
 
 
 __all__ = [
     "EXTRA_SLOP", "GENERIC_CORPUS", "INJECTION", "LENGTH", "PII", "RECENT_PIECES", "SAMENESS",
-    "SAMENESS_LIMIT", "SLOP", "Finding", "length", "sameness", "screen", "similarity", "slop",
+    "SAMENESS_LIMIT", "SLOP", "SOURCE_INJECTION", "Finding", "length", "sameness", "screen", "screen_sources",
+    "similarity", "slop",
 ]

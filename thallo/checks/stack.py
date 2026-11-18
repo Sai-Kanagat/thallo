@@ -47,10 +47,11 @@ from typing import Any, Protocol
 
 from thallo.checks import models as m
 from thallo.checks import photo, text
+from thallo.checks.origin import origin_of, same_source
 from thallo.checks.text import Finding
 from thallo.connections.registry import ConnectionRegistry
 from thallo.contracts.clock import Clock
-from thallo.contracts.enums import CheckLayer, CheckVerdict, MediaKind
+from thallo.contracts.enums import CheckLayer, CheckVerdict, MediaKind, MediaProvenance
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import Brief, CheckResult, Claim, CostEntry, Tenant
 from thallo.gate.canonical import (
@@ -65,6 +66,7 @@ from thallo.gate.checks import GENERATED, MEDIA_COVERAGE, PROVENANCE_CHECK, chec
 from thallo.media.lint import LintReport
 from thallo.media.lint import to_check_results as lint_rows
 from thallo.truth import CompileFailed, Filled, FillError, LibraryError, build, compile_text, to_check_results
+from thallo.truth.compiler import MAX_TEXT_CHARS
 from thallo.truth.fill import SLOT
 
 MAX_REPAIR_LOOPS = 3
@@ -124,8 +126,14 @@ class Context:
     # Every row already written for this variant, any hash (`repo.list_all(CheckResult, variant_id=)`).
     # Required: attempts and ids must rise above them, or a new row could sit unseen below the top.
     existing: Sequence[CheckResult]
+    # Every cost row already written for this piece (`repo.list_all(CostEntry, subject_id=variant id)`).
+    # Required: the check budget is per piece across reruns, not per run.
+    prior_costs: Sequence[CostEntry]
     recent_texts: Sequence[str] = ()  # the brand's last pieces, oldest first
     vision: m.VisionGrader | None = None
+    # Bytes hash to where those bytes came from, from the run that produced them (`origin.ingest_provenance`),
+    # when the caller still has it. A label that disagrees with it, or with the media row's connection, FAILs.
+    origins: Mapping[str, MediaProvenance] = field(default_factory=dict)
     settings: Settings = Settings()
     brand_id: str | None = None
     format: str | None = None
@@ -214,6 +222,8 @@ def _unfill(filled: Filled, source: str, outgoing: str) -> tuple[str, list[str]]
     """The outgoing text with every filled claim span that is still intact turned back into its
     slot, and the codes whose span was changed. Spans are matched by alignment with the fill."""
     text = unicodedata.normalize("NFC", outgoing)
+    if len(text) > MAX_TEXT_CHARS or len(filled.text) > MAX_TEXT_CHARS:
+        return text, []  # never aligned: the compile refuses it as text_too_long, at once
     codes = SLOT.findall(unicodedata.normalize("NFC", source))
     if len(codes) != len(filled.slot_spans):
         return text, ["the fill does not match the source slots"]
@@ -234,6 +244,11 @@ def _unfill(filled: Filled, source: str, outgoing: str) -> tuple[str, list[str]]
 def _media(piece: FinishedPiece, ctx: Context, item: MediaItem, content_sha: str) -> list[CheckResult | Finding]:
     sha, source = item.bytes_sha256, item.media.provenance.value
     out: list[CheckResult | Finding] = []
+    known = ctx.origins.get(sha) or origin_of(item.media, ctx.registry)
+    if known is not None and not same_source(item.media.provenance, known):
+        out.append(Finding(PROVENANCE_CHECK, CheckVerdict.FAIL,
+                           f"labelled {source} but the bytes came from {known.value}", sha))
+        return out
     if source in GENERATED:
         if ctx.settings.allow_generated_media:
             out.append(Finding(PROVENANCE_CHECK, CheckVerdict.FLAG,
@@ -282,12 +297,20 @@ def code_checks(piece: FinishedPiece, ctx: Context, *, sha: str) -> list[CheckRe
     out += text.sameness(outgoing, ctx.recent_texts)
     out += text.length(outgoing, v.channel, media_count=len(piece.content.media), max_chars=piece.max_chars)
     out += text.screen(outgoing, allowed_contacts=ctx.settings.allowed_contacts)
+    brief = piece.brief
+    material = [*piece.sources, *((brief.audience, brief.job_to_be_done, brief.message, brief.call_to_action or "")
+                                  if brief is not None else ())]
+    out += text.screen_sources(material)
     for item in sorted(piece.content.media, key=lambda i: (i.position, i.bytes_sha256)):
         out += _media(piece, ctx, item, sha)
     return out
 
 
 # ---------------------------------------------------------------- judgment layers
+
+_DROP_NOTE = ("this grader lost its vote: it agreed with the reviewer under 80% of the time last week, so its "
+              "flags are not shown until it is recalibrated")
+
 
 def judgment(piece: FinishedPiece, ctx: Context, ledger: m.Ledger, *, sha: str,
              dropped: list[str]) -> tuple[list[Finding], list[Finding]]:
@@ -305,6 +328,7 @@ def judgment(piece: FinishedPiece, ctx: Context, ledger: m.Ledger, *, sha: str,
         if g.name in ctx.settings.dropped_graders:
             if g.name not in dropped:
                 dropped.append(g.name)
+            graders.append(Finding(g.name + m.DROPPED, CheckVerdict.FLAG, _DROP_NOTE))
             continue
         graders += m.run_grader(g, registry=ctx.registry, ledger=ledger, ref=f"checks:{v.id}:{sha[:16]}:{g.name}",
                                 text=outgoing, brief=brief, voice_rules=ctx.settings.voice_rules,
@@ -315,6 +339,7 @@ def judgment(piece: FinishedPiece, ctx: Context, ledger: m.Ledger, *, sha: str,
         if m.VISION in ctx.settings.dropped_graders:
             if m.VISION not in dropped:
                 dropped.append(m.VISION)
+            graders.append(Finding(m.VISION + m.DROPPED, CheckVerdict.FLAG, _DROP_NOTE, item.bytes_sha256))
             continue
         data = piece.media_bytes.get(item.bytes_sha256)
         if data is None:
@@ -415,6 +440,8 @@ def run_stack(piece: FinishedPiece, ctx: Context, *, repair: Repairer | None = N
     if v.tenant_id != ctx.tenant.id:
         raise ValueError("the piece belongs to another tenant")
     ledger = m.Ledger(ctx.tenant.id, ctx.clock, ctx.settings.cost_cap_eur, v.id)
+    ledger.spent = sum((e.cost_eur for e in ctx.prior_costs
+                        if e.tenant_id == v.tenant_id and e.subject_id == v.id), Decimal(0))
     existing = [r for r in ctx.existing if r.variant_id == v.id]
     ids = _Ids(ctx.clock, max((r.id for r in existing), default=None))
     attempts = _attempts(existing, v.id)

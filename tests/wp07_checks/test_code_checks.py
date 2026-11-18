@@ -69,7 +69,7 @@ def test_design_slop_catalogue_names_the_required_tells():
 
 def test_png_decodes_and_a_sharp_photo_passes():
     r = photo.decode(SHARP_PHOTO, "image/png")
-    assert (r.width, r.height) == (1080, 1350)
+    assert r.size == (1080, 1350) and max(r.width, r.height) <= photo.SAMPLE_SIDE
     found = photo.check_photo(r, photo.Target(1080, 1350), media_sha256=SHA)
     assert {f.check: f.verdict for f in found}[photo.PHOTO_CHECK] is CheckVerdict.PASS
     assert all(f.media_sha256 == SHA for f in found)
@@ -94,7 +94,13 @@ def test_crop_that_cuts_the_subject_fails():
 
 def test_jpeg_cannot_be_measured():
     with pytest.raises(photo.PhotoUndecodable, match="no decoder"):
+        photo.decode(b"....", "image/heic")
+    with pytest.raises(photo.PhotoUndecodable, match="malformed"):
         photo.decode(b"\xff\xd8\xff", "image/jpeg")
+
+
+def _png(data):
+    return photo.decode(data, "image/png")
 
 
 def _chunk(kind: bytes, body: bytes) -> bytes:
@@ -104,16 +110,18 @@ def _chunk(kind: bytes, body: bytes) -> bytes:
 def test_decompression_bomb_and_oversize_headers_are_refused():
     sig = b"\x89PNG\r\n\x1a\n"
     huge = sig + _chunk(b"IHDR", struct.pack(">IIBBBBB", 100000, 100000, 8, 2, 0, 0, 0))
-    with pytest.raises(photo.PhotoUndecodable, match="outside the limits"):
-        photo.decode_png(huge)
+    with pytest.raises(photo.PhotoUndecodable):
+        _png(huge)
     zero = sig + _chunk(b"IHDR", struct.pack(">IIBBBBB", 0, 10, 8, 2, 0, 0, 0))
     with pytest.raises(photo.PhotoUndecodable):
-        photo.decode_png(zero)
+        _png(zero)
     # A tiny image whose data inflates far past its declared size: output stays capped.
     bomb = (sig + _chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
             + _chunk(b"IDAT", zlib.compress(b"\0" * 50_000_000)) + _chunk(b"IEND", b""))
-    with pytest.raises(photo.PhotoUndecodable, match="longer than its size"):
-        photo.decode_png(bomb)
+    try:  # Pillow reads only what the header declares: bounded either way
+        assert _png(bomb).size == (2, 2)
+    except photo.PhotoUndecodable:
+        pass
 
 
 def test_truncated_and_garbage_pngs_never_crash():
@@ -129,6 +137,6 @@ def test_truncated_and_garbage_pngs_never_crash():
         samples.append(bytes(b))
     for s in samples:
         try:
-            photo.decode_png(s)
+            _png(s)
         except photo.PhotoUndecodable:
             pass
