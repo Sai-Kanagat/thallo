@@ -130,3 +130,12 @@ Open, in order:
 6. Postiz key now goes into the vault through the connections screen, not `.env`.
 7. `tests/wp03_truth/test_speed.py` fails under machine load (0.17 s against 0.15 s). Make the limit load-tolerant or mark it so CI is not flaky.
 New env vars: THALLO_POSTIZ_SELF_HOSTED_ORIGIN, THALLO_ENVIRONMENT, THALLO_DEV_CONSOLE_LOGIN, THALLO_WEB_ORIGIN, THALLO_REDIRECT_PREFIXES, THALLO_WEB_PROXY_HOSTS, THALLO_PROXY_STAMP_KEY, THALLO_DEVICE_KEY, THALLO_API_ORIGIN.
+
+## WP-07 merged (18 Nov), next
+Merged after a security review, a fix round and a re-review of the blocking provenance fix. Contracts 2.6.0, canonical form v2 (provenance hashed), migration 0023 run on Docker only (with 0021, 0022: tell Sai before Supabase). Design pass on the web app also merged.
+Open, in order:
+1. SHOULD FIX: `thallo/checks/origin.py`: a media row with no connection id and no origins entry trusts its label. Fail closed: unknown origin is at least a FLAG; make `connection_id` immutable like provenance; call `ingest_provenance` in every ingest path.
+2. App role has UPDATE and DELETE on `approval` (predates WP-07): review and restrict.
+3. Vision grader is fixture-only: needs image input on the text request contract (lead change).
+4. `cortex_checker` role (ruling 5) before real tenants.
+5. Demo: approve PROPOSED.md values, six conflicting facts, reversed logo, LinkedIn 1200x627 lint, bundle Newsreader and Plex Mono.
