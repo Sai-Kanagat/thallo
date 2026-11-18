@@ -98,9 +98,36 @@ def test_a_raising_repair_goes_to_a_person_and_keeps_its_costs(make_piece, make_
     assert [e.run_ref for e in out.cost_entries] == ["repair"]
 
 
-def test_text_changed_after_filling_is_a_flag_not_a_fail(make_piece, make_ctx, price, clock):
-    source = "A loaf is {{C-0001}} this weekend."
-    filled = build(source, tenant_id=T, language=Language.EN, claims={"C-0001": price}, clock=clock,
-                   default_language=Language.EN).filled.text
-    out = run_stack(make_piece(source, rendered=filled + " Order by Friday."), make_ctx())
-    assert [r.verdict for r in out.check_results if r.check_name == "truth.fill"] == [CheckVerdict.FLAG]
+def _filled(price, clock, source):
+    return build(source, tenant_id=T, language=Language.EN, claims={"C-0001": price}, clock=clock,
+                 default_language=Language.EN).filled.text
+
+
+SRC = "A loaf is {{C-0001}} this weekend."
+
+
+def _verdicts(out, name):
+    return [r.verdict for r in out.check_results if r.check_name == name]
+
+
+def test_editing_a_filled_claim_value_fails(make_piece, make_ctx, price, clock):
+    filled = _filled(price, clock, SRC)
+    edited = filled.replace("12", "10")
+    assert edited != filled
+    out = run_stack(make_piece(SRC, rendered=edited), make_ctx())
+    assert _verdicts(out, "truth.fill") == [CheckVerdict.FAIL]
+    assert _verdicts(out, "truth.compile") == [CheckVerdict.FAIL]  # the hand-typed figure is unbacked too
+    assert out.status is StackStatus.NEEDS_HUMAN
+
+
+def test_an_added_sentence_with_an_unbacked_figure_fails(make_piece, make_ctx, price, clock):
+    out = run_stack(make_piece(SRC, rendered=_filled(price, clock, SRC) + " Only 30 left."), make_ctx())
+    assert _verdicts(out, "truth.fill") == [CheckVerdict.PASS]
+    assert _verdicts(out, "truth.compile") == [CheckVerdict.FAIL]
+
+
+def test_an_added_plain_sentence_passes_the_compile(make_piece, make_ctx, price, clock):
+    out = run_stack(make_piece(SRC, rendered=_filled(price, clock, SRC) + " Order by Friday."), make_ctx())
+    assert _verdicts(out, "truth.fill") == [CheckVerdict.PASS]
+    assert _verdicts(out, "truth.compile") == [CheckVerdict.PASS]
+    assert out.status is StackStatus.READY_FOR_REVIEW

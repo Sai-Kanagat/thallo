@@ -37,9 +37,11 @@ photo measurements for anything but PNG (no image library is a dependency).
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -55,7 +57,6 @@ from thallo.gate.canonical import (
     LinkResolver,
     MediaItem,
     VariantContent,
-    canonical_text,
     claim_slots,
     find_unresolved_links,
     outgoing_text,
@@ -63,7 +64,8 @@ from thallo.gate.canonical import (
 from thallo.gate.checks import GENERATED, MEDIA_COVERAGE, PROVENANCE_CHECK, check_hash
 from thallo.media.lint import LintReport
 from thallo.media.lint import to_check_results as lint_rows
-from thallo.truth import CompileFailed, FillError, LibraryError, build, to_check_results
+from thallo.truth import CompileFailed, Filled, FillError, LibraryError, build, compile_text, to_check_results
+from thallo.truth.fill import SLOT
 
 MAX_REPAIR_LOOPS = 3
 LINKS = "gate.links"
@@ -185,19 +187,48 @@ def _truth(piece: FinishedPiece, ctx: Context, *, variant_id: str, sha: str) -> 
     except LibraryError as exc:
         return [Finding(LIBRARY, CheckVerdict.FAIL, f"the claims library is not usable: {exc}"),
                 Finding(FILL, CheckVerdict.PASS, "not filled: the library is not usable")]
-    rows: list[CheckResult | Finding] = list(to_check_results(built.compiled, variant_id=variant_id,
-                                                              content_sha256=sha, clock=ctx.clock))
-    if v.rendered_text is None and claim_slots(v.text):
-        rows.append(Finding(FILL, CheckVerdict.FAIL, "the text has claim slots but was never filled"))
-    elif v.rendered_text is not None and canonical_text(v.rendered_text) != canonical_text(built.filled.text):
-        # Links or a call to action may be added after filling; the outgoing text is still screened
-        # by every other check here, so this asks a person to look rather than blocking.
-        rows.append(Finding(FILL, CheckVerdict.FLAG, "the outgoing text differs from what the claims fill to: "
-                                                     "read the changes"))
+    if v.rendered_text is None:
+        if claim_slots(v.text):
+            return [*to_check_results(built.compiled, variant_id=variant_id, content_sha256=sha, clock=ctx.clock),
+                    Finding(FILL, CheckVerdict.FAIL, "the text has claim slots but was never filled"),
+                    Finding(LIBRARY, CheckVerdict.PASS)]
+        outgoing = v.text
     else:
-        rows.append(Finding(FILL, CheckVerdict.PASS))
+        outgoing = v.rendered_text
+    # The compile runs on the exact outgoing text. Each filled claim value is put back as its slot
+    # only where it survives untouched; an edit inside a filled span is a FAIL, and any edited or
+    # added figure, name or claim is then caught by the compile like any other unbacked text.
+    template, touched = _unfill(built.filled, v.text, outgoing)
+    result = compile_text(template, tenant_id=ctx.tenant.id, language=v.language, claims=claims, clock=ctx.clock,
+                          allowed_claim_ids=allowed, protected_names=ctx.settings.protected_names,
+                          allowed_terms=ctx.settings.allowed_terms, tenant_currency=ctx.tenant.currency)
+    rows: list[CheckResult | Finding] = list(to_check_results(result, variant_id=variant_id, content_sha256=sha,
+                                                              clock=ctx.clock))
+    rows.append(Finding(FILL, CheckVerdict.FAIL, f"a filled claim value was edited by hand: {', '.join(touched)}")
+                if touched else Finding(FILL, CheckVerdict.PASS))
     rows.append(Finding(LIBRARY, CheckVerdict.PASS))
     return rows
+
+
+def _unfill(filled: Filled, source: str, outgoing: str) -> tuple[str, list[str]]:
+    """The outgoing text with every filled claim span that is still intact turned back into its
+    slot, and the codes whose span was changed. Spans are matched by alignment with the fill."""
+    text = unicodedata.normalize("NFC", outgoing)
+    codes = SLOT.findall(unicodedata.normalize("NFC", source))
+    if len(codes) != len(filled.slot_spans):
+        return text, ["the fill does not match the source slots"]
+    blocks = SequenceMatcher(None, filled.text, text, autojunk=False).get_matching_blocks()
+    keep: list[tuple[int, int, str]] = []
+    touched: list[str] = []
+    for code, (a, b) in zip(codes, filled.slot_spans, strict=True):
+        hit = next(((j + a - i, j + b - i) for i, j, n in blocks if i <= a and b <= i + n), None)
+        if hit is None:
+            touched.append(code)
+        else:
+            keep.append((*hit, code))
+    for x, y, code in sorted(keep, reverse=True):
+        text = text[:x] + "{{" + code + "}}" + text[y:]
+    return text, touched
 
 
 def _media(piece: FinishedPiece, ctx: Context, item: MediaItem, content_sha: str) -> list[CheckResult | Finding]:
