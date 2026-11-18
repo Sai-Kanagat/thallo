@@ -82,7 +82,7 @@ export function ReviewCard({ card, busy = false, onApprove, onEdit, onReject, on
     });
 
   let hint = "Approving sends nothing now. It posts on its slot.";
-  if (card.blocking.length > 0) hint = "This cannot be approved yet. What to fix is under the piece.";
+  if (card.blocking.length > 0) hint = "This cannot be approved yet. See what to fix first.";
   else if (!card.can_approve) hint = "This bundle is not waiting for review.";
   else if (open > 0) hint = `Mark ${open} flag${open === 1 ? "" : "s"} as read to approve.`;
 
