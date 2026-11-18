@@ -40,7 +40,7 @@ from thallo.contracts.models import (
     VariantMedia,
 )
 from thallo.copy import CopyStatus, produce_copy, write_outcome
-from thallo.gate import ContentType, content_hashes, content_types, load_bundle, review_checks
+from thallo.gate import content_hashes, content_types, load_bundle, review_checks
 from thallo.gate.canonical import build_snapshot
 from thallo.store.adapters import LocalBlobStore
 from thallo.store.adapters.claims import PgClaimRepository
@@ -168,7 +168,7 @@ def test_outcome_round_trips_through_postgres(pg_urls, clock, vault, tmp_path):
                                  media_id=media.id))
         review = gate_review(gate, t, out.bundle.id)
         assert review.unchecked == (out.variant.id,)
-        assert review.missing[out.variant.id] == (ContentType.MEDIA, ContentType.TEXT)
+        assert [k.value for k in review.missing[out.variant.id]] == ["text", f"media.client_photo.{media.sha256[:12]}"]
         with_media = content_hashes(gate, t, out.bundle.id)[out.variant.id]
         assert with_media != stored
         winner = out.candidates[0].built
@@ -176,4 +176,4 @@ def test_outcome_round_trips_through_postgres(pg_urls, clock, vault, tmp_path):
                                   clock=clock, attempt=3):
             repo.insert(r)
         review = gate_review(gate, t, out.bundle.id)
-        assert review.missing[out.variant.id] == (ContentType.MEDIA,)  # truth rows alone never cover media
+        assert [k.value for k in review.missing[out.variant.id]] == [f"media.client_photo.{media.sha256[:12]}"]

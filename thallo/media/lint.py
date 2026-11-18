@@ -419,16 +419,19 @@ def lint_output_fonts(job: Job, fonts: dict[str, bool] | None) -> LintReport:
 # ====================================================================== rows
 
 def to_check_results(report: LintReport, *, tenant_id: str, variant_id: str, content_sha256: str, clock: Clock,
-                     attempt: int = 1) -> list[CheckResult]:
+                     attempt: int = 1, media_sha256: str | None = None) -> list[CheckResult]:
     """One `check_result` row per check in layer CODE. PASS or FAIL only. `content_sha256` is the
     hash of the variant content the rendered media belongs to (`thallo.gate.check_hash`, or
     `thallo.gate.content_hashes` once the media is linked); the gate counts the rows only while the
-    variant still hashes to it."""
+    variant still hashes to it. `media_sha256` is the rendered file's bytes hash: the gate counts
+    the rows toward that one attached item only (gate/checks.py MEDIA_COVERAGE); without it they
+    cover no media."""
     rows = []
     for name, (verdict, reason) in report.summary().items():
         if verdict is CheckVerdict.FLAG:  # pragma: no cover - the lint has no FLAG path
             raise AssertionError("design lint never flags")
         rows.append(CheckResult(id=new_id(clock), created_at=clock.now(), tenant_id=tenant_id,
                                 variant_id=variant_id, layer=CheckLayer.CODE, check_name=name,
-                                verdict=verdict, reason=reason, attempt=attempt, content_sha256=content_sha256))
+                                verdict=verdict, reason=reason, attempt=attempt, content_sha256=content_sha256,
+                                media_sha256=media_sha256))
     return rows

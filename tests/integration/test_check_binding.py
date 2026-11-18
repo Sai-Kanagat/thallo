@@ -83,7 +83,7 @@ def run_truth(b, shop: Shop, text: str, *, attempt: int = 1, lint: bool = True) 
         rows = to_check_results(compiled, variant_id=shop.variant.id, content_sha256=sha, clock=b.clock,
                                 attempt=attempt)
         extra = lint_rows(PASSING_LINT, tenant_id=t, variant_id=shop.variant.id, content_sha256=sha,
-                          clock=b.clock, attempt=attempt) if lint else []
+                          clock=b.clock, attempt=attempt, media_sha256=shop.media.sha256) if lint else []
         for r in rows + extra:
             s.insert(r)
     return rows
@@ -199,7 +199,7 @@ def test_only_non_code_rows_refuses_as_not_checked(backend, signer):
         sha = content_hashes(s.gate, t, shop.bundle.id)[shop.variant.id]
         rows = to_check_results(fixed.compiled, variant_id=shop.variant.id, content_sha256=sha, clock=backend.clock)
         rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=shop.variant.id, content_sha256=sha,
-                          clock=backend.clock)
+                          clock=backend.clock, media_sha256=shop.media.sha256)
         for row in rows:
             for layer in (CheckLayer.GRADER, CheckLayer.SECOND_READER):  # right content, wrong layer
                 s.insert(row.model_copy(update={"id": _id(backend), "layer": layer}))
@@ -249,7 +249,8 @@ def fixed_shop(b, name: str):
 def test_a_lint_pass_alone_does_not_cover_text(backend, signer):
     shop, _ = fixed_shop(backend, "Sigma")
     insert(backend, shop, lint_rows(PASSING_LINT, tenant_id=shop.tenant.id, variant_id=shop.variant.id,
-                                    content_sha256=current_hash(backend, shop), clock=backend.clock))
+                                    content_sha256=current_hash(backend, shop), clock=backend.clock,
+                                    media_sha256=shop.media.sha256))
     with pytest.raises(ApprovalRefused, match=r"not checked.*\['text'\]"):
         approve(backend, shop, signer, acknowledged=[])
     assert not publish_review(backend, shop)
@@ -261,23 +262,24 @@ def test_an_invented_check_name_never_covers(backend, signer):
     [summary] = [r for r in to_check_results(fixed.compiled, variant_id=shop.variant.id, content_sha256=sha,
                                              clock=backend.clock) if r.check_name == "truth.compile"]
     [lint] = lint_rows(PASSING_LINT, tenant_id=shop.tenant.id, variant_id=shop.variant.id, content_sha256=sha,
-                       clock=backend.clock)[:1]
+                       clock=backend.clock, media_sha256=shop.media.sha256)[:1]
     invented = [summary.model_copy(update={"id": _id(backend), "check_name": name})
                 for name in ("truth.compiled", "truth.compile.made_up", "truth", "copy.ok")]
     invented += [lint.model_copy(update={"id": _id(backend), "check_name": name})
                  for name in ("design", "design.looks_fine")]
     insert(backend, shop, invented)
-    with pytest.raises(ApprovalRefused, match=r"not checked.*\['media', 'text'\]"):
+    with pytest.raises(ApprovalRefused, match=r"not checked.*\['text', 'media\.template_render\."):
         approve(backend, shop, signer, acknowledged=[])
 
 
 def test_text_and_media_with_only_truth_rows_is_refused_and_a_lint_row_completes_it(backend, signer):
     shop, fixed = fixed_shop(backend, "Upsilon")
     run_truth(backend, shop, fixed.compiled.text, lint=False)
-    with pytest.raises(ApprovalRefused, match=r"not checked.*\['media'\]"):
+    with pytest.raises(ApprovalRefused, match=r"not checked.*\['media\.template_render\."):
         approve(backend, shop, signer, acknowledged=[])
     insert(backend, shop, lint_rows(PASSING_LINT, tenant_id=shop.tenant.id, variant_id=shop.variant.id,
-                                    content_sha256=current_hash(backend, shop), clock=backend.clock))
+                                    content_sha256=current_hash(backend, shop), clock=backend.clock,
+                                    media_sha256=shop.media.sha256))
     assert approve(backend, shop, signer, acknowledged=[]).acknowledged_flag_ids == []  # the positive control
     assert publish(backend, shop, signer).allowed
 
@@ -295,22 +297,23 @@ def test_rows_for_the_text_only_content_do_not_cover_it_once_media_is_attached(b
     assert text_only != current_hash(backend, shop)
     rows = to_check_results(fixed.compiled, variant_id=shop.variant.id, content_sha256=text_only, clock=backend.clock)
     rows += lint_rows(PASSING_LINT, tenant_id=t, variant_id=shop.variant.id, content_sha256=text_only,
-                      clock=backend.clock)
+                      clock=backend.clock, media_sha256=shop.media.sha256)
     insert(backend, shop, rows)
-    with pytest.raises(ApprovalRefused, match=r"not checked.*\['media', 'text'\]"):
+    with pytest.raises(ApprovalRefused, match=r"not checked.*\['text', 'media\.template_render\."):
         approve(backend, shop, signer, acknowledged=[])
 
 
 def publish_review(b, shop: Shop) -> bool:
     """Whether publish would find the content checked: the gate's own review of the stored rows."""
     from thallo.gate import review_checks
-    from thallo.gate.checks import ContentType
+    from thallo.gate.checks import ContentType, MediaNeed
     t = shop.tenant.id
     sha = current_hash(b, shop)
     with b.session(t) as s:
         rows = list(s.gate.get_check_results(t, shop.variant.id, sha))
     review = review_checks(rows, tenant_id=t, hashes={shop.variant.id: sha},
-                           types={shop.variant.id: {ContentType.TEXT, ContentType.MEDIA}})
+                           types={shop.variant.id: {ContentType.TEXT, ContentType.MEDIA,
+                                                    MediaNeed(shop.media.sha256, "template_render")}})
     return not review.unchecked
 
 

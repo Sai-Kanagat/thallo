@@ -429,6 +429,9 @@ class CheckResult(TenantRow, ModelMade):
     reason: str | None = None
     attempt: int = tightened("0021", default=1, ge=1)
     content_sha256: str = added("0021", pattern=r"^[0-9a-f]{64}$")
+    # The bytes hash of the one media item this row checked (WP-07, media coverage): the gate
+    # counts a media check toward an item only when this equals that item's bytes hash.
+    media_sha256: str | None = added("0023", default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class Approval(TenantRow):
