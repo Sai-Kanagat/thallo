@@ -174,7 +174,7 @@ def _headline(variants: list[dict]) -> str | None:
     for v in variants:
         line = next((ln.strip() for ln in v["text"].splitlines() if ln.strip()), "")
         if line:
-            return line if len(line) <= 90 else line[:89].rstrip() + "…"
+            return line if len(line) <= 90 else line[:89].rstrip(" .,;:") + "…"
     return None
 
 
