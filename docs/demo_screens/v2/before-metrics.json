@@ -1,0 +1,767 @@
+{
+ "phone-light-01-login": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "phone-light-02-code": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "button \"Use another address\" 343x29"
+  ]
+ },
+ "phone-light-03-deck": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-light-04-card1-first-screen": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-04-card1": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-04-card2": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-04-card3": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-04-card4": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Mark as read\" 108x36"
+  ]
+ },
+ "phone-light-04-card5": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-05-card-flag-read": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Read\" 58x36"
+  ]
+ },
+ "phone-light-06-card-fail-forced-approve": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-07-keyboard-focus": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-light-08-week": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36"
+  ]
+ },
+ "phone-light-09-week-next": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36"
+  ]
+ },
+ "phone-light-10-connections": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36"
+  ]
+ },
+ "phone-light-12-error-missing-card": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-light-13-offline-bar": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-light-14-offline-open-card": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "phone-light-15-signed-out": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "phone-dark-03-deck": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-dark-04-card1-first-screen": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-04-card1": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-04-card2": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-04-card3": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-04-card4": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Mark as read\" 108x36"
+  ]
+ },
+ "phone-dark-04-card5": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-05-card-flag-read": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Read\" 58x36"
+  ]
+ },
+ "phone-dark-06-card-fail-forced-approve": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-07-keyboard-focus": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 305x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "phone-dark-08-week": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36"
+  ]
+ },
+ "phone-dark-09-week-next": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36"
+  ]
+ },
+ "phone-dark-10-connections": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36"
+  ]
+ },
+ "phone-dark-12-error-missing-card": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-dark-13-offline-bar": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "phone-dark-14-offline-open-card": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "phone-dark-15-signed-out": {
+  "scrollWidth": 375,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "desktop-light-03-deck": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-light-04-card1-first-screen": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-04-card1": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-04-card2": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-04-card3": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-04-card4": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Mark as read\" 108x36"
+  ]
+ },
+ "desktop-light-04-card5": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-05-card-flag-read": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Read\" 58x36"
+  ]
+ },
+ "desktop-light-06-card-fail-forced-approve": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-07-keyboard-focus": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-light-08-week": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36"
+  ]
+ },
+ "desktop-light-09-week-next": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36"
+  ]
+ },
+ "desktop-light-10-connections": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36"
+  ]
+ },
+ "desktop-light-12-error-missing-card": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-light-13-offline-bar": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-light-14-offline-open-card": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "desktop-light-15-signed-out": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "desktop-dark-03-deck": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-dark-04-card1-first-screen": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-04-card1": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-04-card2": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-04-card3": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-04-card4": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Mark as read\" 108x36"
+  ]
+ },
+ "desktop-dark-04-card5": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-05-card-flag-read": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29",
+   "button \"Read\" 58x36"
+  ]
+ },
+ "desktop-dark-06-card-fail-forced-approve": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-07-keyboard-focus": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "a \"All cards\" 54x21",
+   "summary \"Facts used (1)\" 650x33",
+   "button \"Edit this piece\" 88x29"
+  ]
+ },
+ "desktop-dark-08-week": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36",
+   "button \"Move\" 61x36",
+   "button \"Kill\" 46x36"
+  ]
+ },
+ "desktop-dark-09-week-next": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Previous\" 81x36",
+   "button \"Next\" 55x36"
+  ]
+ },
+ "desktop-dark-10-connections": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Add\" 51x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36",
+   "button \"Test\" 53x36"
+  ]
+ },
+ "desktop-dark-12-error-missing-card": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-dark-13-offline-bar": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22",
+   "a \"Sai Kanagat\" 75x22",
+   "button \"Sign out\" 52x29"
+  ]
+ },
+ "desktop-dark-14-offline-open-card": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ },
+ "desktop-dark-15-signed-out": {
+  "scrollWidth": 1440,
+  "small": [
+   "a \"Thallo\" 92x22"
+  ]
+ }
+}
