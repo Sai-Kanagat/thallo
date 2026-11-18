@@ -151,7 +151,7 @@ class Vendors:
 
 
 def make_registry(clock, vault, vendors: Vendors, *, reader_provider: str = "gemini", reader_model: str = READER,
-                  grader_prices=PRICES) -> ConnectionRegistry:
+                  grader_prices=PRICES, tenant_id: str = T) -> ConnectionRegistry:
     providers = ProviderRegistry.with_discovered()
     providers.register(Capability.TEXT, "claude", ConnectionMode.HOSTED,
                        lambda ctx: claude.create(ctx, transport=vendors.grader), replace=True,
@@ -161,9 +161,9 @@ def make_registry(clock, vault, vendors: Vendors, *, reader_provider: str = "gem
                        settings_schema=gemini.GeminiSettings)
     reg = ConnectionRegistry(clock=clock, providers=providers, connections=InMemoryConnectionStore(), vault=vault,
                              environ={})
-    reg.add(T, Capability.TEXT, "claude", role=TextRole.GRADE, model=WRITER, secret=FAKE_KEY,
+    reg.add(tenant_id, Capability.TEXT, "claude", role=TextRole.GRADE, model=WRITER, secret=FAKE_KEY,
             settings=dict(grader_prices))
-    reg.add(T, Capability.TEXT, reader_provider, role=TextRole.SECOND_READ, model=reader_model, secret=FAKE_KEY,
+    reg.add(tenant_id, Capability.TEXT, reader_provider, role=TextRole.SECOND_READ, model=reader_model, secret=FAKE_KEY,
             settings=dict(PRICES))
     return reg
 
