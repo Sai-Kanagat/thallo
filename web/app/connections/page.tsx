@@ -12,6 +12,45 @@ import { useLoad } from "@/lib/useLoad";
 
 type Listing = { capabilities: { capability: string; connections: ConnectionRow[] }[] };
 
+const CAPABILITIES: Record<string, string> = {
+  text: "Writing",
+  image: "Images",
+  video: "Video",
+  transcription: "Transcripts",
+  voiceover: "Voiceover",
+  publishing: "Publishing",
+  calendar: "Calendar",
+  crm: "Contacts (CRM)",
+  messaging: "Messages",
+  booking: "Bookings",
+  analytics: "Analytics",
+  ads: "Ads",
+  research: "Research",
+  storage: "File storage",
+  notifications: "Notifications",
+  automation_hooks: "Automations",
+};
+
+function capabilityName(code: string): string {
+  return CAPABILITIES[code] ?? code.replaceAll("_", " ");
+}
+
+function providerName(code: string): string {
+  if (code === "manual") return "A person";
+  const words = code.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Floor (manual) last, then by priority.
+const order = (a: ConnectionRow, b: ConnectionRow) => Number(a.is_floor) - Number(b.is_floor) || a.priority - b.priority;
+
+function Health({ row }: { row: ConnectionRow }) {
+  if (row.is_floor) return <span className="chip">Always there</span>;
+  if (row.health === "connected") return <span className="chip ready">Working</span>;
+  if (row.health === "down") return <span className="chip blocked">Not working</span>;
+  return <span className="chip">Not tested</span>;
+}
+
 function AddForm({ capability, options, onDone }: { capability: string; options: ProviderOption[]; onDone: (m: string) => void }) {
   const [provider, setProvider] = useState(options[0]?.provider ?? "");
   const [model, setModel] = useState("");
@@ -93,13 +132,12 @@ function Row({ row, onDone }: { row: ConnectionRow; onDone: (m: string) => void 
   return (
     <li className={row.enabled ? "conn" : "conn off"}>
       <div className="conn-main">
-        <span className="conn-name">{row.provider}</span>
-        <span className="chip quiet">{row.mode}</span>
-        {row.model ? <span className="chip quiet">{row.model}</span> : null}
-        {row.role ? <span className="chip quiet">{row.role}</span> : null}
-        <span className={`health health-${row.health ?? "unknown"}`}>
-          {row.health === "connected" ? "Working" : row.health === "down" ? "Not working" : "Not tested"}
-        </span>
+        <span className="conn-name">{providerName(row.provider)}</span>
+        <Health row={row} />
+        {row.enabled ? null : <span className="chip">Off</span>}
+        <span className="chip">{row.mode}</span>
+        {row.model ? <span className="chip">{row.model}</span> : null}
+        {row.role ? <span className="chip">{row.role}</span> : null}
       </div>
       <p className="fine">
         Order {row.is_floor ? "last (always there)" : row.priority + 1}. This month {row.cost_this_month_eur} EUR.
@@ -161,32 +199,83 @@ export default function ConnectionsPage() {
   if (load.state === "error") return <Failure error={load.error} onRetry={reload} />;
   const options = providers.state === "ready" ? providers.data.providers : [];
 
+  const caps = load.data.capabilities.map((cap) => {
+    const live = [...cap.connections].filter((r) => r.enabled).sort(order);
+    return { ...cap, active: live[0] ?? null, fallback: live[1] ?? null };
+  });
+  const groups = [
+    { title: "Done by a tool", caps: caps.filter((c) => c.active && !c.active.is_floor) },
+    { title: "Done by a person until you add a tool", caps:caps.filter((c) => !c.active || c.active.is_floor) },
+  ].filter((g) => g.caps.length > 0);
+
   return (
-    <section>
+    <section className="narrow-col">
       <h1 className="page-title">Connections</h1>
-      <p className="lede">Each capability falls back down its list and always ends at manual, where a person does the step.</p>
+      <p className="page-sub">Each job uses its first working tool and falls back down the list. The last step is always a person.</p>
       {message ? <p className="note" role="status">{message}</p> : null}
-      <ul className="caps">
-        {load.data.capabilities.map((cap) => {
-          const opts = options.filter((o) => o.capability === cap.capability && o.provider !== "manual");
-          return (
-            <li key={cap.capability} className="cap">
-              <div className="cap-head">
-                <h2>{cap.capability.replaceAll("_", " ")}</h2>
-                {opts.length > 0 ? (
-                  <button type="button" className="button small" onClick={() => setAdding(adding === cap.capability ? null : cap.capability)}>
-                    {adding === cap.capability ? "Cancel" : "Add"}
-                  </button>
-                ) : null}
-              </div>
-              <ol className="conns">
-                {cap.connections.map((row) => <Row key={row.id} row={row} onDone={done} />)}
-              </ol>
-              {adding === cap.capability ? <AddForm capability={cap.capability} options={opts} onDone={done} /> : null}
-            </li>
-          );
-        })}
-      </ul>
+      {groups.map((g) => (
+        <div key={g.title}>
+          <h2 className="cap-group-title">
+            {g.title} ({g.caps.length})
+          </h2>
+          <ul className="caps">
+            {g.caps.map((cap) => {
+              const opts = options.filter((o) => o.capability === cap.capability && o.provider !== "manual");
+              const manualOnly = cap.connections.length === 1 && cap.connections[0]!.is_floor;
+              if (manualOnly && adding !== cap.capability) {
+                return (
+                  <li key={cap.capability} className="cap cap-compact">
+                    <h3 className="cap-name">{capabilityName(cap.capability)}</h3>
+                    {opts.length > 0 ? (
+                      <button type="button" className="button small cap-add" aria-expanded={false}
+                              onClick={() => setAdding(cap.capability)}>
+                        Add a tool
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              }
+              return (
+                <li key={cap.capability} className="cap">
+                  <div className="cap-head">
+                    <h3 className="cap-name">{capabilityName(cap.capability)}</h3>
+                    {opts.length > 0 ? (
+                      <button type="button" className="button small cap-add" aria-expanded={adding === cap.capability}
+                              onClick={() => setAdding(adding === cap.capability ? null : cap.capability)}>
+                        {adding === cap.capability ? "Cancel" : "Add a tool"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="cap-body">
+                    <p className="cap-chain">
+                      {cap.active ? (
+                        <>
+                          <span>Uses</span> <strong>{providerName(cap.active.provider)}</strong>
+                          <Health row={cap.active} />
+                          {cap.fallback ? (
+                            <>
+                              <span>then</span> <strong>{providerName(cap.fallback.provider)}</strong>
+                            </>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span>Nothing is switched on.</span>
+                      )}
+                    </p>
+                    <details>
+                      <summary>Manage ({cap.connections.length})</summary>
+                      <ol className="conns">
+                        {[...cap.connections].sort(order).map((row) => <Row key={row.id} row={row} onDone={done} />)}
+                      </ol>
+                    </details>
+                    {adding === cap.capability ? <AddForm capability={cap.capability} options={opts} onDone={done} /> : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }

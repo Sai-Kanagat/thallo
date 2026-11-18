@@ -6,6 +6,7 @@ import { Empty, Failure, Loading } from "@/components/States";
 import { ApiError, post } from "@/lib/api";
 import type { Slot, WeekPlan } from "@/lib/types";
 import { useLoad } from "@/lib/useLoad";
+import { channelName } from "@/lib/words";
 
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
@@ -50,7 +51,7 @@ export default function PlanPage() {
         </button>
       </div>
 
-      <section className="panel" aria-label="Stage mix">
+      <section className="mix-panel" aria-label="Stage mix">
         <h2>Stage mix against the target</h2>
         <ul className="mix">
           {plan.stage_mix.map((m) => (
@@ -81,11 +82,11 @@ export default function PlanPage() {
                   {slots.map((s) => (
                     <li key={s.id} className={`slot slot-${s.state}`}>
                       <div className="slot-main">
-                        <span className="chip">{s.channel}</span>
+                        <span className="chip info">{channelName(s.channel)}</span>
                         <span className="slot-time">{TIME.format(new Date(s.starts_at))}</span>
-                        <span>{s.pillar ?? "No pillar"}</span>
-                        <span className="chip quiet">{s.stage}</span>
-                        <span className="chip quiet">{s.state}</span>
+                        <span className="slot-pillar">{s.pillar ?? "No pillar"}</span>
+                        <span className="chip">{s.stage}</span>
+                        <span className="chip">{s.state}</span>
                       </div>
                       {plan.can_edit ? (
                         <div className="row">
@@ -112,7 +113,7 @@ export default function PlanPage() {
       )}
 
       {moving ? (
-        <section className="panel" aria-label="Move a slot">
+        <section className="reject-panel" aria-label="Move a slot">
           <h2>Move to</h2>
           <div className="reasons">
             {plan.days.map((day) => (

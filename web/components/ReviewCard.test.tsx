@@ -119,6 +119,32 @@ describe("ReviewCard", () => {
     expect(onReject).toHaveBeenCalledWith("off_voice");
   });
 
+  it("leads with the plain reason and check labels, keeps the raw check name small", () => {
+    render(
+      <ReviewCard
+        card={card({
+          why: "Selected candidate 1 of 2, compiled on attempt 1",
+          reason: "Fills Tuesday's Range slot.",
+          flags: [
+            {
+              id: "f1", variant_id: "v1", check_name: "truth.compile.superlative", layer: "code", reason: null,
+              label: "A best or most claim", explain: "Words like best or fastest need proof behind them.",
+            },
+          ],
+        })}
+        onApprove={noop}
+        onEdit={noop}
+        onReject={noop}
+      />,
+    );
+    expect(screen.getByText("Fills Tuesday's Range slot.")).toBeInTheDocument();
+    expect(screen.getByText("A best or most claim")).toBeInTheDocument();
+    expect(screen.getByText("truth.compile.superlative")).toHaveClass("check-code");
+    // the machine detail is kept, inside the collapsed "How this was chosen"
+    const why = screen.getByText(/Selected candidate 1 of 2/);
+    expect(why.closest("details")).not.toHaveAttribute("open");
+  });
+
   it("approves a card with no flags straight away", () => {
     const onApprove = vi.fn();
     render(<ReviewCard card={card({ flags: [] })} onApprove={onApprove} onEdit={noop} onReject={noop} />);

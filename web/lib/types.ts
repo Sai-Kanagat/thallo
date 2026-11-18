@@ -10,14 +10,19 @@ export type SessionView = {
   memberships?: Membership[];
 };
 
-export type Flag = { id: string; variant_id: string; check_name: string; layer: string; reason: string | null };
+// label and explain are the plain words for check_name, from the one table in api/check_labels.py.
+export type CheckWords = { label?: string; explain?: string };
+
+export type Flag = { id: string; variant_id: string; check_name: string; layer: string; reason: string | null } & CheckWords;
 
 export type Blocking = {
   kind: "fail" | "not_checked" | "problem";
   variant_id: string | null;
   check_name: string;
   reason: string | null;
-};
+} & CheckWords;
+
+export type CardSlot = { starts_at: string; day: string; pillar: string | null; stage: string };
 
 export type CardMedia = {
   id: string | null;
@@ -51,6 +56,9 @@ export type Card = {
   state: string;
   root_hash: string | null;
   why: string | null;
+  reason?: string | null;
+  headline?: string | null;
+  slot?: CardSlot | null;
   variants: CardVariant[];
   flags: Flag[];
   blocking: Blocking[];
@@ -63,6 +71,12 @@ export type BundleSummary = {
   state: string;
   channels: string[];
   variant_count: number;
+  headline?: string | null;
+  thumbnail_url?: string | null;
+  slot?: CardSlot | null;
+  status?: "ready" | "flag" | "blocked";
+  flag_count?: number;
+  blocking_count?: number;
 };
 
 export type Slot = {

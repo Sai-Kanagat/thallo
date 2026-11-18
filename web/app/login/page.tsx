@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { Mark } from "@/components/Mark";
 import { ApiError, get, getSession, post } from "@/lib/api";
 import { clearAllCachesSoon } from "@/lib/caches";
 import type { Membership, SessionView } from "@/lib/types";
@@ -69,7 +70,10 @@ export default function LoginPage() {
 
   return (
     <section className="login">
-      <h1 className="display">Thallo</h1>
+      <h1 className="display">
+        <Mark />
+        <span>Thallo</span>
+      </h1>
       <p className="tagline">Grown, not generated.</p>
 
       {step === "email" ? (
@@ -119,7 +123,7 @@ export default function LoginPage() {
               <li key={m.tenant_id}>
                 <button type="button" className="choice" disabled={busy} onClick={() => void choose(m.tenant_id)}>
                   <span className="choice-name">{m.tenant_name}</span>
-                  <span className="chip quiet">{m.role}</span>
+                  <span className="chip">{m.role}</span>
                 </button>
               </li>
             ))}

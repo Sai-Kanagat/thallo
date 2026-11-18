@@ -1,0 +1,282 @@
+{
+ "phone-light-01-login": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-02-code": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-03-deck": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card1-first-screen": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card1": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card2": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card3": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card4": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-04-card5": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-05-card-flag-read": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-06-card-fail-forced-approve": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-07-keyboard-focus": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-08-week": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-09-week-next": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-10-connections": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-12-error-missing-card": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-13-offline-bar": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-14-offline-open-card": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-light-15-signed-out": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-03-deck": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card1-first-screen": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card1": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card2": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card3": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card4": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-04-card5": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-05-card-flag-read": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-06-card-fail-forced-approve": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-07-keyboard-focus": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-08-week": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-09-week-next": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-10-connections": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-12-error-missing-card": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-13-offline-bar": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-14-offline-open-card": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "phone-dark-15-signed-out": {
+  "scrollWidth": 375,
+  "small": []
+ },
+ "desktop-light-03-deck": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card1-first-screen": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card1": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card2": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card3": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card4": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-04-card5": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-05-card-flag-read": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-06-card-fail-forced-approve": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-07-keyboard-focus": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-08-week": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-09-week-next": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-10-connections": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-12-error-missing-card": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-13-offline-bar": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-14-offline-open-card": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-light-15-signed-out": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-03-deck": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card1-first-screen": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card1": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card2": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card3": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card4": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-04-card5": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-05-card-flag-read": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-06-card-fail-forced-approve": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-07-keyboard-focus": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-08-week": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-09-week-next": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-10-connections": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-12-error-missing-card": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-13-offline-bar": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-14-offline-open-card": {
+  "scrollWidth": 1440,
+  "small": []
+ },
+ "desktop-dark-15-signed-out": {
+  "scrollWidth": 1440,
+  "small": []
+ }
+}

@@ -3,17 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import { shortHash } from "@/lib/api";
-import { type Blocking, type Card, REJECTION_REASONS } from "@/lib/types";
+import { NEXT_STEP } from "@/lib/refusal";
+import { type Card, REJECTION_REASONS } from "@/lib/types";
+import { channelList, channelName, checkWords, detailText, groupChecks, slotDay } from "@/lib/words";
 
-// One card per bundle. Everything shown is what the server hashed; the client sends back only
-// the flag ids it acknowledged and the seconds this card was visible. All text is untrusted and
-// rendered as text.
-
-const NEXT_STEP: Record<Blocking["kind"], string> = {
-  fail: "Edit the text; the checks run again on the new version.",
-  not_checked: "Wait for the checks to run on this version, then reopen the card.",
-  problem: "Ask the operator to look at this bundle.",
-};
+// One card per bundle, in the order a person decides: the piece exactly as it will post, then
+// what needs their attention, then the decision. Everything shown is what the server hashed; the
+// client sends back only the flag ids it acknowledged and the seconds this card was visible.
+// All text is untrusted and rendered as text.
 
 export type ReviewCardProps = {
   card: Card;
@@ -22,6 +19,7 @@ export type ReviewCardProps = {
   onEdit: (variantId: string, text: string) => void;
   onReject: (reason: string) => void;
   onLater?: () => void;
+  position?: string;
   now?: () => number;
 };
 
@@ -49,7 +47,22 @@ function useVisibleSeconds(now: () => number) {
 
 const defaultNow = () => performance.now();
 
-export function ReviewCard({ card, busy = false, onApprove, onEdit, onReject, onLater, now = defaultNow }: ReviewCardProps) {
+function CopyHash({ hash }: { hash: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="link-button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(hash).then(() => setCopied(true), () => undefined);
+      }}
+    >
+      {copied ? "Copied" : "Copy the full version id"}
+    </button>
+  );
+}
+
+export function ReviewCard({ card, busy = false, onApprove, onEdit, onReject, onLater, position, now = defaultNow }: ReviewCardProps) {
   const [acked, setAcked] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -68,171 +81,216 @@ export function ReviewCard({ card, busy = false, onApprove, onEdit, onReject, on
       return next;
     });
 
-  let hint = "Approving sends nothing; the piece goes out on its slot.";
-  if (card.blocking.length > 0) hint = "This bundle cannot be approved yet. See what blocks it above.";
+  let hint = "Approving sends nothing now. It posts on its slot.";
+  if (card.blocking.length > 0) hint = "This cannot be approved yet. See what to fix first.";
   else if (!card.can_approve) hint = "This bundle is not waiting for review.";
   else if (open > 0) hint = `Mark ${open} flag${open === 1 ? "" : "s"} as read to approve.`;
+
+  const day = slotDay(card.slot?.day);
+  const channels = channelList(card.variants.map((v) => v.channel));
+  const claims = card.variants.flatMap((v) => v.claims);
 
   return (
     <article className="card" aria-labelledby={`card-${card.bundle_id}`}>
       <header className="card-head">
-        <h1 id={`card-${card.bundle_id}`} className="card-title">
-          {card.variants.map((v) => v.channel).join(" and ") || "Empty bundle"}
-        </h1>
-        {card.why ? <p className="card-why">Why now: {card.why}</p> : null}
+        <div className="card-meta">
+          <h1 id={`card-${card.bundle_id}`} className="sr-only">
+            {channels} piece{day ? ` for ${day}` : ""}
+          </h1>
+          <span>{channels}</span>
+          {day ? <span>{day}</span> : <span>No slot yet</span>}
+          {position ? <span className="card-pos">{position}</span> : null}
+        </div>
+        {card.reason ? <p className="card-reason">{card.reason}</p> : null}
       </header>
 
-      {card.blocking.length > 0 ? (
-        <section className="panel panel-block" aria-label="What blocks approval">
-          <h2>Cannot be approved yet</h2>
-          <ul>
-            {card.blocking.map((b, i) => (
-              <li key={`${b.check_name}-${b.variant_id ?? "all"}-${i}`}>
-                <span className="check-name">{b.check_name}</span>
-                <span className="check-kind">{b.kind === "fail" ? "failed" : b.kind === "not_checked" ? "not checked" : "problem"}</span>
-                {b.reason ? <p>{b.reason}</p> : null}
-                <p className="next-step">{NEXT_STEP[b.kind]}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {card.variants.map((v) => (
-        <section key={v.id} className="piece" aria-label={`${v.channel} piece`}>
-          <div className="piece-meta">
-            <span className="chip">{v.channel}</span>
-            <span className="chip quiet">{v.language}</span>
-            <span className="chip quiet">version {v.version}</span>
-          </div>
-          {v.media.map((m) =>
-            m.url && m.mime.startsWith("image/") ? (
-              // eslint-disable-next-line @next/next/no-img-element -- bytes come from the authenticated media route
-              <img key={m.sha256} className="piece-media" src={m.url} alt={m.alt_text ?? "Image with no description"} />
+      <div className="card-piece">
+        {card.variants.length === 0 ? <p className="post-media-missing">This bundle has no pieces.</p> : null}
+        {card.variants.map((v) => (
+          <section key={v.id} className="post" aria-label={`${channelName(v.channel)} piece as it will post`}>
+            <div className="post-head">
+              <strong>{channelName(v.channel)}</strong>
+              <span>{v.language.toUpperCase()}</span>
+              <span>version {v.version}</span>
+            </div>
+            {v.media.map((m) =>
+              m.url && m.mime.startsWith("image/") ? (
+                // eslint-disable-next-line @next/next/no-img-element -- bytes come from the authenticated media route
+                <img key={m.sha256} className="post-media" src={m.url} alt={m.alt_text ?? "Image with no description"} />
+              ) : (
+                <p key={m.sha256} className="post-media-missing">
+                  {m.kind} file ({m.mime}) {m.url ? <a href={m.url}>open</a> : "not viewable here"}
+                </p>
+              ),
+            )}
+            {editing === v.id ? (
+              <form
+                className="edit"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  onEdit(v.id, draft);
+                }}
+              >
+                <label htmlFor={`edit-${v.id}`}>Edit the text. Facts stay as slots like {"{{C-0001}}"}.</label>
+                <textarea id={`edit-${v.id}`} value={draft} onChange={(e) => setDraft(e.target.value)} rows={8} />
+                <div className="row">
+                  <button type="submit" className="button primary" disabled={busy || !draft.trim()}>
+                    Save and recheck
+                  </button>
+                  <button type="button" className="button" onClick={() => setEditing(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
             ) : (
-              <p key={m.sha256} className="piece-media-missing">
-                {m.kind} file ({m.mime}) {m.url ? <a href={m.url}>open</a> : "not viewable here"}
-              </p>
-            ),
-          )}
-          {editing === v.id ? (
-            <form
-              className="edit"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onEdit(v.id, draft);
-              }}
-            >
-              <label htmlFor={`edit-${v.id}`}>Edit the text. Facts stay as slots like {"{{C-0001}}"}.</label>
-              <textarea id={`edit-${v.id}`} value={draft} onChange={(e) => setDraft(e.target.value)} rows={6} />
-              <div className="row">
-                <button type="submit" className="button primary" disabled={busy || !draft.trim()}>
-                  Save and recheck
-                </button>
-                <button type="button" className="button" onClick={() => setEditing(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : (
-            <p className="piece-text" data-testid="piece-text">
-              {v.text}
-            </p>
-          )}
-          {v.claims.length > 0 ? (
-            <details className="facts">
-              <summary>Facts used ({v.claims.length})</summary>
+              <>
+                <p className="post-text" data-testid="piece-text">
+                  {v.text}
+                </p>
+                <div className="post-foot">
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setEditing(v.id);
+                      setDraft(v.source_text);
+                    }}
+                  >
+                    Edit this piece
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        ))}
+      </div>
+
+      <div className="card-side">
+        <section className="attention" aria-label="What needs your attention">
+          {card.blocking.length > 0 ? (
+            <>
+              <h2>Fix before it can be approved</h2>
               <ul>
-                {v.claims.map((c) => (
-                  <li key={c.code}>
-                    <span className="check-name">{c.code}</span> {c.value}
-                    {c.unit ? ` ${c.unit}` : ""} <span className="chip quiet">{c.state}</span>
-                  </li>
-                ))}
+                {groupChecks(card.blocking).map(({ first: b, details }) => {
+                  const w = checkWords(b);
+                  return (
+                    <li key={b.check_name} className="item item-blocked">
+                      <span className="item-title">{w.label}</span>
+                      <p className="item-explain">{w.explain}</p>
+                      {details.length > 0 ? <p className="item-detail">{details.join(". ")}</p> : null}
+                      <p className="item-next">{NEXT_STEP[b.kind]}</p>
+                      <span className="check-code">{b.check_name}</span>
+                    </li>
+                  );
+                })}
               </ul>
-            </details>
+            </>
           ) : null}
-          {editing !== v.id ? (
+          {card.flags.length > 0 ? (
+            <>
+              <h2>Read before approving</h2>
+              <ul>
+                {card.flags.map((f) => {
+                  const w = checkWords(f);
+                  const read = acked.has(f.id);
+                  return (
+                    <li key={f.id} className={read ? "item item-flag read" : "item item-flag"}>
+                      <div className="item-row">
+                        <div>
+                          <span className="item-title">{w.label}</span>
+                          <p className="item-explain">{w.explain}</p>
+                          {f.reason ? <p className="item-detail">{detailText(f.reason)}</p> : null}
+                          <span className="check-code">{f.check_name}</span>
+                        </div>
+                        <button type="button" className="button small" aria-pressed={read} onClick={() => toggle(f.id)}>
+                          {read ? "Read" : "Mark as read"}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : null}
+          {card.blocking.length === 0 && card.flags.length === 0 && card.can_approve ? (
+            <p className="all-clear">Every check passed. Nothing to read first.</p>
+          ) : null}
+        </section>
+
+        {rejecting ? (
+          <section className="reject-panel" aria-label="Reason for rejecting">
+            <h2>Why not?</h2>
+            <div className="reasons">
+              {REJECTION_REASONS.map((r) => (
+                <button key={r.value} type="button" className="button" disabled={busy} onClick={() => onReject(r.value)}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="link-button" onClick={() => setRejecting(false)}>
+              Keep it
+            </button>
+          </section>
+        ) : null}
+
+        <div className="approve-bar">
+          <p className="hint" aria-live="polite">
+            {hint}
+          </p>
+          <div className="actions">
             <button
               type="button"
-              className="link-button"
-              onClick={() => {
-                setEditing(v.id);
-                setDraft(v.source_text);
-              }}
+              className="button primary big"
+              disabled={!canApprove}
+              onClick={() => onApprove([...acked], Math.round(seconds() * 10) / 10)}
             >
-              Edit this piece
+              Approve
             </button>
-          ) : null}
-        </section>
-      ))}
-
-      {card.flags.length > 0 ? (
-        <section className="panel panel-flag" aria-label="Flags to read">
-          <h2>Read before approving</h2>
-          <ul>
-            {card.flags.map((f) => (
-              <li key={f.id} className={acked.has(f.id) ? "flag read" : "flag"}>
-                <div>
-                  <span className="check-name">{f.check_name}</span>
-                  <p>{f.reason ?? "A check asked a person to look at this."}</p>
-                </div>
-                <button
-                  type="button"
-                  className="button small"
-                  aria-pressed={acked.has(f.id)}
-                  onClick={() => toggle(f.id)}
-                >
-                  {acked.has(f.id) ? "Read" : "Mark as read"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {rejecting ? (
-        <section className="panel" aria-label="Reason for rejecting">
-          <h2>Why not?</h2>
-          <div className="reasons">
-            {REJECTION_REASONS.map((r) => (
-              <button key={r.value} type="button" className="button" disabled={busy} onClick={() => onReject(r.value)}>
-                {r.label}
+            <button type="button" className="button" disabled={busy || card.state !== "in_review"} onClick={() => setRejecting(true)}>
+              Reject
+            </button>
+            {onLater ? (
+              <button type="button" className="button quiet" onClick={onLater}>
+                Later
               </button>
-            ))}
+            ) : null}
           </div>
-          <button type="button" className="link-button" onClick={() => setRejecting(false)}>
-            Keep it
-          </button>
-        </section>
-      ) : null}
-
-      <footer className="card-foot">
-        <p className="hash">
-          You approve exactly version <code data-testid="root-hash" title={card.root_hash ?? undefined}>{shortHash(card.root_hash)}</code>
-        </p>
-        <p className="hint" aria-live="polite">
-          {hint}
-        </p>
-        <div className="row">
-          <button
-            type="button"
-            className="button primary big"
-            disabled={!canApprove}
-            onClick={() => onApprove([...acked], Math.round(seconds() * 10) / 10)}
-          >
-            Approve
-          </button>
-          <button type="button" className="button" disabled={busy || card.state !== "in_review"} onClick={() => setRejecting(true)}>
-            Reject
-          </button>
-          {onLater ? (
-            <button type="button" className="button quiet" onClick={onLater}>
-              Later
-            </button>
-          ) : null}
         </div>
-      </footer>
+
+        <div className="more">
+          {claims.length > 0 ? (
+            <details>
+              <summary>Facts used ({claims.length})</summary>
+              <div>
+                <ul>
+                  {claims.map((c) => (
+                    <li key={c.code}>
+                      {c.value}
+                      {c.unit ? ` ${c.unit}` : ""} <span className="chip">{c.state}</span>{" "}
+                      <span className="check-code">{c.code}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          ) : null}
+          <details>
+            <summary>How this was chosen</summary>
+            <div>
+              {card.why ? <p className="why-tech">{card.why}</p> : <p className="why-tech">No selection notes for this piece.</p>}
+              <div className="hash-row">
+                <span>
+                  You approve exactly version{" "}
+                  <code data-testid="root-hash" title={card.root_hash ?? undefined}>
+                    {shortHash(card.root_hash)}
+                  </code>
+                </span>
+                {card.root_hash ? <CopyHash hash={card.root_hash} /> : null}
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
     </article>
   );
 }

@@ -27,18 +27,28 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import replace
+from datetime import date
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.check_labels import label
 from api.context import REVIEWERS, Ctx, member, services
 from api.errors import ApiError, conflict, not_found
 from api.sessions import Shown
 from thallo.contracts.actors import ActorRef, HumanOnlyViolation
 from thallo.contracts.enums import ApprovalMethod, EditKind, RejectionReason
 from thallo.contracts.ids import is_id, new_id
-from thallo.contracts.models import Asset, Bundle, Edit, Media, Variant
-from thallo.contracts.states import BUNDLE, VARIANT, BundleState, IllegalTransition, VariantState
+from thallo.contracts.models import Asset, Brief, Bundle, Edit, Media, Pillar, PlanSlot, Variant
+from thallo.contracts.states import (
+    BUNDLE,
+    VARIANT,
+    BundleState,
+    ClaimState,
+    IllegalTransition,
+    PlanSlotState,
+    VariantState,
+)
 from thallo.gate.approvals import ApprovalRefused, approve_bundle_from_repo, void_bundle_approvals
 from thallo.gate.canonical import CanonicalFormError, MemoResolver, build_snapshot
 from thallo.gate.checks import content_types, review_checks
@@ -89,18 +99,20 @@ def _card(tx, ctx: Ctx, bundle: Bundle) -> dict:  # noqa: ANN001
     asset = tx.get(Asset, bundle.asset_id)
     card: dict = {"bundle_id": bundle.id, "state": bundle.state.value, "root_hash": None,
                   "why": asset.selection_reason if asset is not None else None,
-                  "variants": [], "flags": [], "blocking": [], "can_approve": False}
+                  "reason": None, "headline": None, "slot": None,
+                  "variants": [],"flags": [], "blocking": [], "can_approve": False}
     try:
         content = load_bundle(gate, t, bundle)
         snapshot = build_snapshot(content, MemoResolver(lambda url: gate.resolve_link(t, url)),
                                   frozenset(gate.non_link_allowlist(t)))
     except MediaUnreadable:
         card["blocking"].append({"kind": "problem", "variant_id": None, "check_name": "media.readable",
-                                 "reason": "a media file could not be read; nothing can be approved"})
+                                 "reason": "a media file could not be read; nothing can be approved",
+                                 **label("media.readable")})
         return card
     except CanonicalFormError as exc:
         card["blocking"].append({"kind": "problem", "variant_id": None, "check_name": "gate.canonical_form",
-                                 "reason": str(exc)})
+                                 "reason": str(exc), **label("gate.canonical_form")})
         return card
     hashes = snapshot.hash.variants
     types = {vid: content_types(snapshot.payload(vid)) for vid in hashes}
@@ -109,11 +121,13 @@ def _card(tx, ctx: Ctx, bundle: Bundle) -> dict:  # noqa: ANN001
     by_id = {r.id: r for r in review.counted}
     card["root_hash"] = snapshot.hash.root
     card["flags"] = [{"id": r.id, "variant_id": r.variant_id, "check_name": r.check_name, "layer": r.layer.value,
-                      "reason": r.reason} for rid in sorted(review.flags) if (r := by_id[rid])]
+                      "reason": r.reason, **label(r.check_name)} for rid in sorted(review.flags) if (r := by_id[rid])]
     card["blocking"] += [{"kind": "fail", "variant_id": r.variant_id, "check_name": r.check_name,
-                          "reason": r.reason} for rid in sorted(review.failing) if (r := by_id[rid])]
+                          "reason": r.reason, **label(r.check_name)}
+                         for rid in sorted(review.failing) if (r := by_id[rid])]
     card["blocking"] += [{"kind": "not_checked", "variant_id": vid, "check_name": f"coverage.{kind.value}",
-                          "reason": f"no {kind.value} check has run on this content"}
+                          "reason": f"no {kind.value} check has run on this content",
+                          **label(f"coverage.{kind.value}")}
                          for vid, kinds in review.missing.items() for kind in kinds]
     for vc in content.variants:
         v = vc.variant
@@ -133,7 +147,58 @@ def _card(tx, ctx: Ctx, bundle: Bundle) -> dict:  # noqa: ANN001
         })
     card["can_approve"] = (bundle.state is BundleState.IN_REVIEW and not card["blocking"]
                            and all(v["state"] == VariantState.REVIEW.value for v in card["variants"]))
+    card["slot"] = _slot(tx, [v["id"] for v in card["variants"]])
+    card["headline"] = _headline(card["variants"])
+    card["reason"] = _reason(tx, asset, card["slot"], card["variants"])
     return card
+
+
+# ---------------------------------------------------------------------- plain words for the card
+# Read only, from rows the tenant already has. Nothing is invented: a line with no data behind it
+# is None and the UI shows nothing in its place.
+
+def _slot(tx, variant_ids: list[str]) -> dict | None:  # noqa: ANN001
+    """The earliest live week-plan slot that carries one of these variants."""
+    slots = [s for vid in variant_ids for s in tx.list_all(PlanSlot, variant_id=vid)
+             if s.state is not PlanSlotState.KILLED]
+    if not slots:
+        return None
+    s = min(slots, key=lambda x: x.starts_at)
+    pillar = tx.get(Pillar, s.pillar_id) if s.pillar_id else None
+    return {"starts_at": s.starts_at.isoformat(), "day": s.starts_at.date().isoformat(),
+            "pillar": pillar.name if pillar is not None else None, "stage": s.stage.value}
+
+
+def _headline(variants: list[dict]) -> str | None:
+    """The first line of the text as it will post, cut at 90 characters."""
+    for v in variants:
+        line = next((ln.strip() for ln in v["text"].splitlines() if ln.strip()), "")
+        if line:
+            return line if len(line) <= 90 else line[:89].rstrip(" .,;:") + "…"
+    return None
+
+
+def _reason(tx, asset: Asset | None, slot: dict | None, variants: list[dict]) -> str | None:  # noqa: ANN001
+    """One plain line: the slot it fills, else the verified fact it is built on, else who it is for."""
+    if slot is not None:
+        day = date.fromisoformat(slot["day"]).strftime("%A")
+        return f"Fills {day}'s {slot['pillar']} slot." if slot["pillar"] else f"Fills {day}'s slot."
+    fact = next((c for v in variants for c in v["claims"] if c["state"] == ClaimState.VERIFIED.value), None)
+    if fact is not None:
+        unit = f" {fact['unit']}" if fact["unit"] else ""
+        return f"Built on a fact you verified: {fact['value']}{unit}."
+    brief = tx.get(Brief, asset.brief_id) if asset is not None else None
+    if brief is not None and brief.audience.strip():
+        who = brief.audience.strip().rstrip(".")
+        return f"Written for {who[0].lower()}{who[1:]}."
+    return None
+
+
+def _status(card: dict) -> str:
+    """ready, flag (a person has to read a flag first) or blocked."""
+    if card["blocking"] or not card["can_approve"]:
+        return "blocked"
+    return "flag" if card["flags"] else "ready"
 
 
 @router.get("/review/bundles")
@@ -144,8 +209,14 @@ def list_bundles(request: Request) -> dict:
         out = []
         for b in rows:
             variants = tx.list_all(Variant, bundle_id=b.id)
+            card = _card(tx, ctx, b)  # read only: showing a card is recorded by get_card alone
+            thumb = next((m["url"] for v in card["variants"] for m in v["media"]
+                          if m["url"] and m["mime"].startswith("image/")), None)
             out.append({"bundle_id": b.id, "created_at": b.created_at.isoformat(), "state": b.state.value,
-                        "channels": sorted({v.channel.value for v in variants}), "variant_count": len(variants)})
+                        "channels": sorted({v.channel.value for v in variants}), "variant_count": len(variants),
+                        "headline": card["headline"], "thumbnail_url": thumb, "slot": card["slot"],
+                        "status": _status(card), "flag_count": len(card["flags"]),
+                        "blocking_count": len(card["blocking"])})
     return {"bundles": out}
 
 

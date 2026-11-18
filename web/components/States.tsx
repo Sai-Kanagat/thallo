@@ -3,17 +3,20 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { Mark } from "@/components/Mark";
 import type { ApiError } from "@/lib/api";
 
 // Designed states for every screen: loading, empty, error (with the next step) and offline.
 
 export function Loading({ what }: { what: string }) {
   return (
-    <div className="state state-loading" role="status" aria-live="polite">
-      <span className="spore" aria-hidden="true" />
-      <span className="spore" aria-hidden="true" />
-      <span className="spore" aria-hidden="true" />
-      <p>Loading {what}</p>
+    <div className="narrow-col" role="status" aria-live="polite">
+      <p className="fine">Loading {what}</p>
+      <div className="skeleton" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
     </div>
   );
 }
@@ -21,9 +24,7 @@ export function Loading({ what }: { what: string }) {
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="state state-empty">
-      <svg className="state-mark" viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M24 42c0-10 0-16 0-24M24 26c-6-1-10-5-11-11 6 1 10 5 11 11zM24 20c5-1 9-4 10-10-5 1-9 4-10 10z" />
-      </svg>
+      <Mark className="brand-mark state-mark" />
       <h2>{title}</h2>
       {children ? <div className="state-body">{children}</div> : null}
     </div>
