@@ -83,7 +83,11 @@ def cost_cap_eur(length: PieceLength) -> Decimal:
 
 
 class Grader(Protocol):
-    """Optional (WP-07 owns the graders). Higher is better; the note goes into the reason."""
+    """Optional (WP-07 owns the graders). Higher is better; the note goes into the reason.
+
+    A grader that calls a vendor also offers `drain_costs() -> Sequence[CostEntry]`: the cost rows
+    of the calls it made since the last drain, billed ones included when it then raised. They are
+    drained after every `grade`, whether it answered or raised, so a billed call is never lost."""
 
     def grade(self, text: str, brief: Brief) -> tuple[float, str]: ...
 
@@ -307,7 +311,7 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                 if built is not None:
                     cand.slop = find_slop(text, brief.language, extra_slop)
                     if grader is not None:
-                        _grade(cand, attempt, grader, built, brief)
+                        _grade(cand, attempt, grader, built, brief, run)
                     cand.built, cand.status = built, "built"
                     break
                 if number > MAX_REPAIR_LOOPS:
@@ -328,15 +332,29 @@ def produce_copy(*, registry: ConnectionRegistry, tenant: Tenant, brief: Brief, 
                    resolver=resolver, non_links=frozenset(non_links))
 
 
-def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief) -> None:
-    """A grader that raises fails the candidate with the check named; it never counts as a pass."""
+def _drain_grader_costs(grader: Grader, run: _Run) -> None:
+    drain = getattr(grader, "drain_costs", None)
+    if not callable(drain):
+        return
+    for entry in drain():
+        if not isinstance(entry, CostEntry) or entry.tenant_id != run.tenant.id:
+            raise ValueError("a grader returned a cost row that is not this tenant's")
+        run.costs.append(entry)
+        run.spent += entry.cost_eur
+
+
+def _grade(cand: CandidateRun, attempt: Attempt, grader: Grader, built: Built, brief: Brief, run: _Run) -> None:
+    """A grader that raises fails the candidate with the check named; it never counts as a pass.
+    Its billed calls reach the ledger either way (`Grader.drain_costs`)."""
     try:
         cand.grade = grader.grade(built.filled.text, brief)
     except Exception as exc:  # noqa: BLE001 - any grader failure is a FAIL
+        _drain_grader_costs(grader, run)
         attempt.error_check = GRADER_CHECK
         attempt.fill_problems = (f"the grader raised {type(exc).__name__}",)
         cand.status = "failed"
         raise _Stop(CopyStatus.NEEDS_HUMAN, f"{GRADER_CHECK} failed: the grader raised {type(exc).__name__}") from None
+    _drain_grader_costs(grader, run)
 
 
 # ---------------------------------------------------------------------------- selection
