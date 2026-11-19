@@ -1,0 +1,12 @@
+{
+  "_provenance": "HAND-WRITTEN from the OpenAI-compatible audio transcription response shapes documented by the vendors and local servers (Nov 2026). None was captured from a live call; texts and numbers are invented.",
+  "json_ok": {"status": 200, "body": {"text": "We delivered 12 cars this week, financing at 3.5% over 36 months."}},
+  "verbose_ok": {"status": 200, "body": {
+    "task": "transcribe", "language": "italian", "duration": 42.5,
+    "text": "Abbiamo consegnato 12 auto questa settimana.",
+    "segments": [{"id": 0, "seek": 0, "start": 0.0, "end": 3.2, "text": "Abbiamo consegnato 12 auto", "tokens": [1, 2]},
+                 {"id": 1, "seek": 0, "start": 3.2, "end": 5.0, "text": " questa settimana."}]}},
+  "models": {"status": 200, "body": {"object": "list", "data": [{"id": "whisper-1", "object": "model"}]}},
+  "server_error": {"status": 500, "body": {"error": {"message": "hand-written failure", "type": "server_error"}}},
+  "bad_shape": {"status": 200, "body": {"transcript": "no text field"}}
+}
