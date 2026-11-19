@@ -1,10 +1,10 @@
 """Directories and the click recorder for the redirector.
 
 - `PgLinkDirectory(url)`: connects with THALLO_REDIRECT_DATABASE_URL, a login that is a member of
-  cortex_redirector (migration 0024) and of nothing else. That role reads id, tenant_id, slug and
-  destination of tracked_link and has no other grant, so this connection can do nothing but turn a
-  slug into a destination. Never the app URL (the app role cannot read across tenants) and never
-  the owner URL.
+  cortex_redirector (migration 0024) and of nothing else. That role reads no table; it can only
+  call redirect_lookup(slug), which returns (id, tenant_id, destination) of a live link, so this
+  connection can do nothing but turn a slug into a destination. Never the app URL (the app role cannot read across
+  tenants) and never the owner URL.
 - `MemoryLinkDirectory(backend)`: the same over the API's MemoryBackend, for tests and the demo.
 - `backend_recorder(backend, clock)`: writes the click touch as the app role inside the link's own
   tenant transaction, after re-reading the row there and checking it is the same link.
@@ -32,13 +32,13 @@ class PgLinkDirectory:
         if not is_slug(slug):
             return None
         with psycopg.connect(self.url, autocommit=True, connect_timeout=5) as conn:
-            row = conn.execute("SELECT id::text, tenant_id::text, destination FROM tracked_link_live WHERE slug = %s",
+            row = conn.execute("SELECT id::text, tenant_id::text, destination FROM redirect_lookup(%s)",
                                (slug,)).fetchone()
         return PublicLink(row[1], row[0], row[2]) if row else None
 
 
 def is_live(rows: dict, link: TrackedLink, clock: Clock) -> bool:
-    """The rule of the tracked_link_live view (migration 0024), over in-memory tables."""
+    """The liveness rule of redirect_lookup (migration 0024), over in-memory tables."""
     def same(r: Any) -> bool:
         return r is not None and r.tenant_id == link.tenant_id
     if link.variant_id:

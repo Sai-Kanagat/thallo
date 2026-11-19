@@ -7,9 +7,8 @@
 -- 2. tracked_link is fixed once written: slug, destination, code, variant and ad cannot change,
 --    so a link in a published post can never be repointed. A new destination is a new row.
 -- 3. cortex_redirector: the public redirector's own role, following cortex_worker in 0012. It
---    can read four columns of tracked_link across tenants and nothing else, so a click can be
---    turned into (tenant, link, destination). The click touch is then written by the app role
---    inside that tenant's transaction. It is NOLOGIN; a redirector process logs in as a member.
+--    reads no table; it can only call redirect_lookup (section 4). It is NOLOGIN; a redirector
+--    process logs in as a member.
 -- No role attributes beyond those of 0012 are named, so it runs on Supabase as on Docker.
 
 CREATE TABLE tracking_code (
@@ -66,41 +65,60 @@ BEGIN
   END IF;
 END
 $$;
+-- 4. The redirector reads no table. Its only privilege is EXECUTE on redirect_lookup(slug), a
+--    SECURITY DEFINER function owned by the migration (owner) role that returns (id, tenant_id,
+--    destination) for one link, and only when the link is live: its variant is published, or its
+--    bundle holds an approval that is not voided, not expired and bound to the bundle's current
+--    root hash; or its ad is active or paused (an ad goes active only after a signed spend
+--    proposal). A link with neither a variant nor an ad never redirects. A published link keeps
+--    working after a later void: the post is already out.
+--    Row-level security is forced, so the function finds the slug's tenant through one SELECT-only
+--    policy for the owner role on tracked_link, then checks liveness with app.tenant_id set to
+--    that tenant, under the ordinary tenant_isolation policies. The click touch is written by the
+--    app role inside the tenant's transaction, so the redirector needs no other grant.
 GRANT USAGE ON SCHEMA public TO cortex_redirector;
-GRANT SELECT (id, tenant_id, slug, destination) ON tracked_link TO cortex_redirector;
-CREATE POLICY redirector_lookup ON tracked_link AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
+DO $$
+BEGIN
+  EXECUTE format('CREATE POLICY redirect_slug_lookup ON tracked_link AS PERMISSIVE FOR SELECT TO %I USING (true)',
+                 current_user);
+END
+$$;
 
--- 4. Only live links redirect (lead review). tracked_link_live is the one relation the redirector
---    queries: a link whose variant is published, or whose bundle holds an approval that is not
---    voided, not expired and bound to the bundle's current root hash; or whose ad is active or
---    paused (an ad goes active only after a signed spend proposal). A link with neither a variant
---    nor an ad never redirects. The view runs with the caller's rights (security_invoker), so
---    row-level security still applies; the redirector role gets SELECT-only policies and grants on
---    just the columns the view reads. A published link keeps working after a later void: the post
---    is already out.
-GRANT SELECT (variant_id, ad_id) ON tracked_link TO cortex_redirector;
-GRANT SELECT (id, tenant_id, bundle_id) ON variant TO cortex_redirector;
-GRANT SELECT (id, tenant_id, root_hash) ON bundle TO cortex_redirector;
-GRANT SELECT (tenant_id, subject_kind, subject_id, content_hash, expires_at, voided_at) ON approval TO cortex_redirector;
-GRANT SELECT (tenant_id, variant_id) ON publication TO cortex_redirector;
-GRANT SELECT (id, tenant_id, state) ON ad TO cortex_redirector;
-CREATE POLICY redirector_lookup ON variant AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
-CREATE POLICY redirector_lookup ON bundle AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
-CREATE POLICY redirector_lookup ON approval AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
-CREATE POLICY redirector_lookup ON publication AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
-CREATE POLICY redirector_lookup ON ad AS PERMISSIVE FOR SELECT TO cortex_redirector USING (true);
-
-CREATE VIEW tracked_link_live WITH (security_invoker = true) AS
-SELECT l.id, l.tenant_id, l.slug, l.destination
-FROM tracked_link l
-WHERE (l.variant_id IS NOT NULL AND (
-         EXISTS (SELECT 1 FROM publication p WHERE p.tenant_id = l.tenant_id AND p.variant_id = l.variant_id)
-         OR EXISTS (SELECT 1 FROM variant v
-                    JOIN bundle b ON b.tenant_id = v.tenant_id AND b.id = v.bundle_id
-                    JOIN approval a ON a.tenant_id = b.tenant_id AND a.subject_kind = 'bundle' AND a.subject_id = b.id
-                    WHERE v.tenant_id = l.tenant_id AND v.id = l.variant_id
-                      AND a.voided_at IS NULL AND a.expires_at > now() AND a.content_hash = b.root_hash)))
-   OR (l.ad_id IS NOT NULL AND EXISTS (
-         SELECT 1 FROM ad d WHERE d.tenant_id = l.tenant_id AND d.id = l.ad_id AND d.state IN ('active', 'paused')));
-REVOKE ALL ON tracked_link_live FROM PUBLIC;
-GRANT SELECT ON tracked_link_live TO cortex_redirector;
+CREATE FUNCTION redirect_lookup(p_slug text)
+RETURNS TABLE (id uuid, tenant_id uuid, destination text)
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  l public.tracked_link%ROWTYPE;
+  prev text := current_setting('app.tenant_id', true);
+  live boolean;
+BEGIN
+  IF p_slug IS NULL OR p_slug !~ '^[a-z2-7]{10}$' THEN
+    RETURN;
+  END IF;
+  SELECT * INTO l FROM public.tracked_link t WHERE t.slug = p_slug;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  PERFORM set_config('app.tenant_id', l.tenant_id::text, true);
+  live := (l.variant_id IS NOT NULL AND (
+             EXISTS (SELECT 1 FROM public.publication p WHERE p.tenant_id = l.tenant_id AND p.variant_id = l.variant_id)
+             OR EXISTS (SELECT 1 FROM public.variant v
+                        JOIN public.bundle b ON b.tenant_id = v.tenant_id AND b.id = v.bundle_id
+                        JOIN public.approval a ON a.tenant_id = b.tenant_id AND a.subject_kind = 'bundle'
+                                              AND a.subject_id = b.id
+                        WHERE v.tenant_id = l.tenant_id AND v.id = l.variant_id
+                          AND a.voided_at IS NULL AND a.expires_at > now() AND a.content_hash = b.root_hash)))
+       OR (l.ad_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM public.ad d WHERE d.tenant_id = l.tenant_id AND d.id = l.ad_id
+                                         AND d.state IN ('active', 'paused')));
+  PERFORM set_config('app.tenant_id', coalesce(prev, ''), true);
+  IF live THEN
+    id := l.id; tenant_id := l.tenant_id; destination := l.destination;
+    RETURN NEXT;
+  END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION redirect_lookup(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION redirect_lookup(text) TO cortex_redirector;

@@ -6,7 +6,7 @@ Safety rules, each with a test (tests/wp12_tracking):
   request (query string, headers, path beyond the slug) reaches the response. A slug that is not
   10 base32 characters is refused before any lookup. Unknown slug: 404, no redirect.
 - Only live links: the directory returns a link only when its variant is published or holds a
-  live approval on the current root hash, or its ad is active or paused (view tracked_link_live,
+  live approval on the current root hash, or its ad is active or paused (redirect_lookup,
   migration 0024). A minted, unapproved, voided or source-less link is a 404.
 - The same destination the gate trusts: `PgGateRepository.resolve_link` reads the same row for the
   same `<prefix><slug>` shape, so the reviewer approved exactly where the browser is sent.
@@ -52,7 +52,7 @@ class PublicLink:
 
 class LinkDirectory(Protocol):
     """Slug to (tenant, link, destination) across tenants. The only cross-tenant read; backed by
-    the cortex_redirector role (migration 0024), which sees four columns of tracked_link."""
+    the cortex_redirector role (migration 0024), which can only call redirect_lookup(slug)."""
 
     def lookup(self, slug: str) -> PublicLink | None: ...
 
