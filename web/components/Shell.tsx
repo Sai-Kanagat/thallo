@@ -12,6 +12,7 @@ import type { SessionView } from "@/lib/types";
 const NAV = [
   { href: "/review", label: "Review" },
   { href: "/plan", label: "Week" },
+  { href: "/growth", label: "Growth" },
   { href: "/connections", label: "Connections" },
 ];
 
