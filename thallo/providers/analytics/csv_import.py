@@ -39,11 +39,13 @@ def parse(data: bytes, req: c.AnalyticsRequest) -> tuple[list[dict[str, Any]], d
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise PullFailed("the CSV is not UTF-8") from None
-    reader = csv.reader(io.StringIO(text))
     try:
-        header = next(reader)
-    except StopIteration:
-        raise PullFailed("the CSV is empty") from None
+        all_rows = list(csv.reader(io.StringIO(text)))
+    except csv.Error:
+        raise PullFailed("the CSV could not be read") from None
+    if not all_rows:
+        raise PullFailed("the CSV is empty")
+    header, reader = all_rows[0], all_rows[1:]
     cols = [_norm(h) for h in header]
     if "date" not in cols:
         raise PullFailed("the CSV has no date column")

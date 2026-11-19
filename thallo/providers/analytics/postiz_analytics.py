@@ -27,6 +27,7 @@ from thallo.providers.analytics.http_base import (
     Transport,
     finish,
     number,
+    raw_ref,
 )
 
 NAME = "postiz_analytics"
@@ -54,6 +55,7 @@ class PostizAnalytics(AnalyticsHttpProvider):
         url = f"https://api.postiz.com/public/v1/analytics/{self.settings.integration_id}?date={days}"
         reply = self._json(RawCall("GET", url, auth=self._header_auth("authorization", ""),
                                    timeout=self._timeout()), "the Postiz analytics call")
+        raw_ref(reply)  # kept even when the shape check below fails
         if not isinstance(reply, list):
             raise PullFailed("the Postiz analytics reply has an unexpected shape")
         rows: list[dict[str, Any]] = []

@@ -222,3 +222,33 @@ def test_search_console_site_is_validated_and_encoded(clock, vault):
     for bad in ("sc-domain:example.com/../x", "http://example.com/", "https://example.com/path/"):
         assert search_console.create(ctx(clock, vault, "search_console", {"site": bad},
                                          secret=GOOGLE_CRED)).problem() is not None
+
+
+def test_ga4_hostile_shape_is_a_clean_failure(clock, vault):
+    prov, _ = make_ga4(clock, vault, report="ga4_bad_headers")
+    with pytest.raises(PullFailed):
+        prov.run(req("sessions"))
+
+
+def test_csv_huge_cell_is_a_clean_failure(clock, vault):
+    p = csv_import.create(ctx(clock, vault, "csv_import", {}, secret=None, mode=ConnectionMode.LOCAL))
+    data = b"date,clicks\n2026-01-01,\"" + b"9" * 200_000 + b"\"\n"
+    with staged(T, uploads={"u": data}), pytest.raises(PullFailed):
+        p.run(req("clicks", refs=("u",)))
+
+
+def test_refused_token_exchange_never_calls_the_api(clock, vault):
+    t = Fixtures(**{"oauth2.googleapis.com": "error_401", "analyticsdata.googleapis.com": "ga4_report"})
+    prov = ga4.create(ctx(clock, vault, "ga4", {"property_id": "123456"}, secret=GOOGLE_CRED), transport=t)
+    with pytest.raises(PullFailed) as e:
+        prov.run(req("sessions"))
+    assert "4xx" in str(e.value) and "invalid authentication" not in str(e.value)
+    assert [call.url.split("/")[2] for call in t.calls] == ["oauth2.googleapis.com"]
+
+
+def test_raw_reply_kept_even_when_shape_fails(clock, vault):
+    t = Fixtures(**{"api.postiz.com": "ga4_bad_headers"})
+    prov = postiz_analytics.create(ctx(clock, vault, "postiz_analytics", {"integration_id": "ig-1"}), transport=t)
+    with staged(T) as s, pytest.raises(PullFailed):
+        prov.run(req("followers"))
+    assert list(s.raw.values()) == [FIX["ga4_bad_headers"]["body"]]

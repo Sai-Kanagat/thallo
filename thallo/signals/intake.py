@@ -17,22 +17,24 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+import psycopg
 from psycopg.types.json import Jsonb
 
 from thallo.connections.errors import ConnectionsError
+from thallo.connections.registry import ConnectionRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.enums import Channel, ConnectionMode
 from thallo.contracts.models import Signal
 from thallo.signals import context as staging
 
 KIND = "metric"
-WEB_SOURCES = {"ga4", "search_console", "plausible", "own_logs", "csv", "csv_import"}
-Runner = Callable[[c.AnalyticsRequest], c.RunResult]
+WEB_SOURCES = {"ga4", "search_console", "plausible", "own_logs"}
+NIGHTLY_DAYS = 4  # Search Console data lags two to three days; reruns overlap and the newest value wins
 
 
 @dataclass(frozen=True)
@@ -69,14 +71,21 @@ def check_rows(rows: Sequence[Any], req: c.AnalyticsRequest) -> tuple[list[dict[
     return good, dropped
 
 
-def _runner(provider: c.Provider | Runner) -> Runner:
-    return provider.run if hasattr(provider, "run") else provider  # type: ignore[union-attr,return-value]
+def _serve(provider: Any, request: c.AnalyticsRequest) -> tuple[c.RunResult, str, ConnectionMode]:
+    """Run through a `ConnectionRegistry` (its chain decides who serves) or one provider."""
+    if isinstance(provider, ConnectionRegistry):
+        served = provider.run(request.tenant_id, request)
+        return served.result, served.provider, served.mode
+    res = provider.run(request)
+    info = provider.describe()
+    return res, info.name, info.mode
 
 
-def pull(tx: Any, provider: c.Provider | Runner, request: c.AnalyticsRequest, *, provider_name: str,
+def pull(tx: Any, provider: Any, request: c.AnalyticsRequest, *,
          uploads: Mapping[str, bytes] | None = None, touches: staging.TouchReader | None = None) -> PullRecord:
-    """Run `request` through `provider` (a provider, or a callable such as a bound
-    `ConnectionRegistry.run`) inside a staged block, then write what came back."""
+    """Run `request` through `provider` (a provider, or a `ConnectionRegistry`) inside a staged
+    block, then write what came back. The provider name and mode recorded are the ones that
+    actually served, so a fall-through to manual is recorded as manual."""
     if request.tenant_id != tx.tenant_id:
         raise ValueError("the request is for another tenant")
     now = tx.now()
@@ -86,12 +95,17 @@ def pull(tx: Any, provider: c.Provider | Runner, request: c.AnalyticsRequest, *,
     dropped = 0
     raw: Any = None
     status = "failed"
+    provider_name = "unknown"
     missing: tuple[str, ...] = request.metrics
     with staging.staged(tx.tenant_id, uploads=uploads, touches=touches) as s:
         try:
-            res = _runner(provider)(request)
+            res, provider_name, mode = _serve(provider, request)
+        except psycopg.Error:
+            raise
         except ConnectionsError as exc:
-            detail = str(exc)[:500]
+            detail = str(exc)[:500]  # our own messages: a status class or a reason, never a body
+        except Exception as exc:  # untrusted input broke a parser: keep the type, never the text
+            detail = f"the pull failed ({type(exc).__name__})"
         else:
             out = res.output
             if not isinstance(out, c.AnalyticsResult):
@@ -102,12 +116,14 @@ def pull(tx: Any, provider: c.Provider | Runner, request: c.AnalyticsRequest, *,
                 missing = tuple(m for m in request.metrics if m not in seen)
                 if out.raw_ref and out.raw_ref.startswith("sha256:"):
                     raw = s.raw.get(out.raw_ref.removeprefix("sha256:"))
-                if res.provenance.mode is ConnectionMode.MANUAL and not rows and provider_name == "manual":
+                if mode is ConnectionMode.MANUAL and not rows:
                     status = "manual"
                 else:
                     status = "ok" if not missing else "partial"
                 if dropped:
                     detail = f"{dropped} row(s) did not match the expected shape and were dropped"
+        if raw is None and s.raw:
+            raw = list(s.raw.values())[-1]  # a failed pull still keeps what the source said
     raw_sha = None
     if raw is not None:
         raw_sha = hashlib.sha256(json.dumps(raw, sort_keys=True, ensure_ascii=False,
@@ -145,20 +161,32 @@ def latest(tx: Any, source: str, start: date, end: date) -> dict[str, Any] | Non
             "values": {(p["date"], p["metric"]): p["value"] for (p,) in vals}}
 
 
+def values(tx: Any, source: str, start: date, end: date) -> dict[tuple[str, str], float]:
+    """The newest value per (date, metric) for a source, whatever window the pull covered. A
+    failed pull writes no values, so it never hides an earlier good one; a day or metric with no
+    value in any pull is absent here, which readers show as missing."""
+    rows = tx.fetch_all(
+        "SELECT DISTINCT ON (payload->>'date', payload->>'metric') payload->>'date', payload->>'metric',"
+        " (payload->>'value')::float8 FROM signal WHERE kind = %s AND payload->>'source' = %s"
+        " AND (payload->>'date')::date BETWEEN %s AND %s"
+        " ORDER BY payload->>'date', payload->>'metric', created_at DESC, id DESC", (KIND, source, start, end))
+    return {(d, m): v for d, m, v in rows}
+
+
 def nightly_window(today: date) -> tuple[date, date]:
-    """Yesterday, the day a nightly job pulls."""
-    y = today - timedelta(days=1)
-    return y, y
+    """The last NIGHTLY_DAYS days up to yesterday."""
+    return today - timedelta(days=NIGHTLY_DAYS), today - timedelta(days=1)
 
 
-def run_nightly(tx: Any, jobs: Sequence[tuple[str, c.Provider | Runner, str, tuple[str, ...]]], *,
+def run_nightly(tx: Any, provider: Any, jobs: Sequence[tuple[str, tuple[str, ...]]], *,
                 touches: staging.TouchReader | None = None) -> list[PullRecord]:
-    """One pull per (provider name, provider, source, metrics) for yesterday by the tx clock.
-    A failing source is recorded and the rest still run. No scheduler is wired here."""
+    """One pull per (source, metrics) through `provider` (normally the tenant's
+    `ConnectionRegistry`) for the nightly window by the tx clock. A failing source is recorded
+    and the rest still run. No scheduler is wired here."""
     start, end = nightly_window(tx.now().date())
     out = []
-    for name, provider, source, metrics in jobs:
+    for source, metrics in jobs:
         req = c.AnalyticsRequest(tenant_id=tx.tenant_id, source=source, metrics=metrics, start=start, end=end,
                                  idempotency_key=f"signals:{source}:{start.isoformat()}")
-        out.append(pull(tx, provider, req, provider_name=name, touches=touches))
+        out.append(pull(tx, provider, req, touches=touches))
     return out

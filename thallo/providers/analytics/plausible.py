@@ -26,6 +26,7 @@ from thallo.providers.analytics.http_base import (
     Transport,
     finish,
     number,
+    raw_ref,
 )
 
 NAME = "plausible"
@@ -56,6 +57,7 @@ class Plausible(AnalyticsHttpProvider):
         reply = self._json(RawCall("POST", "https://plausible.io/api/v2/query", json.dumps(body).encode(),
                                    "application/json", self._header_auth("authorization", "Bearer "),
                                    self._timeout()), "the Plausible query")
+        raw_ref(reply)  # kept even when the shape check below fails
         results = reply.get("results") if isinstance(reply, dict) else None
         if not isinstance(results, list):
             raise PullFailed("the Plausible reply has an unexpected shape")

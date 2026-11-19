@@ -22,7 +22,15 @@ from thallo.connections.registry import ProviderContext, ProviderRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.enums import Capability, ConnectionMode
 from thallo.providers.analytics.google_base import TOKEN_ORIGIN, GoogleProvider
-from thallo.providers.analytics.http_base import DEFAULT_TIMEOUT_S, PullFailed, RawCall, Transport, finish, number
+from thallo.providers.analytics.http_base import (
+    DEFAULT_TIMEOUT_S,
+    PullFailed,
+    RawCall,
+    Transport,
+    finish,
+    number,
+    raw_ref,
+)
 
 NAME = "search_console"
 API_ORIGIN = ("https", "searchconsole.googleapis.com", 443)
@@ -53,10 +61,14 @@ class SearchConsole(GoogleProvider):
         url = f"https://searchconsole.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
         reply = self._json(RawCall("POST", url, json.dumps(body).encode(), "application/json", auth,
                                    self._timeout()), "the Search Console query")
+        raw_ref(reply)  # kept even when the shape check below fails
         if not isinstance(reply, dict):
             raise PullFailed("the Search Console reply has an unexpected shape")
         rows: list[dict[str, Any]] = []
-        for r in reply.get("rows") or []:
+        found = reply.get("rows") or []
+        if not isinstance(found, list):
+            raise PullFailed("the Search Console reply has an unexpected shape")
+        for r in found:
             keys = r.get("keys") if isinstance(r, dict) else None
             if not (isinstance(keys, list) and keys and isinstance(keys[0], str)):
                 continue

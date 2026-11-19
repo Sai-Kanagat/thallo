@@ -5,7 +5,7 @@
 -- the source's decoded reply as it came (`raw`, with its sha256), what was asked, what came back
 -- missing and whether the pull worked. The per-day values become `signal` rows (kind 'metric')
 -- that name this row's id in their payload. A rerun of the same window is a new row; readers take
--- the latest pull per (source, window). Missing is stored as missing, never as zero.
+-- the newest value per (source, metric, day). Missing is stored as missing, never as zero.
 -- Append-only: a pull is the record of what a source said. No role attributes are named, so it
 -- runs on Supabase as it does on Docker.
 
@@ -13,7 +13,7 @@ CREATE TABLE signal_pull (
   id uuid NOT NULL,
   created_at timestamptz NOT NULL,
   tenant_id uuid NOT NULL REFERENCES tenant(id),
-  provider text NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_]{0,63}$'),
+  provider text NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_-]{0,63}$'),
   source text NOT NULL CHECK (source ~ '^[a-z][a-z0-9_]{0,63}$'),
   window_start date NOT NULL,
   window_end date NOT NULL,

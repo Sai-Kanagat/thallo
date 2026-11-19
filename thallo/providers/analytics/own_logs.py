@@ -64,8 +64,8 @@ class OwnLogs:
         assert reader is not None
         counts = {(d.isoformat(), k): n for d, k, n in reader(request.start, request.end)}
         rows = []
-        day = request.start
-        while day <= request.end:
+        day, last = request.start, min(request.end, self.clock.now().date())
+        while day <= last:  # a day still to come is not a zero
             for metric, kind in METRICS.items():
                 if metric in request.metrics:
                     rows.append({"date": day.isoformat(), "metric": metric,

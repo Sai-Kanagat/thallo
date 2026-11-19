@@ -23,7 +23,15 @@ from thallo.connections.registry import ProviderContext, ProviderRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.enums import Capability, ConnectionMode
 from thallo.providers.analytics.google_base import TOKEN_ORIGIN, GoogleProvider
-from thallo.providers.analytics.http_base import DEFAULT_TIMEOUT_S, PullFailed, RawCall, Transport, finish, number
+from thallo.providers.analytics.http_base import (
+    DEFAULT_TIMEOUT_S,
+    PullFailed,
+    RawCall,
+    Transport,
+    finish,
+    number,
+    raw_ref,
+)
 
 NAME = "ga4"
 API_ORIGIN = ("https", "analyticsdata.googleapis.com", 443)
@@ -56,11 +64,16 @@ class Ga4(GoogleProvider):
         url = f"https://analyticsdata.googleapis.com/v1beta/properties/{self.settings.property_id}:runReport"
         reply = self._json(RawCall("POST", url, json.dumps(body).encode(), "application/json", auth,
                                    self._timeout()), "the GA4 report")
+        raw_ref(reply)  # kept even when the shape check below fails
         if not isinstance(reply, dict) or not isinstance(reply.get("metricHeaders", []), list):
             raise PullFailed("the GA4 reply has an unexpected shape")
-        headers = [_BACK.get(h.get("name")) if isinstance(h, dict) else None for h in reply.get("metricHeaders", [])]
+        headers = [_BACK.get(h["name"]) if isinstance(h, dict) and isinstance(h.get("name"), str) else None
+                   for h in reply.get("metricHeaders", [])]
         rows: list[dict[str, Any]] = []
-        for r in reply.get("rows") or []:
+        found = reply.get("rows") or []
+        if not isinstance(found, list):
+            raise PullFailed("the GA4 reply has an unexpected shape")
+        for r in found:
             if not isinstance(r, dict):
                 continue
             dims, vals = r.get("dimensionValues"), r.get("metricValues")
