@@ -122,3 +122,14 @@ END
 $$;
 REVOKE ALL ON FUNCTION redirect_lookup(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION redirect_lookup(text) TO cortex_redirector;
+-- Supabase exposes public functions to its API roles; make sure none of them can call this one.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON FUNCTION redirect_lookup(text) FROM %I', r);
+    END IF;
+  END LOOP;
+END
+$$;
