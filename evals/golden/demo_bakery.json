@@ -1,0 +1,21 @@
+{
+  "client": "demo_bakery",
+  "note": "Fictional demo business only. Pilot golden sets load from tenant-scoped regression_case rows, never from this folder.",
+  "cases": [
+    {
+      "kind": "golden",
+      "channel": "instagram",
+      "language": "en",
+      "brief": {"message": "Sourdough is baked before the shop opens"},
+      "final": "Our sourdough comes out of the oven before the shop opens. A loaf is {{C-0001}} this weekend."
+    },
+    {
+      "kind": "regression",
+      "channel": "instagram",
+      "language": "en",
+      "brief": {"message": "Weekend loaf price"},
+      "draft": "Unlock the magic of our game-changing sourdough! A loaf is {{C-0001}} this weekend.",
+      "final": "Our sourdough is baked at dawn. A loaf is {{C-0001}} this weekend."
+    }
+  ]
+}
