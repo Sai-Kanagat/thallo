@@ -14,6 +14,7 @@ const NAV = [
   { href: "/plan", label: "Week" },
   { href: "/growth", label: "Growth" },
   { href: "/voice", label: "Voice" },
+  { href: "/leads", label: "Leads" },
   { href: "/connections", label: "Connections" },
 ];
 
