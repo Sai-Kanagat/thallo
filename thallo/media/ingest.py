@@ -34,6 +34,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
@@ -243,12 +244,26 @@ def disclosure_label(rows: Rows, tenant_id: str, region_code: str | None = None)
     return max(policies, key=lambda p: (p.version, p.effective_from)).disclosure_label
 
 
-def check_consent(rows: Rows, tenant_id: str, consent_id: str | None, scope: ConsentScope) -> str:
+def consent_issue(consent: Consent | None, tenant_id: str, scope: ConsentScope, now: datetime) -> str | None:
+    """Why `consent` does not cover `scope` for this tenant now, or None. The same rules as the
+    gate's `consent_problem`: given by now, not withdrawn by now, the scope covered."""
+    if consent is None or consent.tenant_id != tenant_id:
+        return f"no {scope.value} consent of this tenant has that id"
+    if consent.given_at > now:
+        return f"the {scope.value} consent is not given yet"
+    if consent.withdrawn_at is not None and consent.withdrawn_at <= now:
+        return f"the {scope.value} consent was withdrawn"
+    if scope not in consent.scopes:
+        return f"the consent does not cover {scope.value}"
+    return None
+
+
+def check_consent(rows: Rows, tenant_id: str, consent_id: str | None, scope: ConsentScope, clock: Clock) -> str:
     if not consent_id:
         raise IngestError(f"a {scope.value} consent record is needed and none was named")
     consent = rows.get(Consent, consent_id)
-    if consent is None or consent.tenant_id != tenant_id or scope not in consent.scopes:
-        raise IngestError(f"no {scope.value} consent of this tenant has that id")
+    if (issue := consent_issue(consent, tenant_id, scope, clock.now())) is not None:
+        raise IngestError(issue)
     return consent.id
 
 
@@ -324,7 +339,7 @@ def ingest_upload(rows: Rows, blobs: Blobs, runner: Runner, *, tenant_id: str, d
                                  idempotency_key=f"upload:{hashlib.sha256(clean).hexdigest()}")
     else:
         raise IngestError(f"this kind of file ({m or 'unknown'}) is not accepted here")
-    consent = check_consent(rows, tenant_id, consent_id, ConsentScope.LIKENESS) if people_in_shot else None
+    consent = check_consent(rows, tenant_id, consent_id, ConsentScope.LIKENESS, clock) if people_in_shot else None
     served = runner.run(tenant_id, request, **scope)
     if served.mode is not ConnectionMode.MANUAL:
         raise IngestError(f"an upload must be served by a manual connection, not {served.provider}")
@@ -365,12 +380,12 @@ def ingest_result(rows: Rows, blobs: Blobs, served: Served, request: c.Request, 
     provenance = ingest_provenance(served)
     consent: str | None = None
     if getattr(request, "allow_generated_people", False):
-        consent = check_consent(rows, tenant_id, request.consent_id, ConsentScope.LIKENESS)  # type: ignore[attr-defined]
+        consent = check_consent(rows, tenant_id, request.consent_id, ConsentScope.LIKENESS, clock)  # type: ignore[attr-defined]
     voice = False
     if isinstance(request, c.VoiceoverRequest):
         voice = request.is_real_person_voice
         if voice:
-            consent = check_consent(rows, tenant_id, request.consent_id, ConsentScope.VOICE)
+            consent = check_consent(rows, tenant_id, request.consent_id, ConsentScope.VOICE, clock)
     label = None
     if provenance in GENERATED or out.disclosure_required:
         label = disclosure_label(rows, tenant_id, region_code)
@@ -385,5 +400,6 @@ def ingest_result(rows: Rows, blobs: Blobs, served: Served, request: c.Request, 
 
 
 __all__ = ["GENERATED", "IMAGE_MIMES", "VIDEO_MIMES", "Ingested", "IngestError", "MediaFile", "check_consent",
+           "consent_issue",
            "clean_image", "clean_video", "disclosure_label", "find_ffmpeg", "ingest_result", "ingest_upload",
            "probe_size", "sniff"]

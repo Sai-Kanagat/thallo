@@ -98,6 +98,7 @@ class MediaReply:
 
 
 MediaTransportFn = Callable[[MediaCall], MediaReply]
+ConsentLookup = Callable[[str, str], Any]  # (tenant_id, consent_id) -> Consent | None
 
 
 class BytesTransport:
@@ -223,7 +224,10 @@ class HttpMediaProvider:
     Settings: ClassVar[type[MediaSettings]] = MediaSettings
 
     def __init__(self, ctx: ProviderContext, *, transport: MediaTransportFn | None = None,
-                 environ: Mapping[str, str] | None = None) -> None:
+                 environ: Mapping[str, str] | None = None, consents: ConsentLookup | None = None) -> None:
+        """`consents` reads a consent row for the tenant (the caller's store). Without it no
+        request is ever treated as allowing people: the no-people guard stays on."""
+        self.consents = consents
         self.ctx = ctx
         self.clock = ctx.clock
         self.model = ctx.connection.model
@@ -325,6 +329,23 @@ class HttpMediaProvider:
         if (why := self.serves(request)) is not None:
             raise ProviderUnavailable(why)
 
+    def people_allowed(self, request: c.Request) -> bool:
+        """True only for a request that allows people AND names a likeness consent of this tenant
+        that is given and not withdrawn now. Checked before any vendor call."""
+        from thallo.contracts.enums import ConsentScope
+        from thallo.media.ingest import consent_issue
+
+        if not getattr(request, "allow_generated_people", False):
+            return False
+        cid = getattr(request, "consent_id", None)
+        if not cid or self.consents is None:
+            return False
+        try:
+            consent = self.consents(request.tenant_id, cid)
+        except Exception:  # noqa: BLE001 - an unreadable consent is no consent
+            return False
+        return consent_issue(consent, request.tenant_id, ConsentScope.LIKENESS, self.clock.now()) is None
+
     def _cost(self, units: Decimal) -> Decimal:
         assert self.settings is not None
         return to_eur(units * self.settings.usd_per_unit)
@@ -410,7 +431,8 @@ class ImageGenerator(HttpMediaProvider):
         import base64
 
         base = self.base_url()
-        prompt = guarded_prompt(request.prompt, request.allow_generated_people)
+        people = self.people_allowed(request)
+        prompt = guarded_prompt(request.prompt, people)
         body = json.dumps({"model": self.model, "prompt": prompt, "size": f"{request.width}x{request.height}",
                            "n": 1}).encode()
         reply = self._send(MediaCall("POST", f"{base}/images/generations", {"content-type": "application/json"},
@@ -428,7 +450,7 @@ class ImageGenerator(HttpMediaProvider):
         kind = image_kind(data)
         if kind is None:
             raise MediaProviderError(f"{self.name} returned bytes that are not an image")
-        settings = {"purpose": request.purpose, "prompt_sent": prompt, "people_allowed": request.allow_generated_people,
+        settings = {"purpose": request.purpose, "prompt_sent": prompt, "people_allowed": people,
                     "size": f"{request.width}x{request.height}"}
         return data, kind[0], kind[1], settings, Decimal(1)
 
@@ -441,6 +463,7 @@ class ImageGenerator(HttpMediaProvider):
                              provenance=prov, width=request.width, height=request.height, disclosure_required=True)
 
 
-__all__ = ["NO_PEOPLE", "SWITCH_ENV", "BytesTransport", "HttpMediaProvider", "ImageGenerator", "MediaCall",
+__all__ = ["NO_PEOPLE", "SWITCH_ENV", "BytesTransport", "ConsentLookup", "HttpMediaProvider", "ImageGenerator",
+           "MediaCall",
            "MediaProviderError", "MediaReply", "MediaSettings", "MediaTransportFn", "check_reply", "generation_allowed",
            "guarded_prompt", "image_kind", "write_output"]

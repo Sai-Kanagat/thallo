@@ -17,7 +17,7 @@ from collections.abc import Mapping
 
 from thallo.connections.registry import ProviderContext, ProviderRegistry
 from thallo.contracts.enums import Capability, ConnectionMode
-from thallo.providers.image.http_media import ImageGenerator, MediaSettings, MediaTransportFn
+from thallo.providers.image.http_media import ConsentLookup, ImageGenerator, MediaSettings, MediaTransportFn
 
 NAME = "generated_hosted"
 
@@ -29,8 +29,8 @@ class HostedImageGenerator(ImageGenerator):
 
 
 def create(ctx: ProviderContext, transport: MediaTransportFn | None = None,
-           environ: Mapping[str, str] | None = None) -> HostedImageGenerator:
-    return HostedImageGenerator(ctx, transport=transport, environ=environ)
+           environ: Mapping[str, str] | None = None, consents: ConsentLookup | None = None) -> HostedImageGenerator:
+    return HostedImageGenerator(ctx, transport=transport, environ=environ, consents=consents)
 
 
 def register(registry: ProviderRegistry) -> None:
