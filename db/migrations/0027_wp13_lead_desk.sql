@@ -62,3 +62,34 @@ CREATE TABLE lead_message_send (
 );
 SELECT app_enable_tenant_rls('lead_message_send');
 REVOKE DELETE, TRUNCATE ON lead_message_send FROM cortex_app;
+
+-- consent_recipient  the exact address or number a contact consent covers. Consent is checked per
+--                    recipient, not per person: a consent with no row here allows no message.
+CREATE TABLE consent_recipient (
+  id uuid NOT NULL,
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES tenant(id),
+  consent_id uuid NOT NULL,
+  channel text NOT NULL CHECK (channel IN ('whatsapp', 'email', 'sms')),
+  recipient text NOT NULL,
+  PRIMARY KEY (tenant_id, id),
+  UNIQUE (tenant_id, consent_id, channel, recipient),
+  FOREIGN KEY (tenant_id, consent_id) REFERENCES consent (tenant_id, id)
+);
+SELECT app_enable_tenant_rls('consent_recipient');
+
+-- lead_contact_candidate  a number or address an unverified touch named that the matched person
+--                         does not already have. Never merged onto the person by the machine.
+CREATE TABLE lead_contact_candidate (
+  id uuid NOT NULL,
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL REFERENCES tenant(id),
+  lead_id uuid NOT NULL,
+  channel text NOT NULL CHECK (channel IN ('whatsapp', 'email', 'sms')),
+  value text NOT NULL,
+  touch_id uuid,
+  PRIMARY KEY (tenant_id, id),
+  FOREIGN KEY (tenant_id, lead_id) REFERENCES lead (tenant_id, id),
+  FOREIGN KEY (tenant_id, touch_id) REFERENCES touch (tenant_id, id)
+);
+SELECT app_enable_tenant_rls('lead_contact_candidate');

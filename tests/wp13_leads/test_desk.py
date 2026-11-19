@@ -13,7 +13,6 @@ from tests.wp13_leads.conftest import FakeSender
 from thallo.contracts.actors import AgentActor, HumanOnlyViolation
 from thallo.contracts.enums import (
     ConsentBasis,
-    ConsentScope,
     Language,
     LeadRoute,
     LossReason,
@@ -21,21 +20,19 @@ from thallo.contracts.enums import (
     MessageKind,
     TouchKind,
 )
-from thallo.contracts.ids import new_id
 from thallo.contracts.models import Consent, Deal, Lead, Message, Outcome, Person
 from thallo.contracts.states import LeadState, MessageState
 from thallo.leads import DeskError, FakeTouchFeed, TouchEvent, body_hash, safe_link
-from thallo.leads.records import LeadMessageSend, SendState
+from thallo.leads.records import ContactCandidate, LeadMessageSend, SendState
 
 ROOT = Path(__file__).resolve().parents[2]
 ACK = "Ciao {{name}}, abbiamo ricevuto il tuo messaggio sul {{model}}. Ti risponde una persona del negozio."
 
 
-def _consent(w, tx, person_id, **kw):
-    base = dict(basis=ConsentBasis.ENQUIRY, channel=MessageChannel.WHATSAPP, scope=ConsentScope.CONTACT,
-                evidence="WhatsApp chat started by the person", given_at=w.clock.now())
-    tx.insert(Consent(id=new_id(w.clock), created_at=w.clock.now(), tenant_id=w.tenant.id, person_id=person_id,
-                      **(base | kw)))
+def _consent(w, tx, person_id, channel=MessageChannel.WHATSAPP, recipient="+39 333 123 4567"):
+    w.desk(tx).record_consent(person_id, channel=channel, recipient=recipient, basis=ConsentBasis.ENQUIRY,
+                              evidence="WhatsApp chat started by the person", actor=w.human(w.seller),
+                              verifier=w.verifier)
 
 
 def _event(w, **kw):
@@ -329,3 +326,45 @@ def test_lost_needs_a_reason_and_discards_open_drafts(world):
         d.outcome(msg.lead_id, "lost", actor=w.human(w.seller), verifier=w.verifier, reason=LossReason.TIMING)
         assert all(m.state is not MessageState.DRAFTED for m in tx.list_all(Message))
         assert tx.list_all(Outcome)[0].loss_reason is LossReason.TIMING
+
+
+def test_a_touch_never_merges_a_new_contact_point_onto_the_person(world):
+    """Phone match plus a new email: the email is a candidate, not the person's, and no draft can
+    go to it on the phone's consent."""
+    w = world
+    with w.backend.tenant(w.tenant.id) as tx:
+        d = w.desk(tx)
+        lead = _consented_lead(w, tx)
+        d.intake(_event(w, email="attacker@example.org", kind=TouchKind.FORM))
+        person = d.person(lead)
+        assert person.email is None
+        (cand,) = tx.list_all(ContactCandidate)
+        assert cand.value == "attacker@example.org" and cand.channel is MessageChannel.EMAIL
+        assert not d.consent(person.model_copy(update={"email": "attacker@example.org", "phone": None}),
+                             MessageChannel.EMAIL).allowed
+
+
+def test_consent_is_bound_to_the_recipient_at_send_time(world):
+    w = world
+    with w.backend.tenant(w.tenant.id) as tx:
+        d = w.desk(tx)
+        msg = _hot(w, tx)
+        person = d.person(d.lead(msg.lead_id))
+        tx.update(Person, person.id, phone="+39 333 000 0000")  # number changed after drafting
+        with pytest.raises(DeskError, match="consent"):
+            d.approve_and_send(msg.id, actor=w.human(w.seller), verifier=w.verifier, sender=FakeSender(),
+                               body_sha256=body_hash(msg.body))
+
+
+def test_reply_idempotency_key_is_stable_per_lead(world):
+    w = world
+    with w.backend.tenant(w.tenant.id) as tx:
+        d = w.desk(tx)
+        lead = _consented_lead(w, tx)
+        key = d.reply_key(lead.id)
+        other = _consented_lead(w, tx, phone="+39 347 555 1212", display_name="Anna")
+        d.draft_acknowledgement(other.id)
+        assert d.reply_key(lead.id) == key == f"lead-reply:{lead.id}:0"
+        d.record_answers(lead.id, {"model": "Leoncino 500", "payment": "cash", "town": "Bologna",
+                                   "timing": "this_week"})
+        assert d.reply_key(lead.id) == f"lead-reply:{lead.id}:1"

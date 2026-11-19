@@ -35,6 +35,8 @@ from thallo.contracts.enums import (
     ActorKind,
     ApprovalMethod,
     ApprovalSubject,
+    ConsentBasis,
+    ConsentScope,
     HumanOnlyAction,
     Language,
     LeadRoute,
@@ -66,7 +68,14 @@ from thallo.leads import consent as consent_rules
 from thallo.leads import scoring
 from thallo.leads.drafts import Drafter, PlainDrafter
 from thallo.leads.play import LeadPlay, load_play
-from thallo.leads.records import LeadAction, LeadDeskSetting, LeadMessageSend, SendState
+from thallo.leads.records import (
+    ConsentRecipient,
+    ContactCandidate,
+    LeadAction,
+    LeadDeskSetting,
+    LeadMessageSend,
+    SendState,
+)
 from thallo.leads.templates import (
     APPROVER_ROLES,
     clean_slot,
@@ -217,15 +226,26 @@ class Desk:
         return scoring.TenantLists(frozenset(s.service_area), frozenset(s.stock), frozenset(s.supported_use_cases))
 
     # ------------------------------------------------------------------ intake
-    def _person(self, ev: TouchEvent) -> Person:
+    def _match(self, ev: TouchEvent) -> tuple[Person | None, list[tuple[MessageChannel, str]]]:
+        """The existing person this touch names, and any contact point it adds. A touch is not
+        verified, so a new number or address is never merged onto the person; it is returned as
+        a candidate for a person to confirm."""
         phone, email = norm_phone(ev.phone), norm_email(ev.email)
         for p in self.tx.list_all(Person):
             if (phone and norm_phone(p.phone) == phone) or (email and norm_email(p.email) == email):
-                updates = {k: v for k, v in (("phone", phone), ("email", email)) if v and not getattr(p, k)}
-                if updates:
-                    self.tx.update(Person, p.id, **updates)
-                    return p.model_copy(update=updates)
-                return p
+                extra: list[tuple[MessageChannel, str]] = []
+                if phone and norm_phone(p.phone) != phone:
+                    extra.append((MessageChannel.WHATSAPP, phone))
+                if email and norm_email(p.email) != email:
+                    extra.append((MessageChannel.EMAIL, email))
+                return p, extra
+        return None, []
+
+    def _person(self, ev: TouchEvent) -> Person:
+        found, _extra = self._match(ev)
+        if found is not None:
+            return found
+        phone, email = norm_phone(ev.phone), norm_email(ev.email)
         account_id = None
         if email:
             domain = email.rsplit("@", 1)[1]
@@ -245,6 +265,7 @@ class Desk:
         """A first (or repeat) touch: person matched or created, touch stored, lead opened or
         updated, heat recomputed, clock started. Drafts the acknowledgement when allowed."""
         play = self.play()
+        _found, candidates = self._match(ev)
         person = self._person(ev)
         touch = Touch(id=new_id(self.clock), created_at=self.clock.now(), tenant_id=self.tenant_id, kind=ev.kind,
                       person_id=person.id, variant_id=ev.variant_id, ad_id=ev.ad_id,
@@ -261,6 +282,10 @@ class Desk:
         else:
             self.tx.update(Lead, lead.id, last_touch_id=touch.id)
             new = False
+        for channel, value in candidates:
+            self.tx.insert(ContactCandidate(id=new_id(self.clock), created_at=self.clock.now(),
+                                            tenant_id=self.tenant_id, lead_id=lead.id, channel=channel, value=value,
+                                            touch_id=touch.id))
         kinds = [HEAT_ACTION[ev.kind]] if ev.kind in HEAT_ACTION else []
         kinds += [k for k in ev.extra_actions if re.fullmatch(r"[a-z][a-z0-9_]{0,39}", k)]
         for kind in kinds:
@@ -298,13 +323,36 @@ class Desk:
     def recipient(self, person: Person, channel: MessageChannel) -> str | None:
         return norm_email(person.email) if channel is MessageChannel.EMAIL else norm_phone(person.phone)
 
+    def record_consent(self, person_id: str, *, channel: MessageChannel, recipient: str, basis: ConsentBasis,
+                       evidence: str, actor: Actor, verifier: SessionVerifier) -> Consent:
+        """A person records a contact consent for one exact number or address, with its evidence."""
+        require_human(actor, HumanOnlyAction.CONSENT_CALL, verifier=verifier, tenant_id=self.tenant_id)
+        to = norm_email(recipient) if channel is MessageChannel.EMAIL else norm_phone(recipient)
+        ev = _clean_text(evidence, 300)
+        if to is None or ev is None or self.tx.get(Person, person_id) is None:
+            raise DeskError("bad_consent", "consent needs the person, a usable recipient and its evidence")
+        now = self.clock.now()
+        row = Consent(id=new_id(self.clock), created_at=now, tenant_id=self.tenant_id, person_id=person_id,
+                      basis=basis, channel=channel, scope=ConsentScope.CONTACT, evidence=ev, given_at=now)
+        self.tx.insert(row)
+        self.tx.insert(ConsentRecipient(id=new_id(self.clock), created_at=now, tenant_id=self.tenant_id,
+                                        consent_id=row.id, channel=channel, recipient=to))
+        return row
+
     def consent(self, person: Person, channel: MessageChannel) -> consent_rules.ConsentDecision:
+        to = self.recipient(person, channel)
+        if to is None:
+            return consent_rules.ConsentDecision(False, consent_rules.NO_CONSENT)
+        covered: dict[str, set[tuple[MessageChannel, str]]] = {}
+        for r in self.tx.list_all(ConsentRecipient):
+            covered.setdefault(r.consent_id, set()).add((r.channel, r.recipient))
         tenant = self.tx.get(Tenant, self.tenant_id)
         now = self.clock.now()
         policy = consent_rules.current_policy(self.tx.list_all(RegionPolicy), tenant.region_code, now) \
             if tenant is not None else None
-        return consent_rules.decide(person_id=person.id, channel=channel,
-                                    consents=self.tx.list_all(Consent, person_id=person.id), policy=policy, now=now)
+        return consent_rules.decide(person_id=person.id, channel=channel, recipient=to,
+                                    consents=self.tx.list_all(Consent, person_id=person.id), covered=covered,
+                                    policy=policy, now=now)
 
     def clock_status(self, lead: Lead) -> dict[str, Any]:
         s = self.setting()
@@ -435,9 +483,14 @@ class Desk:
             return None  # checked before any model call: no basis, no draft, no spend
         d = self.drafter.draft(tenant_id=self.tenant_id, language=person.language or Language.EN,
                                display_name=person.display_name, answers=lead.answers,
-                               idempotency_key=f"lead-reply:{lead.id}:{len(self.tx.list_all(Message))}")
+                               idempotency_key=self.reply_key(lead.id))
         return self._new_draft(lead, MessageKind.REPLY_DRAFT, d.text, model_id=d.model_id,
                                prompt_version=d.prompt_version)
+
+    def reply_key(self, lead_id: str) -> str:
+        """Stable per lead and reply round: the number of this lead's earlier reply drafts."""
+        rounds = sum(1 for m in self.tx.list_all(Message, lead_id=lead_id) if m.kind is MessageKind.REPLY_DRAFT)
+        return f"lead-reply:{lead_id}:{rounds}"
 
     def edit_draft(self, message_id: str, body: str) -> Message:
         msg = self._draft(message_id)

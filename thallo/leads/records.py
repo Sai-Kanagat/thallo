@@ -51,4 +51,22 @@ class LeadMessageSend(TenantRow):
     updated_at: AwareDatetime
 
 
-__all__ = ["LeadAction", "LeadDeskSetting", "LeadMessageSend", "SendState"]
+
+
+class ConsentRecipient(TenantRow):
+    __table__ = "consent_recipient"
+    consent_id: Id
+    channel: MessageChannel
+    recipient: str
+
+
+class ContactCandidate(TenantRow):
+    __table__ = "lead_contact_candidate"
+    lead_id: Id
+    channel: MessageChannel
+    value: str
+    touch_id: Id | None = None
+
+
+__all__ = ["ConsentRecipient", "ContactCandidate", "LeadAction", "LeadDeskSetting", "LeadMessageSend",
+           "SendState"]

@@ -12,7 +12,7 @@ the lead is shown to the seller for a personal reply only, and nothing is drafte
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -55,8 +55,12 @@ def _channel_rule(policy: RegionPolicy, channel: MessageChannel) -> tuple[frozen
     return allowed, footer
 
 
-def decide(*, person_id: str, channel: MessageChannel, consents: Iterable[Consent],
-           policy: RegionPolicy | None, now: datetime) -> ConsentDecision:
+def decide(*, person_id: str, channel: MessageChannel, recipient: str, consents: Iterable[Consent],
+           covered: Mapping[str, Collection[tuple[MessageChannel, str]]], policy: RegionPolicy | None,
+           now: datetime) -> ConsentDecision:
+    """`covered` maps a consent id to the exact (channel, recipient) pairs it covers. A consent
+    that does not name this recipient on this channel does not count, so a number or address that
+    was never consented can never be messaged on another contact point's consent."""
     if policy is None:
         return ConsentDecision(False, NO_POLICY)
     rule = _channel_rule(policy, channel)
@@ -64,7 +68,8 @@ def decide(*, person_id: str, channel: MessageChannel, consents: Iterable[Consen
         return ConsentDecision(False, NO_RULE, policy_version=policy.version)
     bases, footer = rule
     mine = [c for c in consents if c.person_id == person_id and ConsentScope.CONTACT in c.scopes
-            and (c.channel is None or c.channel is channel) and c.given_at <= now]
+            and (c.channel is None or c.channel is channel) and c.given_at <= now
+            and (channel, recipient) in covered.get(c.id, ())]
     if not mine:
         return ConsentDecision(False, NO_CONSENT, policy_version=policy.version)
     live = [c for c in mine if c.withdrawn_at is None or c.withdrawn_at > now]

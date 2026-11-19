@@ -77,11 +77,20 @@ def _consent(basis=ConsentBasis.ENQUIRY, channel=MessageChannel.WHATSAPP, given=
                    scope=scope, evidence="form tick", given_at=given, withdrawn_at=withdrawn)
 
 
+TO = "+393331234567"
+
+
+def _decide(*, consents, policy, now, recipient=TO):
+    covered = {c.id: {(MessageChannel.WHATSAPP, TO)} for c in consents}
+    return cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, recipient=recipient, consents=consents,
+                     covered=covered, policy=policy, now=now)
+
+
 RULES = {"contact": {"whatsapp": {"bases": ["enquiry"], "footer": "STOP to opt out"}}}
 
 
 def test_consent_allows_only_with_policy_rule_and_matching_live_record():
-    ok = cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, consents=[_consent()], policy=_policy(RULES), now=NOW)
+    ok = _decide(consents=[_consent()], policy=_policy(RULES), now=NOW)
     assert ok.allowed and ok.footer == "STOP to opt out" and ok.consent_id
 
 
@@ -98,7 +107,7 @@ def test_consent_allows_only_with_policy_rule_and_matching_live_record():
     ({"withdrawn": NOW - timedelta(minutes=1)}, RULES, cr.WITHDRAWN),
 ])
 def test_consent_fails_closed(kw, policy, reason):
-    d = cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, consents=[_consent(**kw)],
+    d = _decide(consents=[_consent(**kw)],
                   policy=_policy(policy) if policy is not None else None, now=NOW)
     assert not d.allowed and d.reason == reason
 
@@ -106,7 +115,7 @@ def test_consent_fails_closed(kw, policy, reason):
 def test_a_withdrawal_beats_an_older_yes_and_policy_versions_pick_latest_live():
     older = _consent(given=NOW - timedelta(days=3))
     gone = _consent(given=NOW - timedelta(days=2), withdrawn=NOW - timedelta(days=1))
-    assert not cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, consents=[older, gone],
+    assert not _decide(consents=[older, gone],
                          policy=_policy(RULES), now=NOW).allowed
     pols = [_policy(RULES, version=1), _policy({}, version=2), _policy(RULES, version=3, start=NOW + timedelta(days=1))]
     assert cr.current_policy(pols, "IT", NOW).version == 2
@@ -139,3 +148,8 @@ def test_slots_take_only_clean_lead_words():
     assert "evil" not in out and "http" not in out
     assert clean_slot("a\u202eb\x00c") == "a b c"
     assert len(clean_slot("x" * 500)) == 40
+
+
+def test_consent_covers_only_its_exact_recipient():
+    d = _decide(consents=[_consent()], policy=_policy(RULES), now=NOW, recipient="+393339999999")
+    assert not d.allowed and d.reason == cr.NO_CONSENT
