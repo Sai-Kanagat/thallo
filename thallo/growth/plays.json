@@ -1,0 +1,527 @@
+{
+  "_note": "Play library data (WP-15). Every number here is a starting default and a guess, replaced by measured rates after 30 outcomes; none is a benchmark. Plays A and B come from docs/plays/plays_draft.json; play C is designed for, not piloted.",
+  "plays": [
+    {
+      "code": "A",
+      "name": "Local, high-ticket, walk-in",
+      "fits": "Dealers and showrooms where the sale closes in person and is often financed",
+      "channels": [
+        "google_business_profile",
+        "whatsapp",
+        "facebook",
+        "instagram",
+        "search_ads",
+        "social_ads"
+      ],
+      "formats": [
+        "single_image",
+        "carousel",
+        "offer",
+        "proof_card",
+        "short_video",
+        "gbp_post"
+      ],
+      "booked_definition": "A showroom visit, a test drive or a callback slot with a date and time agreed",
+      "bottlenecks_in_order": [
+        "First response time to an enquiry",
+        "Follow-up completed within 5 working days",
+        "Finance readiness of the lead"
+      ],
+      "qualification_questions": [
+        {
+          "key": "model",
+          "ask": "Which model are you looking at?",
+          "type": "choice_from_catalogue"
+        },
+        {
+          "key": "payment",
+          "ask": "Cash or finance?",
+          "type": "choice",
+          "options": [
+            "cash",
+            "finance",
+            "not_sure"
+          ]
+        },
+        {
+          "key": "down_payment_ready",
+          "ask": "Do you have the down payment and documents ready?",
+          "type": "choice",
+          "options": [
+            "yes",
+            "partly",
+            "no"
+          ],
+          "only_if": {
+            "payment": "finance"
+          }
+        },
+        {
+          "key": "town",
+          "ask": "Which town or area are you in?",
+          "type": "text"
+        },
+        {
+          "key": "timing",
+          "ask": "When do you want to buy?",
+          "type": "choice",
+          "options": [
+            "this_week",
+            "this_month",
+            "later"
+          ]
+        }
+      ],
+      "fit_rules": [
+        {
+          "if": {
+            "timing": "this_week"
+          },
+          "add": 30
+        },
+        {
+          "if": {
+            "timing": "this_month"
+          },
+          "add": 20
+        },
+        {
+          "if": {
+            "payment": "cash"
+          },
+          "add": 25
+        },
+        {
+          "if": {
+            "payment": "finance",
+            "down_payment_ready": "yes"
+          },
+          "add": 25
+        },
+        {
+          "if": {
+            "payment": "finance",
+            "down_payment_ready": "partly"
+          },
+          "add": 10
+        },
+        {
+          "if": {
+            "payment": "finance",
+            "down_payment_ready": "no"
+          },
+          "add": -10
+        },
+        {
+          "if": {
+            "town": "in_service_area"
+          },
+          "add": 20
+        },
+        {
+          "if": {
+            "model": "in_stock"
+          },
+          "add": 15
+        }
+      ],
+      "fit_base": 10,
+      "heat_actions": {
+        "whatsapp_chat": 30,
+        "call": 35,
+        "walk_in_code": 40,
+        "form": 25,
+        "link": 8,
+        "offer_view": 12
+      },
+      "routes": {
+        "hot": {
+          "fit_min": 60,
+          "heat_min": 30
+        },
+        "warm": {
+          "fit_min": 60,
+          "heat_min": 0
+        },
+        "low_fit": {
+          "fit_max": 59
+        }
+      },
+      "pillar_mix": {
+        "proof_and_deliveries": 0.3,
+        "offers_and_finance": 0.25,
+        "product_in_use": 0.25,
+        "service_and_trust": 0.2
+      },
+      "stage_mix": {
+        "awareness": 0.25,
+        "consideration": 0.35,
+        "conversion": 0.3,
+        "retention": 0.1
+      },
+      "metrics": [
+        "first_response_minutes",
+        "followup_completion_rate",
+        "qualified_leads",
+        "booked_conversations",
+        "finance_ready_bookings",
+        "won_deals",
+        "cost_per_booked_conversation"
+      ],
+      "headline_metric": "finance_ready_bookings",
+      "weekly_volume": {
+        "primary_pieces": 5,
+        "max_channels_live": 3
+      },
+      "voice_questions_examples": [
+        "Which vehicle left the showroom this week, and what will the owner use it for?",
+        "What did a customer ask this week that you had to explain twice?",
+        "What is in stock right now that you would recommend, and why?"
+      ],
+      "shot_list_examples": [
+        "A 20-second clip of today's delivery, with the customer's consent",
+        "Three photos of the model that arrived this week"
+      ],
+      "never": [
+        "Promise a finance approval",
+        "Quote an on-road price that is not a verified claim",
+        "Message a lead without a consent basis"
+      ],
+      "status": "draft"
+    },
+    {
+      "code": "B",
+      "name": "B2B technical, trial-led",
+      "fits": "Software resellers and small SaaS where buyers research, then trial, then talk",
+      "channels": [
+        "website",
+        "linkedin_personal",
+        "linkedin_company",
+        "email",
+        "newsletter",
+        "search_ads"
+      ],
+      "formats": [
+        "answer_page",
+        "comparison_page",
+        "text_post",
+        "carousel",
+        "case_story",
+        "email",
+        "short_demo_clip"
+      ],
+      "booked_definition": "A demo or a trial kickoff call with a date and time agreed",
+      "bottlenecks_in_order": [
+        "Being found for evaluation queries",
+        "Trial follow-up within 2 working days",
+        "Reaching the person who signs"
+      ],
+      "qualification_questions": [
+        {
+          "key": "use_case",
+          "ask": "What do you want to simulate or solve?",
+          "type": "text"
+        },
+        {
+          "key": "current_tool",
+          "ask": "What do you use today?",
+          "type": "text"
+        },
+        {
+          "key": "team_size",
+          "ask": "How many people would use it?",
+          "type": "choice",
+          "options": [
+            "1",
+            "2_to_5",
+            "6_to_20",
+            "over_20"
+          ]
+        },
+        {
+          "key": "timing",
+          "ask": "When do you need it working?",
+          "type": "choice",
+          "options": [
+            "this_quarter",
+            "next_quarter",
+            "exploring"
+          ]
+        },
+        {
+          "key": "role",
+          "ask": "What is your role in the decision?",
+          "type": "choice",
+          "options": [
+            "user",
+            "evaluator",
+            "budget_holder"
+          ]
+        }
+      ],
+      "fit_rules": [
+        {
+          "if": {
+            "use_case": "matches_supported_list"
+          },
+          "add": 30
+        },
+        {
+          "if": {
+            "timing": "this_quarter"
+          },
+          "add": 25
+        },
+        {
+          "if": {
+            "timing": "next_quarter"
+          },
+          "add": 10
+        },
+        {
+          "if": {
+            "team_size": "2_to_5"
+          },
+          "add": 10
+        },
+        {
+          "if": {
+            "team_size": "6_to_20"
+          },
+          "add": 15
+        },
+        {
+          "if": {
+            "team_size": "over_20"
+          },
+          "add": 15
+        },
+        {
+          "if": {
+            "role": "budget_holder"
+          },
+          "add": 15
+        },
+        {
+          "if": {
+            "role": "evaluator"
+          },
+          "add": 10
+        },
+        {
+          "if": {
+            "email_domain": "company"
+          },
+          "add": 10
+        }
+      ],
+      "fit_base": 5,
+      "heat_actions": {
+        "trial_start": 40,
+        "pricing_page": 20,
+        "demo_request": 45,
+        "form": 25,
+        "link": 6,
+        "email_reply": 30,
+        "comparison_page": 15
+      },
+      "routes": {
+        "hot": {
+          "fit_min": 55,
+          "heat_min": 35
+        },
+        "warm": {
+          "fit_min": 55,
+          "heat_min": 0
+        },
+        "low_fit": {
+          "fit_max": 54
+        }
+      },
+      "pillar_mix": {
+        "how_to_and_answers": 0.35,
+        "comparisons_and_evaluation": 0.25,
+        "customer_results": 0.2,
+        "expert_point_of_view": 0.2
+      },
+      "stage_mix": {
+        "awareness": 0.3,
+        "consideration": 0.4,
+        "conversion": 0.2,
+        "retention": 0.1
+      },
+      "metrics": [
+        "evaluation_query_impressions",
+        "trial_starts",
+        "trial_followup_hours",
+        "qualified_leads",
+        "booked_conversations",
+        "won_deals",
+        "cost_per_booked_conversation"
+      ],
+      "headline_metric": "booked_conversations",
+      "weekly_volume": {
+        "primary_pieces": 4,
+        "max_channels_live": 3
+      },
+      "voice_questions_examples": [
+        "What question did a prospect or trial user ask this week that deserves a full answer?",
+        "Which result did a customer get recently that you can describe with numbers we can verify?",
+        "What do people get wrong when they compare tools in this category?"
+      ],
+      "shot_list_examples": [
+        "A 60-second screen recording of one task solved",
+        "One chart from a real, consented customer result"
+      ],
+      "never": [
+        "Name a competitor without a verified claim",
+        "State a benchmark number that is not a verified claim",
+        "Automate LinkedIn direct messages or connection requests"
+      ],
+      "status": "draft"
+    },
+    {
+      "code": "C",
+      "name": "Appointment service",
+      "status": "designed_not_piloted",
+      "fits": "Studios, clinics and consultancies where the sale is a booked appointment",
+      "channels": [
+        "google_business_profile",
+        "instagram",
+        "whatsapp",
+        "website"
+      ],
+      "formats": [
+        "single_image",
+        "carousel",
+        "proof_card",
+        "short_video",
+        "gbp_post"
+      ],
+      "booked_definition": "An appointment with a date and time agreed",
+      "bottlenecks_in_order": [
+        "Review volume",
+        "Booking friction"
+      ],
+      "qualification_questions": [
+        {
+          "key": "service",
+          "ask": "Which service are you interested in?",
+          "type": "choice_from_catalogue"
+        },
+        {
+          "key": "timing",
+          "ask": "When would you like to come in?",
+          "type": "choice",
+          "options": [
+            "this_week",
+            "this_month",
+            "later"
+          ]
+        },
+        {
+          "key": "first_visit",
+          "ask": "Is this your first visit?",
+          "type": "choice",
+          "options": [
+            "yes",
+            "no"
+          ]
+        }
+      ],
+      "fit_rules": [
+        {
+          "if": {
+            "service": "in_catalogue"
+          },
+          "add": 30
+        },
+        {
+          "if": {
+            "timing": "this_week"
+          },
+          "add": 30
+        },
+        {
+          "if": {
+            "timing": "this_month"
+          },
+          "add": 20
+        },
+        {
+          "if": {
+            "first_visit": "no"
+          },
+          "add": 10
+        }
+      ],
+      "fit_base": 10,
+      "heat_actions": {
+        "booking_page": 35,
+        "whatsapp_chat": 30,
+        "call": 35,
+        "form": 25,
+        "link": 6,
+        "review_view": 10
+      },
+      "routes": {
+        "hot": {
+          "fit_min": 50,
+          "heat_min": 30
+        },
+        "warm": {
+          "fit_min": 50,
+          "heat_min": 0
+        },
+        "low_fit": {
+          "fit_max": 49
+        }
+      },
+      "pillar_mix": {
+        "results_and_reviews": 0.35,
+        "behind_the_service": 0.25,
+        "how_to_book": 0.2,
+        "expert_answers": 0.2
+      },
+      "stage_mix": {
+        "awareness": 0.3,
+        "consideration": 0.3,
+        "conversion": 0.3,
+        "retention": 0.1
+      },
+      "metrics": [
+        "review_count",
+        "booking_page_visits",
+        "qualified_leads",
+        "booked_conversations",
+        "no_show_rate",
+        "won_deals",
+        "cost_per_booked_conversation"
+      ],
+      "headline_metric": "booked_conversations",
+      "weekly_volume": {
+        "primary_pieces": 4,
+        "max_channels_live": 3
+      },
+      "voice_questions_examples": [
+        "What did a client ask before booking this week?",
+        "Which result from this week can you show, with the client's consent?"
+      ],
+      "shot_list_examples": [
+        "Three photos of the space as a client sees it on arrival"
+      ],
+      "never": [
+        "Promise a medical or treatment result",
+        "Publish a client photo without a consent record",
+        "Message a lead without a consent basis"
+      ]
+    }
+  ],
+  "open_questions_for_sai": [
+    "Play A: is finance readiness really the bottleneck at the dealership? Step 0 of the rollout (a one-page diagnosis by hand) decides whether the headline metric stays finance_ready_bookings.",
+    "Play A: the service area list and the stock catalogue are per-tenant data, to be supplied by the business.",
+    "Play B: the supported use-case list comes from the reseller's product sheet.",
+    "Both: fit thresholds (60 and 55) are guesses. Retune after the first 30 leads with outcomes.",
+    "Play C: every value is a guess built from the plan's one-line row; no pilot has run it."
+  ]
+}
