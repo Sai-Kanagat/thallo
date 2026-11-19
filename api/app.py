@@ -25,6 +25,7 @@ from api import (  # one router per line: parallel packages append without confl
     errors,
     growth,
     leads,
+    nurture,
     plan,
     review,
     tracking,
@@ -67,6 +68,7 @@ def create_app(svc: Services) -> FastAPI:
         connections.router,
         growth.router,
         leads.router,
+        nurture.router,
         tracking.router,
         voice.router,
     ):

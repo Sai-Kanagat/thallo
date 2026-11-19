@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from thallo.contracts import connection as c
-from thallo.contracts.actors import Actor, SessionVerifier
+from thallo.contracts.actors import Actor, SessionVerifier, require_human
+from thallo.contracts.enums import HumanOnlyAction
 from thallo.contracts.models import Booking
 from thallo.contracts.states import LeadState
 from thallo.leads.desk import Desk, DeskError, _move
@@ -55,6 +56,7 @@ def offer(desk: Desk, lead_id: str, registry: Any, *, kind: str) -> dict[str, An
 def confirm(desk: Desk, lead_id: str, *, kind: str, starts_at: datetime, actor: Actor,
             verifier: SessionVerifier) -> Booking:
     """A person records the agreed date and time. Stops any nurture sequence."""
+    require_human(actor, HumanOnlyAction.FIRST_REPLY, verifier=verifier, tenant_id=desk.tenant_id)
     if kind not in kinds_for(desk.setting().play_code):
         raise DeskError("bad_booking", "that is not a booked conversation for this play")
     now = desk.clock.now()

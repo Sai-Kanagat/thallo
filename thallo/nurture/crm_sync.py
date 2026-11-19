@@ -28,8 +28,9 @@ from thallo.contracts import connection as c
 from thallo.contracts.actors import Actor, SessionVerifier, require_human
 from thallo.contracts.enums import HumanOnlyAction, MessageChannel
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Deal, Lead, Outcome, Person
-from thallo.leads.desk import Desk
+from thallo.contracts.models import AppUser, Deal, Lead, Outcome, Person
+from thallo.leads.desk import Desk, DeskError
+from thallo.leads.templates import APPROVER_ROLES
 from thallo.nurture.pipeline import stage_of
 from thallo.nurture.records import CrmSyncRecord
 
@@ -87,8 +88,17 @@ def pending(desk: Desk, provider: str) -> list[dict[str, Any]]:
     return batch[:MAX_BATCH]
 
 
-def sync(desk: Desk, registry: Any, *, actor: Actor, verifier: SessionVerifier) -> dict[str, Any]:
+def _approver(desk: Desk, actor: Actor, verifier: SessionVerifier) -> Any:
+    """CRM sync and export move personal data: a live person with an approver role only."""
     human = require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=desk.tenant_id)
+    user = desk.tx.get(AppUser, human.id)
+    if user is None or user.role not in APPROVER_ROLES:
+        raise DeskError("forbidden", "only a founder, approver or operator moves contact data out")
+    return human
+
+
+def sync(desk: Desk, registry: Any, *, actor: Actor, verifier: SessionVerifier) -> dict[str, Any]:
+    human = _approver(desk, actor, verifier)
     choice = registry.resolve(desk.tenant_id, c.CrmSyncRequest.capability)
     first = registry._get(desk.tenant_id, choice.ordered_connection_ids[0]) if choice.ordered_connection_ids else None
     provider_hint = first.provider if first is not None else "manual"
@@ -127,8 +137,9 @@ def _cell(value: Any) -> str:
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t") else text
 
 
-def to_csv(desk: Desk) -> str:
+def to_csv(desk: Desk, *, actor: Actor, verifier: SessionVerifier) -> str:
     """The manual floor: every person with a contact basis, the same allowlist, formula-safe."""
+    _approver(desk, actor, verifier)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(FIELDS[:-1])

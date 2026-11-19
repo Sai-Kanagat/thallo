@@ -135,7 +135,7 @@ def test_csv_is_formula_safe(world):
     w = world
     with w.backend.tenant(w.tenant.id) as tx:
         d, _lead_ = _lead(w, tx, name="=HYPERLINK(1)")
-        rows = list(csv.reader(io.StringIO(crm_sync.to_csv(d))))
+        rows = list(csv.reader(io.StringIO(crm_sync.to_csv(d, actor=w.human(w.founder), verifier=w.verifier))))
         assert rows[0] == list(crm_sync.FIELDS[:-1])
         assert rows[1][1].startswith("'=")
 
@@ -171,3 +171,34 @@ def test_manual_floor_records_nothing(world):
         out = crm_sync.sync(d, reg, actor=w.human(w.founder), verifier=w.verifier)
         assert out["status"] == "export_csv" and not tx.list_all(CrmSyncRecord)
         assert tx.list_all(Person)
+
+
+def test_crm_sync_and_export_need_an_approver(world):
+    from thallo.contracts.actors import AgentActor, HumanOnlyViolation
+
+    w = world
+    with w.backend.tenant(w.tenant.id) as tx:
+        d, _lead_ = _lead(w, tx)
+        reg = Registry(c.CrmSyncResult(synced=0))
+        with pytest.raises(DeskError, match="founder"):
+            crm_sync.sync(d, reg, actor=w.human(w.seller), verifier=w.verifier)
+        with pytest.raises(DeskError, match="founder"):
+            crm_sync.to_csv(d, actor=w.human(w.seller), verifier=w.verifier)
+        with pytest.raises(HumanOnlyViolation):
+            crm_sync.to_csv(d, actor=AgentActor(id="a"), verifier=w.verifier)
+        with pytest.raises(HumanOnlyViolation):
+            crm_sync.to_csv(d, actor=w.human(w.founder, session="stale"), verifier=w.verifier)
+        assert not reg.requests
+
+
+def test_booking_confirm_checks_the_person_before_touching_anything(world):
+    from thallo.contracts.actors import AgentActor, HumanOnlyViolation
+
+    w = world
+    with w.backend.tenant(w.tenant.id) as tx:
+        d, lead = _lead(w, tx)
+        before = d.lead(lead.id).state
+        with pytest.raises(HumanOnlyViolation):
+            booking.confirm(d, lead.id, kind="callback", starts_at=w.clock.now() + timedelta(days=1),
+                            actor=AgentActor(id="a"), verifier=w.verifier)
+        assert d.lead(lead.id).state is before and not tx.list_all(Booking)
