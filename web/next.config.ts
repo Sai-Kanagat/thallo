@@ -17,7 +17,16 @@ const config: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   async headers() {
-    return [{ source: "/:path*", headers: security }];
+    // The voice page records answers, so only it may ask for the microphone; it comes last and wins.
+    const voice = security.map((h) =>
+      h.key === "Permissions-Policy"
+        ? { ...h, value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=()" }
+        : h,
+    );
+    return [
+      { source: "/:path*", headers: security },
+      { source: "/voice", headers: voice },
+    ];
   },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiOrigin}/api/:path*` }];
