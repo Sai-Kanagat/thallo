@@ -25,7 +25,7 @@ from thallo.contracts.actors import Actor, SessionVerifier, require_human
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import ApprovalMethod, ApprovalSubject, HumanOnlyAction, RuleScope
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import AppUser, Approval, RuleProposal, VoiceRule
+from thallo.contracts.models import Approval, AppUser, RuleProposal, VoiceRule
 from thallo.contracts.states import RULE_PROPOSAL, RuleProposalState
 from thallo.gate.approvals import approver_problem
 from thallo.learning.proposals import EditContext
