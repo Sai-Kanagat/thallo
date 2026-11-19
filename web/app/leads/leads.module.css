@@ -1,0 +1,36 @@
+.grid { list-style: none; margin: 24px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 16px 0;
+  border-bottom: 1px solid var(--rule); color: var(--ink); text-decoration: none; min-height: var(--tap);
+}
+.row:hover .name { text-decoration: underline; }
+.row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.name { font-weight: 700; font-size: 18px; overflow-wrap: anywhere; }
+.nums { display: flex; gap: 16px; font-family: var(--mono); font-size: 14px; color: var(--ink-2); }
+.nums b { color: var(--ink); font-size: 18px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.clock { font-family: var(--mono); font-size: 14px; color: var(--ink-2); justify-self: end; }
+.overdue { color: var(--neg); font-weight: 700; }
+
+.detail { display: grid; gap: 48px; }
+.section { display: grid; gap: 16px; }
+.section h2 { margin: 0; font-size: 22px; }
+.two { display: flex; gap: 32px; font-family: var(--mono); }
+.two b { display: block; font-size: 36px; color: var(--ink); }
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table td { padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.table td:last-child { text-align: right; font-family: var(--mono); }
+.question { display: grid; gap: 8px; }
+.question label { font-weight: 700; }
+.input {
+  font: inherit; padding: 12px; border: 1px solid var(--rule-2); border-radius: var(--r-2);
+  background: var(--surface); color: var(--ink); min-height: var(--tap); width: 100%;
+}
+.message { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--rule); }
+.body { white-space: pre-wrap; margin: 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.textarea { composes: input; min-height: 140px; resize: vertical; }
+
+@media (min-width: 900px) {
+  .detail { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
+  .row { grid-template-columns: minmax(0, 2fr) auto minmax(0, 2fr) auto; align-items: center; }
+}
