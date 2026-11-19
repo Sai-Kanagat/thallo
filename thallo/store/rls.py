@@ -11,7 +11,7 @@ import psycopg
 
 EXEMPT = frozenset({"schema_migrations"})  # migration bookkeeping, no grants to the app role
 # Above tenants: RLS enabled with no policy, and no grants to the app role (0012).
-NO_ACCESS = frozenset({"operator", "identity"})
+NO_ACCESS = frozenset({"operator", "identity", "cost_global_day"})  # cost_global_day: 0030
 # Above tenants, readable but never writable by the app role (0013): RLS enabled, every policy
 # SELECT only, and SELECT the only privilege any cortex role holds. Not forced: the owner writes.
 GLOBAL_READ_ONLY = frozenset({"system_setting"})
