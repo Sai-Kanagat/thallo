@@ -25,8 +25,9 @@ from thallo.contracts.actors import Actor, SessionVerifier, require_human
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import ApprovalMethod, ApprovalSubject, HumanOnlyAction, RuleScope
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Approval, RuleProposal, VoiceRule
+from thallo.contracts.models import Approval, AppUser, RuleProposal, VoiceRule
 from thallo.contracts.states import RULE_PROPOSAL, RuleProposalState
+from thallo.gate.approvals import approver_problem
 from thallo.learning.proposals import EditContext
 from thallo.learning.rules import parse_rule
 
@@ -56,15 +57,25 @@ class Accepted:
     approval: Approval
 
 
-def accept(proposal: RuleProposal, *, actor: Actor, verifier: SessionVerifier, approver_id: str,
+def _verified_approver(actor: Actor, verifier: SessionVerifier, approver: AppUser | None, tenant_id: str) -> str:
+    """The verified person's id, after the same role check the bundle gate applies."""
+    person = require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=tenant_id)
+    if problem := approver_problem(approver, person.id, tenant_id):
+        raise LifecycleError(problem)
+    return person.id
+
+
+def accept(proposal: RuleProposal, *, actor: Actor, verifier: SessionVerifier, approver: AppUser | None,
            clock: Clock, seconds_on_screen: float | None = None) -> Accepted:
-    """The caller writes the three rows in one transaction."""
-    require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=proposal.tenant_id)
+    """The caller writes the three rows in one transaction. The approver recorded is the verified
+    person, never a separate argument; `approver` is that person's membership row, checked with the
+    same role rule the bundle gate uses."""
+    person_id = _verified_approver(actor, verifier, approver, proposal.tenant_id)
     moved = _move(proposal, S.ACCEPTED)
     now = clock.now()
     approval = Approval(
         id=new_id(clock), tenant_id=proposal.tenant_id, created_at=now, subject_kind=ApprovalSubject.RULE_PROPOSAL,
-        subject_id=proposal.id, content_hash=rule_hash(proposal), approver_id=approver_id,
+        subject_id=proposal.id, content_hash=rule_hash(proposal), approver_id=person_id,
         method=ApprovalMethod.PER_BUNDLE, seconds_on_screen=seconds_on_screen, approved_at=now,
         expires_at=now + EXPIRY)
     rule = VoiceRule(
@@ -73,8 +84,9 @@ def accept(proposal: RuleProposal, *, actor: Actor, verifier: SessionVerifier, a
     return Accepted(moved.model_copy(update={"expires_at": now + EXPIRY}), rule, approval)
 
 
-def reject(proposal: RuleProposal, *, actor: Actor, verifier: SessionVerifier) -> RuleProposal:
-    require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=proposal.tenant_id)
+def reject(proposal: RuleProposal, *, actor: Actor, verifier: SessionVerifier,
+           approver: AppUser | None) -> RuleProposal:
+    _verified_approver(actor, verifier, approver, proposal.tenant_id)
     return _move(proposal, S.REJECTED)
 
 
@@ -132,9 +144,9 @@ def transfer_test(proposal: RuleProposal, accepted_rule: VoiceRule, fresh: Seque
 
 
 def promote(proposal: RuleProposal, rule: VoiceRule, result: TransferResult, *, actor: Actor,
-            verifier: SessionVerifier, clock: Clock) -> tuple[RuleProposal, VoiceRule]:
+            verifier: SessionVerifier, approver: AppUser | None, clock: Clock) -> tuple[RuleProposal, VoiceRule]:
     """Widening where a rule applies is a person's call, and only after the transfer test passed."""
-    require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=proposal.tenant_id)
+    _verified_approver(actor, verifier, approver, proposal.tenant_id)
     if not result.passed:
         raise LifecycleError(f"transfer test not passed: {len(result.hits)} hit(s), "
                              f"{len(result.contradictions)} contradiction(s)")

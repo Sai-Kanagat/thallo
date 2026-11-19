@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from thallo.contracts.actors import AgentActor, HumanActor, HumanOnlyViolation
-from thallo.contracts.enums import ApprovalSubject, Channel, EditKind, RuleScope, TextRole
+from thallo.contracts.enums import ApprovalSubject, Channel, EditKind, RuleScope, TextRole, UserRole
 from thallo.contracts.ids import new_id
 from thallo.contracts.states import IllegalTransition, RuleProposalState
 from thallo.learning.blind import BlindError, BlindSession, Dimension, Piece
@@ -29,7 +29,7 @@ from thallo.learning.records import BlindSource, CaseKind, ChangeKind, Regressio
 from thallo.learning.rules import AvoidPhrase, MaxExclamations, PreferWording, parse_rule
 from thallo.learning.summary import ApprovalWithOutcomes, PieceOutcome
 
-from .conftest import T1, T2, USER, make_edit
+from .conftest import T1, T2, USER, make_edit, make_user
 
 # ---------------------------------------------------------------- classifier
 
@@ -132,36 +132,63 @@ def _proposal(clock, pillar="craft"):
     return propose(tenant_id=T1, edits=edits, existing_cases=[], known=[], clock=clock).proposed[0].proposal
 
 
-def test_accept_needs_a_live_human(clock, verifier, human):
+def test_accept_needs_a_live_human(clock, verifier, human, approver):
     p = _proposal(clock)
     with pytest.raises(HumanOnlyViolation):
-        accept(p, actor=AgentActor(id="bot"), verifier=verifier, approver_id=USER, clock=clock)
+        accept(p, actor=AgentActor(id="bot"), verifier=verifier, approver=approver, clock=clock)
     with pytest.raises(HumanOnlyViolation):
         accept(p, actor=HumanActor(id=USER, tenant_id=T1, session_id="token"), verifier=verifier,
-               approver_id=USER, clock=clock)
+               approver=approver, clock=clock)
     with pytest.raises(HumanOnlyViolation):
         accept(p, actor=HumanActor(id=USER, tenant_id=T2, session_id="live"), verifier=verifier,
-               approver_id=USER, clock=clock)
-    done = accept(p, actor=human, verifier=verifier, approver_id=USER, clock=clock)
+               approver=approver, clock=clock)
+    done = accept(p, actor=human, verifier=verifier, approver=approver, clock=clock)
     assert done.proposal.state is RuleProposalState.ACCEPTED
     assert done.approval.subject_kind is ApprovalSubject.RULE_PROPOSAL and done.approval.subject_id == p.id
     assert done.voice_rule.rule_proposal_id == p.id and done.voice_rule.scope_ref == "craft"
 
 
-def test_rejected_cannot_be_accepted(clock, verifier, human):
-    p = reject(_proposal(clock), actor=human, verifier=verifier)
+def test_approval_records_the_verified_person_and_checks_the_role(clock, verifier, human, approver):
+    p = _proposal(clock)
+    assert accept(p, actor=human, verifier=verifier, approver=approver, clock=clock).approval.approver_id == USER
+    other = make_user(clock, user_id="0190f3a0-0000-7000-8000-0000000000bb")
+    with pytest.raises(LifecycleError, match="not a known user"):
+        accept(p, actor=human, verifier=verifier, approver=other, clock=clock)  # a different id is not recorded
+    with pytest.raises(LifecycleError, match="not a known user"):
+        accept(p, actor=human, verifier=verifier, approver=None, clock=clock)
+    for role in (UserRole.SELLER, UserRole.STAFF):
+        with pytest.raises(LifecycleError, match="may not approve"):
+            accept(p, actor=human, verifier=verifier, approver=make_user(clock, role), clock=clock)
+    with pytest.raises(LifecycleError, match="another tenant"):
+        accept(p, actor=human, verifier=verifier, approver=make_user(clock, tenant=T2), clock=clock)
+
+
+def test_reject_and_promote_apply_the_same_approver_check(clock, verifier, human, approver):
+    p = _proposal(clock)
+    bad = [None, make_user(clock, user_id="0190f3a0-0000-7000-8000-0000000000bb"),
+           make_user(clock, UserRole.STAFF), make_user(clock, tenant=T2)]
+    for user in bad:
+        with pytest.raises(LifecycleError):
+            reject(p, actor=human, verifier=verifier, approver=user)
+        with pytest.raises(LifecycleError):
+            promote(p, None, None, actor=human, verifier=verifier, approver=user, clock=clock)  # type: ignore[arg-type]
+    assert reject(p, actor=human, verifier=verifier, approver=approver).state is RuleProposalState.REJECTED
+
+
+def test_rejected_cannot_be_accepted(clock, verifier, human, approver):
+    p = reject(_proposal(clock), actor=human, verifier=verifier, approver=approver)
     with pytest.raises(IllegalTransition):
-        accept(p, actor=human, verifier=verifier, approver_id=USER, clock=clock)
+        accept(p, actor=human, verifier=verifier, approver=approver, clock=clock)
 
 
-def test_live_rules_respect_scope(clock, verifier, human):
-    done = accept(_proposal(clock), actor=human, verifier=verifier, approver_id=USER, clock=clock)
+def test_live_rules_respect_scope(clock, verifier, human, approver):
+    done = accept(_proposal(clock), actor=human, verifier=verifier, approver=approver, clock=clock)
     assert live_rules([done.voice_rule], ctx(clock, "x", "y", pillar="craft"), clock)
     assert not live_rules([done.voice_rule], ctx(clock, "x", "y", pillar="offers"), clock)
 
 
-def test_expiry_after_90_days_unused_on_fake_clock(clock, verifier, human):
-    done = accept(_proposal(clock), actor=human, verifier=verifier, approver_id=USER, clock=clock)
+def test_expiry_after_90_days_unused_on_fake_clock(clock, verifier, human, approver):
+    done = accept(_proposal(clock), actor=human, verifier=verifier, approver=approver, clock=clock)
     clock.advance(EXPIRY - timedelta(seconds=1))
     assert expire_due(done.proposal, done.voice_rule, clock) is None
     clock.advance(seconds=1)
@@ -169,8 +196,8 @@ def test_expiry_after_90_days_unused_on_fake_clock(clock, verifier, human):
     assert expire_due(_proposal(clock), done.voice_rule, clock) is None  # a proposed rule cannot expire
 
 
-def test_use_means_it_fired_on_a_draft(clock, verifier, human):
-    done = accept(_proposal(clock), actor=human, verifier=verifier, approver_id=USER, clock=clock)
+def test_use_means_it_fired_on_a_draft(clock, verifier, human, approver):
+    done = accept(_proposal(clock), actor=human, verifier=verifier, approver=approver, clock=clock)
     clock.advance(days=80)
     assert record_use(done.voice_rule, "Nothing to catch.", clock).last_used_at is None
     used = record_use(done.voice_rule, "Truly great.", clock)
@@ -178,20 +205,23 @@ def test_use_means_it_fired_on_a_draft(clock, verifier, human):
     assert expire_due(done.proposal, used, clock) is None
 
 
-def test_transfer_test_then_human_promotion(clock, verifier, human):
-    done = accept(_proposal(clock), actor=human, verifier=verifier, approver_id=USER, clock=clock)
+def test_transfer_test_then_human_promotion(clock, verifier, human, approver):
+    done = accept(_proposal(clock), actor=human, verifier=verifier, approver=approver, clock=clock)
     inside = ctx(clock, "Truly in.", "In.", pillar="craft")
     one = ctx(clock, "Truly x.", "X.", pillar="offers")
     res = transfer_test(done.proposal, done.voice_rule, [inside, one])
     assert not res.passed
     with pytest.raises(LifecycleError):
-        promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, clock=clock)
+        promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, approver=approver,
+                clock=clock)
     two = ctx(clock, "Truly y.", "Y.", pillar="team")
     res = transfer_test(done.proposal, done.voice_rule, [inside, one, two])
     assert res.passed and inside.edit.id not in res.hits
     with pytest.raises(HumanOnlyViolation):
-        promote(done.proposal, done.voice_rule, res, actor=AgentActor(id="bot"), verifier=verifier, clock=clock)
-    p, rule = promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, clock=clock)
+        promote(done.proposal, done.voice_rule, res, actor=AgentActor(id="bot"), verifier=verifier,
+                approver=approver, clock=clock)
+    p, rule = promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, approver=approver,
+                          clock=clock)
     assert p.state is RuleProposalState.PROMOTED and rule.scope is RuleScope.BRAND
     contra = ctx(clock, "Plain.", "Truly the best.", pillar="events")
     assert not transfer_test(done.proposal, done.voice_rule, [one, two, contra]).passed
@@ -222,8 +252,8 @@ def test_code_checks_gate_the_run(clock):
     assert not empty.passed
 
 
-def test_live_voice_rule_breaks_the_case(clock, verifier, human):
-    done = accept(_proposal(clock, pillar=None), actor=human, verifier=verifier, approver_id=USER, clock=clock)
+def test_live_voice_rule_breaks_the_case(clock, verifier, human, approver):
+    done = accept(_proposal(clock, pillar=None), actor=human, verifier=verifier, approver=approver, clock=clock)
     change = Change.of(ChangeKind.PROMPT, "draft@2", "body", "m")
     run = run_eval(tenant_id=T1, change=change, cases=_cases(clock), generate=lambda c: "Truly. " + GOOD,
                    rules=[done.voice_rule], clock=clock)
@@ -272,6 +302,21 @@ def test_no_prompt_goes_live_on_a_failed_or_stale_run(clock):
         reg.activate(v2, [other], sets)  # a pass for another version proves nothing
     live = reg.activate(v2, [bad, good], sets)
     assert reg.active(T1, "draft") == live and live.eval_passed
+
+
+def test_prompt_activation_needs_its_own_tenants_passing_run(clock):
+    reg = PromptRegistry(clock)
+    v = reg.register(tenant_id=T1, name="draft", role=TextRole.DRAFT, body="Write plainly.", model_id="m")
+    c1, c2 = _cases(clock, T1), _cases(clock, T2)
+    other = run_eval(tenant_id=T2, change=reg.change(v), cases=c2, generate=lambda c: GOOD, rules=[], clock=clock)
+    assert other.passed
+    with pytest.raises(ChangeBlocked, match="own client"):
+        reg.activate(v, [other], {T2: case_set_sha(c2)})
+    assert reg.active(T1, "draft") is None
+    w = reg.register(tenant_id=T2, name="draft", role=TextRole.DRAFT, body="Write plainly.", model_id="m")
+    assert reg.change(v).sha256 != reg.change(w).sha256  # same body, different client, different change
+    own = run_eval(tenant_id=T1, change=reg.change(v), cases=c1, generate=lambda c: GOOD, rules=[], clock=clock)
+    assert reg.activate(v, [own, other], {T1: case_set_sha(c1)}).eval_passed
 
 
 def test_shared_change_needs_every_client_to_pass(clock):

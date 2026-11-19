@@ -74,7 +74,8 @@ class PromptRegistry:
         return self._bodies[version.id]
 
     def change(self, version: PromptVersion) -> Change:
-        return Change(ChangeKind.PROMPT, f"{version.name}@{version.version}", version.body_sha256)
+        return Change.of(ChangeKind.PROMPT, f"{version.name}@{version.version}", version.tenant_id,
+                         version.body_sha256)
 
     def register(self, *, tenant_id: str, name: str, role: TextRole, body: str, model_id: str) -> PromptVersion:
         sha = prompt_sha(body, model_id)
@@ -91,6 +92,8 @@ class PromptRegistry:
 
     def activate(self, version: PromptVersion, runs: Sequence[EvalRun],
                  current_case_sets: Mapping[str, str]) -> PromptVersion:
+        if version.tenant_id not in current_case_sets:
+            raise ChangeBlocked(f"{version.tenant_id}: this version's own client case set is not named")
         decision = gate(self.change(version), runs, current_case_sets)
         if not decision.allowed:
             raise ChangeBlocked("; ".join(decision.reasons))
