@@ -58,4 +58,14 @@ class PlannerMirror(TenantRow):
     mirrored_at: AwareDatetime
 
 
-__all__ = ["PlannerMirror", "PlannerSlot", "PlannerWeek"]
+class ForecastHead(TenantRow):
+    """The forecast chain head (migration 0033). Written only by a database trigger; the app
+    role reads it. In the memory backend there is none, and verify_chain says so."""
+
+    __table__ = "forecast_head"
+    seq: int
+    seal_hash: str
+    updated_at: AwareDatetime
+
+
+__all__ = ["ForecastHead", "PlannerMirror", "PlannerSlot", "PlannerWeek"]

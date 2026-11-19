@@ -218,14 +218,29 @@ def seal(tx: Any, *, forecast_id: str, brief_id: str, proposal: Proposal, now: d
     return tx.insert(draft.model_copy(update={"seal_hash": seal_digest(draft)}))
 
 
-def verify_chain(tx: Any) -> tuple[bool, int | None]:
-    """(True, None) when every forecast matches its seal and links to the one before; else
-    (False, seq of the first that does not)."""
+def verify_chain(tx: Any, anchor: tuple[int, str] | None = None) -> tuple[bool, int | None]:
+    """(True, None) when every forecast matches its seal and links to the one before, and the
+    newest one is the anchor; else (False, the first seq that fails).
+
+    The anchor is (seq, seal_hash) of the head. Without one passed, the `forecast_head` row the
+    database trigger keeps is used (Postgres); with neither, a dropped tail cannot be seen."""
+    from thallo.planner.records import ForecastHead  # noqa: PLC0415
+
+    if anchor is None:
+        heads = tx.list_all(ForecastHead)
+        anchor = (heads[0].seq, heads[0].seal_hash) if heads else None
+    chain = sorted(tx.list_all(Forecast), key=lambda f: f.seq)
     prev: str | None = None
-    for n, f in enumerate(sorted(tx.list_all(Forecast), key=lambda f: f.seq), start=1):
+    for n, f in enumerate(chain, start=1):
         if f.seq != n or f.prev_hash != prev or seal_digest(f) != f.seal_hash:
             return False, f.seq
         prev = f.seal_hash
+    if anchor is not None:
+        last = chain[-1] if chain else None
+        if last is None or last.seq != anchor[0]:
+            return False, (last.seq + 1) if last else 1
+        if last.seal_hash != anchor[1]:
+            return False, last.seq
     return True, None
 
 

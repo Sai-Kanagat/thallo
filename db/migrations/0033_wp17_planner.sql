@@ -68,3 +68,76 @@ SELECT app_enable_tenant_rls('planner_mirror');
 
 -- Mirror runs are a record of what went out: append-only.
 REVOKE UPDATE, DELETE, TRUNCATE ON planner_mirror FROM cortex_app;
+
+-- ---------------------------------------------------------------- sealed forecasts stay sealed
+-- forecast and forecast_score (core) become append-only for everyone: a trigger refuses UPDATE,
+-- DELETE and TRUNCATE whoever runs them, and the app role loses those grants as well.
+CREATE FUNCTION forecast_append_only() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only: % refused', TG_TABLE_NAME, TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END
+$$;
+REVOKE ALL ON FUNCTION forecast_append_only() FROM PUBLIC;
+
+CREATE TRIGGER forecast_append_only BEFORE UPDATE OR DELETE ON forecast
+  FOR EACH ROW EXECUTE FUNCTION forecast_append_only();
+CREATE TRIGGER forecast_no_truncate BEFORE TRUNCATE ON forecast
+  FOR EACH STATEMENT EXECUTE FUNCTION forecast_append_only();
+CREATE TRIGGER forecast_score_append_only BEFORE UPDATE OR DELETE ON forecast_score
+  FOR EACH ROW EXECUTE FUNCTION forecast_append_only();
+CREATE TRIGGER forecast_score_no_truncate BEFORE TRUNCATE ON forecast_score
+  FOR EACH STATEMENT EXECUTE FUNCTION forecast_append_only();
+REVOKE UPDATE, DELETE, TRUNCATE ON forecast, forecast_score FROM cortex_app;
+
+-- The chain head, one row per tenant, written only by the trigger below (owner rights). The app
+-- role may read it and nothing else, so dropping the newest forecasts cannot go unnoticed:
+-- verify_chain checks the head's seq and hash are the newest forecast on record.
+CREATE TABLE forecast_head (
+  id uuid PRIMARY KEY,            -- the tenant id: one head per tenant
+  created_at timestamptz NOT NULL,
+  tenant_id uuid NOT NULL UNIQUE REFERENCES tenant(id),
+  seq integer NOT NULL CHECK (seq >= 1),
+  seal_hash text NOT NULL CHECK (seal_hash ~ '^[0-9a-f]{64}$'),
+  updated_at timestamptz NOT NULL,
+  CHECK (id = tenant_id)
+);
+SELECT app_enable_tenant_rls('forecast_head');
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON forecast_head FROM cortex_app;
+
+-- Every new forecast must extend the chain: seq one past the head, prev_hash the head's hash.
+-- SECURITY DEFINER so it can move the head the app role cannot write; the tenant policy still
+-- applies (FORCE ROW LEVEL SECURITY) because the session's tenant is the row's tenant.
+CREATE FUNCTION forecast_extend_head() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  h public.forecast_head%ROWTYPE;
+BEGIN
+  SELECT * INTO h FROM public.forecast_head WHERE id = NEW.tenant_id FOR UPDATE;
+  IF NOT FOUND THEN
+    IF NEW.seq <> 1 OR NEW.prev_hash IS NOT NULL THEN
+      RAISE EXCEPTION 'forecast chain: the first forecast must be seq 1 with no prev_hash'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    INSERT INTO public.forecast_head (id, created_at, tenant_id, seq, seal_hash, updated_at)
+      VALUES (NEW.tenant_id, NEW.created_at, NEW.tenant_id, NEW.seq, NEW.seal_hash, NEW.created_at);
+  ELSE
+    IF NEW.seq <> h.seq + 1 OR NEW.prev_hash IS DISTINCT FROM h.seal_hash THEN
+      RAISE EXCEPTION 'forecast chain: seq % does not extend the head %', NEW.seq, h.seq
+        USING ERRCODE = 'check_violation';
+    END IF;
+    UPDATE public.forecast_head SET seq = NEW.seq, seal_hash = NEW.seal_hash, updated_at = NEW.created_at
+      WHERE id = NEW.tenant_id;
+  END IF;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION forecast_extend_head() FROM PUBLIC;
+CREATE TRIGGER forecast_extend_head BEFORE INSERT ON forecast
+  FOR EACH ROW EXECUTE FUNCTION forecast_extend_head();
