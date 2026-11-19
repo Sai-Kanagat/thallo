@@ -16,9 +16,10 @@ NO_ACCESS = frozenset({"operator", "identity"})
 # SELECT only, and SELECT the only privilege any cortex role holds. Not forced: the owner writes.
 GLOBAL_READ_ONLY = frozenset({"system_setting"})
 # Narrow cross-tenant policies allowed to non-app roles only: (table, policy, role).
-WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker"),
-                             *((t, "redirector_lookup", "cortex_redirector")  # 0024, SELECT only
-                               for t in ("tracked_link", "variant", "bundle", "approval", "publication", "ad"))})
+WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker")})
+# 0024: the owner role's SELECT-only slug lookup, used only inside the SECURITY DEFINER function
+# redirect_lookup. Granted to the migration role, whose name differs per install, never a cortex role.
+OWNER_LOOKUP = ("tracked_link", "redirect_slug_lookup")
 
 _QUERY = """
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
@@ -80,6 +81,10 @@ def audit_rls(conn: psycopg.Connection) -> list[str]:
             problems.append(f"{name}: no tenant_isolation policy for all commands")
         for cmd, using, check, polname, roles in parsed:
             if (name, polname, roles) in WORKER_POLICIES:
+                continue
+            if (name, polname) == OWNER_LOOKUP:
+                if cmd != "r" or "cortex" in roles or roles == "public":
+                    problems.append(f"{name}: policy {polname} must be SELECT only and for the owner role")
                 continue  # narrow, named, granted to a non-app role only
             writes = cmd in ("*", "a", "w")
             if "app_current_tenant()" not in using or (writes and "app_current_tenant()" not in check):

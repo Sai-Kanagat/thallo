@@ -5,14 +5,40 @@ from __future__ import annotations
 import os
 import secrets
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
-from thallo.contracts.enums import CampaignRole, Language, TouchKind
+from thallo.contracts.enums import (
+    ApprovalMethod,
+    ApprovalSubject,
+    CampaignRole,
+    Channel,
+    FunnelStage,
+    Language,
+    TouchKind,
+    UserRole,
+)
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Ad, Campaign, Lead, Operator, Person, Tenant, Touch
+from thallo.contracts.models import (
+    Ad,
+    Approval,
+    AppUser,
+    Asset,
+    Brief,
+    Bundle,
+    Campaign,
+    Idea,
+    Lead,
+    Operator,
+    Person,
+    Publication,
+    Tenant,
+    Touch,
+    Variant,
+)
 from thallo.contracts.states import AdState
 from thallo.tracking.capture import capture_call, capture_form, capture_walk_in, capture_whatsapp, form_fields
 from thallo.tracking.links import mint_code, mint_link, mint_qr, mint_whatsapp_link
@@ -89,6 +115,40 @@ def _ad(repo, clock, state=AdState.ACTIVE):
     return ad.id
 
 
+def _approver(repo, clock, admin_url):
+    import psycopg
+
+    ident = new_id(clock)
+    with psycopg.connect(admin_url) as conn:
+        conn.execute("INSERT INTO identity (id, created_at, email, display_name) VALUES (%s, %s, %s, %s)",
+                     (ident, clock.now(), f"f-{secrets.token_hex(3)}@example.test", "Founder"))
+    return repo.insert(AppUser(id=new_id(clock), created_at=clock.now(), tenant_id=repo.tenant_id, identity_id=ident,
+                               display_name="Founder", role=UserRole.FOUNDER)).id
+
+
+def _variant(repo, clock, root="a" * 64):
+    t, now = repo.tenant_id, clock.now()
+    idea = repo.insert(Idea(id=new_id(clock), created_at=now, tenant_id=t, stage=FunnelStage.CONSIDERATION,
+                            title="Bread", rationale="r"))
+    brief = repo.insert(Brief(id=new_id(clock), created_at=now, tenant_id=t, idea_id=idea.id, audience="a",
+                              job_to_be_done="j", message="m", call_to_action="c", language=Language.EN))
+    asset = repo.insert(Asset(id=new_id(clock), created_at=now, tenant_id=t, brief_id=brief.id, master_text="t"))
+    bundle = repo.insert(Bundle(id=new_id(clock), created_at=now, tenant_id=t, asset_id=asset.id, root_hash=root,
+                                rule_version=1))
+    return repo.insert(Variant(id=new_id(clock), created_at=now, tenant_id=t, bundle_id=bundle.id,
+                               channel=Channel.INSTAGRAM, language=Language.EN, text="t", task_type="post"))
+
+
+def _approve(repo, clock, approver, bundle_id, content_hash="a" * 64, ttl=timedelta(days=1)):
+    """Expiry is checked against the database's now(), not the fake clock: count from real time."""
+    from datetime import UTC, datetime
+
+    return repo.insert(Approval(id=new_id(clock), created_at=clock.now(), tenant_id=repo.tenant_id,
+                                subject_kind=ApprovalSubject.BUNDLE, subject_id=bundle_id, content_hash=content_hash,
+                                approver_id=approver, method=ApprovalMethod.PER_BUNDLE, approved_at=clock.now(),
+                                expires_at=datetime.now(UTC) + ttl))
+
+
 def test_every_table_is_protected_and_the_redirector_policy_is_select_only(urls):
     import psycopg
 
@@ -96,9 +156,24 @@ def test_every_table_is_protected_and_the_redirector_policy_is_select_only(urls)
 
     with psycopg.connect(urls["admin"]) as conn:
         assert audit_rls(conn) == []
-        rows = conn.execute("SELECT polcmd, polroles::regrole[]::text[] FROM pg_policy "
-                            "WHERE polrelid = 'tracked_link'::regclass AND polname = 'redirector_lookup'").fetchall()
-        assert rows == [("r", ["cortex_redirector"])]
+        assert conn.execute("SELECT count(*) FROM pg_policy WHERE 'cortex_redirector'::regrole = ANY(polroles)"
+                            ).fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM information_schema.role_table_grants "
+                            "WHERE grantee = 'cortex_redirector'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM information_schema.role_column_grants "
+                            "WHERE grantee = 'cortex_redirector'").fetchone()[0] == 0
+        assert conn.execute("SELECT to_regclass('tracked_link_live')").fetchone()[0] is None
+        definer, config, owner = conn.execute(
+            "SELECT prosecdef, proconfig, proowner::regrole::text FROM pg_proc WHERE proname = 'redirect_lookup'"
+        ).fetchone()
+        assert definer and config == ["search_path=pg_catalog, pg_temp"]
+        assert owner == conn.execute("SELECT relowner::regrole::text FROM pg_class WHERE relname = 'tracked_link'"
+                                     ).fetchone()[0]
+        grantees = {r[0] for r in conn.execute(
+            "SELECT grantee FROM information_schema.routine_privileges WHERE routine_name = 'redirect_lookup'")}
+        assert grantees == {"cortex_redirector", owner}
+        assert conn.execute("SELECT count(*) FROM information_schema.routine_privileges "
+                            "WHERE routine_name = 'redirect_lookup' AND grantee = 'PUBLIC'").fetchone()[0] == 0
         cols = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns "
                                            "WHERE table_name = 'touch'").fetchall()}
         assert not {c for c in cols if "ip" in c.split("_") or "addr" in c or "agent" in c}
@@ -113,7 +188,7 @@ def test_tracking_code_is_tenant_isolated(database, clock):
         assert capture_walk_in(repo, clock, code.code).code is None
 
 
-def test_only_live_links_are_in_the_view(database, clock, urls):
+def test_only_live_links_are_returned_by_the_lookup(database, clock, urls):
     a = _tenant(database, "Alpha")
     with database.tenant(a.id) as repo:
         paused = _ad(repo, clock, AdState.CREATED_PAUSED)
@@ -127,6 +202,30 @@ def test_only_live_links_are_in_the_view(database, clock, urls):
     assert d.lookup(l_none.link.slug) is None
 
 
+def test_the_approval_and_publication_live_paths(database, clock, urls):
+    a = _tenant(database, "Alpha")
+    with database.tenant(a.id) as repo:
+        approver = _approver(repo, clock, urls["admin"])
+        v_ok, v_stale, v_void, v_old, v_pub = (_variant(repo, clock) for _ in range(5))
+        _approve(repo, clock, approver, v_ok.bundle_id)
+        _approve(repo, clock, approver, v_stale.bundle_id, content_hash="b" * 64)  # not the current root hash
+        void = _approve(repo, clock, approver, v_void.bundle_id)
+        repo.execute("UPDATE approval SET voided_at = now() WHERE id = %s", (void.id,))
+        _approve(repo, clock, approver, v_old.bundle_id, ttl=timedelta(days=-1))
+        pub_appr = _approve(repo, clock, approver, v_pub.bundle_id)
+        repo.execute("UPDATE approval SET voided_at = now() WHERE id = %s", (pub_appr.id,))
+        repo.insert(Publication(id=new_id(clock), created_at=clock.now(), tenant_id=a.id, variant_id=v_pub.id,
+                                approval_id=pub_appr.id, idempotency_key=new_id(clock), content_sha256="0" * 64))
+        links = {name: mint_link(repo, clock, prefix=PREFIX, destination=f"https://a.example/{name}", variant_id=v.id)
+                 for name, v in (("ok", v_ok), ("stale", v_stale), ("void", v_void), ("old", v_old),
+                                 ("pub", v_pub))}
+    d = PgLinkDirectory(urls["redirector"])
+    live = {name for name, m in links.items() if d.lookup(m.link.slug) is not None}
+    assert live == {"ok", "pub"}  # a published post keeps redirecting after a later void
+    hit = d.lookup(links["ok"].link.slug)
+    assert (hit.tenant_id, hit.link_id, hit.destination) == (a.id, links["ok"].link.id, links["ok"].link.destination)
+
+
 def test_redirector_role_reads_narrow_columns_and_nothing_else(database, clock, urls):
     import psycopg
 
@@ -138,8 +237,11 @@ def test_redirector_role_reads_narrow_columns_and_nothing_else(database, clock, 
     d = PgLinkDirectory(urls["redirector"])
     assert d.lookup(la.link.slug).tenant_id == a.id and d.lookup(lb.link.slug).destination == lb.link.destination
     assert d.lookup("zzzzzzzzzz") is None
-    for stmt in ("SELECT whatsapp_code FROM tracked_link", "SELECT text FROM variant", "SELECT * FROM approval",
-                 "SELECT * FROM touch", "SELECT * FROM person", "SELECT * FROM tracking_code",
+    for stmt in ("SELECT id FROM tracked_link", "SELECT slug, destination FROM tracked_link",
+                 "SELECT id FROM approval", "SELECT id FROM variant", "SELECT id FROM bundle",
+                 "SELECT id FROM publication", "SELECT id FROM ad", "SELECT * FROM touch",
+                 "SELECT * FROM redirect_lookup('zzzzzzzzzz') JOIN tenant ON true",
+                 "SELECT * FROM person", "SELECT * FROM tracking_code",
                  "UPDATE tracked_link SET destination = 'https://evil.example/'",
                  "DELETE FROM tracked_link",
                  f"INSERT INTO touch (id, created_at, tenant_id, kind, occurred_at) VALUES "
