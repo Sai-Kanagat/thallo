@@ -73,7 +73,8 @@ class FitResult:
 
 
 def fit(play: LeadPlay, answers: dict[str, Any], *, email: str | None = None,
-        lists: TenantLists = TenantLists()) -> FitResult:
+        lists: TenantLists | None = None) -> FitResult:
+    lists = lists or TenantLists()
     facts = {k: str(v) for k, v in answers.items() if isinstance(v, str | int | float | bool)}
     facts.update(derived_facts(answers, email, lists))
     total = play.fit_base

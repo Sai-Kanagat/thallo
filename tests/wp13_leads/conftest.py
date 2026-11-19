@@ -62,7 +62,8 @@ class World:
         return Desk(tx, self.tenant.id, self.clock)
 
 
-POLICY_RULES = {"contact": {"whatsapp": {"bases": ["enquiry", "opt_in"], "footer": "Rispondi STOP per non ricevere altri messaggi"},
+POLICY_RULES = {"contact": {"whatsapp": {"bases": ["enquiry", "opt_in"],
+                                         "footer": "Rispondi STOP per non ricevere altri messaggi"},
                             "email": {"bases": ["opt_in"]}}}
 
 

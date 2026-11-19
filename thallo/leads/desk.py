@@ -116,7 +116,7 @@ def norm_email(raw: str | None) -> str | None:
 def _clean_text(value: Any, cap: int = MAX_TEXT_ANSWER) -> str | None:
     if not isinstance(value, str):
         return None
-    text = re.sub(r"[\x00-\x1f\x7f-\x9f​-‏ -‮⁦-⁩]", " ", value)
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069]", " ", value)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:cap] or None
 
@@ -224,7 +224,7 @@ class Desk:
                 updates = {k: v for k, v in (("phone", phone), ("email", email)) if v and not getattr(p, k)}
                 if updates:
                     self.tx.update(Person, p.id, **updates)
-                    p = p.model_copy(update=updates)
+                    return p.model_copy(update=updates)
                 return p
         account_id = None
         if email:
@@ -435,14 +435,14 @@ class Desk:
             return None  # checked before any model call: no basis, no draft, no spend
         d = self.drafter.draft(tenant_id=self.tenant_id, language=person.language or Language.EN,
                                display_name=person.display_name, answers=lead.answers,
-                               idempotency_key=f"lead-reply:{lead.id}:{len(self.tx.list_all(Message, lead_id=lead.id))}")
+                               idempotency_key=f"lead-reply:{lead.id}:{len(self.tx.list_all(Message))}")
         return self._new_draft(lead, MessageKind.REPLY_DRAFT, d.text, model_id=d.model_id,
                                prompt_version=d.prompt_version)
 
     def edit_draft(self, message_id: str, body: str) -> Message:
         msg = self._draft(message_id)
         if msg.kind is MessageKind.ACKNOWLEDGEMENT:
-            raise DeskError("template_fixed", "an acknowledgement is the approved wording; discard it and reply instead")
+            raise DeskError("template_fixed", "an acknowledgement is approved wording; discard it and reply instead")
         text = (body or "").strip()
         if not text or len(text) > 2000:
             raise DeskError("bad_body", "a message needs between 1 and 2000 characters")
@@ -561,7 +561,7 @@ class Desk:
                 raise DeskError("no_booking", "there is no open booking to mark")
             target = LeadState.HELD if kind == "held" else LeadState.NO_SHOW
             lead = _move(self.tx, lead, target)
-            self.tx.update(Booking, bookings[-1].id, state=BookingState.HELD if kind == "held" else BookingState.NO_SHOW)
+            self.tx.update(Booking, bookings[-1].id, state=BookingState(kind))
             return lead
         if kind not in ("won", "lost"):
             raise DeskError("bad_outcome", "an outcome is held, no_show, won or lost")

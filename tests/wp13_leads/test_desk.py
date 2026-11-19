@@ -154,10 +154,10 @@ def test_untrusted_lead_text_is_capped_and_cleaned(world):
     w = world
     with w.backend.tenant(w.tenant.id) as tx:
         d = w.desk(tx)
-        lead = d.intake(_event(w, display_name="Ann‮" + "y" * 300))
+        lead = d.intake(_event(w, display_name="Ann\u202e" + "y" * 300))
         lead = d.record_answers(lead.id, {"town": "Bo\x00logna " + "z" * 500})
         assert "\x00" not in lead.answers["town"] and len(lead.answers["town"]) == 200
-        assert "‮" not in d.person(lead).display_name and len(d.person(lead).display_name) == 80
+        assert "\u202e" not in d.person(lead).display_name and len(d.person(lead).display_name) == 80
 
 
 def test_the_fake_touch_feed_stands_in_for_wp12(world):

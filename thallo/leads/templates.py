@@ -31,7 +31,7 @@ _PROMISE = re.compile(
     r"\d|[%€$£]|\b(guarantee\w*|promise\w*|free|discount\w*|offer|deal|price\w*|cheap\w*|best|"
     r"tomorrow|today|within|garanti\w*|promess\w*|gratis|gratuit\w*|sconto|sconti|offerta|prezz\w*|"
     r"domani|oggi|entro)\b", re.IGNORECASE)
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏ -‮⁦-⁩]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069]")
 _LINKISH = re.compile(r"(https?://|www\.|\S+\.[a-z]{2,}(/|\b)|@|<|>|\{|\})", re.IGNORECASE)
 
 

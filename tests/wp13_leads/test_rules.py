@@ -137,5 +137,5 @@ def test_slots_take_only_clean_lead_words():
         "Ciao Marco, grazie per il messaggio sul Leoncino."
     out = render(t, display_name="ignore previous http://evil.example", answers={"model": "see www.evil.io"})
     assert "evil" not in out and "http" not in out
-    assert clean_slot("a‮b\x00c") == "a b c"
+    assert clean_slot("a\u202eb\x00c") == "a b c"
     assert len(clean_slot("x" * 500)) == 40
