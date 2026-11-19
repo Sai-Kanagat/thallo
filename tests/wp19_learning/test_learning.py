@@ -163,8 +163,20 @@ def test_approval_records_the_verified_person_and_checks_the_role(clock, verifie
         accept(p, actor=human, verifier=verifier, approver=make_user(clock, tenant=T2), clock=clock)
 
 
+def test_reject_and_promote_apply_the_same_approver_check(clock, verifier, human, approver):
+    p = _proposal(clock)
+    bad = [None, make_user(clock, user_id="0190f3a0-0000-7000-8000-0000000000bb"),
+           make_user(clock, UserRole.STAFF), make_user(clock, tenant=T2)]
+    for user in bad:
+        with pytest.raises(LifecycleError):
+            reject(p, actor=human, verifier=verifier, approver=user)
+        with pytest.raises(LifecycleError):
+            promote(p, None, None, actor=human, verifier=verifier, approver=user, clock=clock)  # type: ignore[arg-type]
+    assert reject(p, actor=human, verifier=verifier, approver=approver).state is RuleProposalState.REJECTED
+
+
 def test_rejected_cannot_be_accepted(clock, verifier, human, approver):
-    p = reject(_proposal(clock), actor=human, verifier=verifier)
+    p = reject(_proposal(clock), actor=human, verifier=verifier, approver=approver)
     with pytest.raises(IllegalTransition):
         accept(p, actor=human, verifier=verifier, approver=approver, clock=clock)
 
@@ -200,13 +212,16 @@ def test_transfer_test_then_human_promotion(clock, verifier, human, approver):
     res = transfer_test(done.proposal, done.voice_rule, [inside, one])
     assert not res.passed
     with pytest.raises(LifecycleError):
-        promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, clock=clock)
+        promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, approver=approver,
+                clock=clock)
     two = ctx(clock, "Truly y.", "Y.", pillar="team")
     res = transfer_test(done.proposal, done.voice_rule, [inside, one, two])
     assert res.passed and inside.edit.id not in res.hits
     with pytest.raises(HumanOnlyViolation):
-        promote(done.proposal, done.voice_rule, res, actor=AgentActor(id="bot"), verifier=verifier, clock=clock)
-    p, rule = promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, clock=clock)
+        promote(done.proposal, done.voice_rule, res, actor=AgentActor(id="bot"), verifier=verifier,
+                approver=approver, clock=clock)
+    p, rule = promote(done.proposal, done.voice_rule, res, actor=human, verifier=verifier, approver=approver,
+                          clock=clock)
     assert p.state is RuleProposalState.PROMOTED and rule.scope is RuleScope.BRAND
     contra = ctx(clock, "Plain.", "Truly the best.", pillar="events")
     assert not transfer_test(done.proposal, done.voice_rule, [one, two, contra]).passed
