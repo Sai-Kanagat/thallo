@@ -130,6 +130,22 @@ def test_play_b_uses_the_email_domain_fact():
     assert b.fit({**base, "email_domain": "company"}) - b.fit(base) == 10
 
 
+def test_options_are_capped():
+    p = _raw()["plays"][0]
+    qs = copy.deepcopy(p["qualification_questions"])
+    qs[1]["options"] = [f"opt_{i}" for i in range(11)]
+    with pytest.raises(ValidationError):
+        parse(_with("A", qualification_questions=qs))
+
+
+def test_answer_space_is_bounded_before_enumerating():
+    qs = [{"key": f"q{i}", "ask": "Pick one?", "type": "choice", "options": [f"o{j}" for j in range(10)]}
+          for i in range(6)]
+    rules = [{"if": {"q0": "o1"}, "add": 50}]
+    with pytest.raises(ValidationError, match="answer combinations"):
+        parse(_with("A", qualification_questions=qs, fit_rules=rules))
+
+
 def test_floats_would_not_be_exact_but_parse_uses_decimal():
     lib = load_text(DATA.read_text(encoding="utf-8"))
     assert all(isinstance(v, Decimal) for p in lib.plays for v in p.pillar_mix.values())

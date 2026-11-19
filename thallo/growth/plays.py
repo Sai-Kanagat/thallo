@@ -41,6 +41,10 @@ PREDICATES = frozenset({"in_service_area", "in_stock", "matches_supported_list",
 # Facts about a lead that are not questions. email_domain comes from the lead's own address.
 DERIVED_FACTS: dict[str, frozenset[str]] = {"email_domain": frozenset({"company", "personal"})}
 OTHER = "other"
+# Bounds on the answer space fit_range enumerates: tenants edit plays, so it must stay small.
+MAX_OPTIONS = 10
+MAX_OPTION_LEN = 40
+MAX_ANSWER_SPACE = 50_000
 
 
 class _Strict(BaseModel):
@@ -51,7 +55,7 @@ class Question(_Strict):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
     ask: str = Field(min_length=3, max_length=200)
     type: Literal["text", "choice", "choice_from_catalogue"]
-    options: tuple[str, ...] = ()
+    options: tuple[str, ...] = Field(default=(), max_length=MAX_OPTIONS)
     only_if: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -60,6 +64,8 @@ class Question(_Strict):
             raise ValueError(f"question {self.key}: a choice needs at least two options")
         if self.type != "choice" and self.options:
             raise ValueError(f"question {self.key}: only a choice has options")
+        if any(not o or len(o) > MAX_OPTION_LEN for o in self.options):
+            raise ValueError(f"question {self.key}: each option is 1 to {MAX_OPTION_LEN} characters")
         if len(set(self.options)) != len(self.options):
             raise ValueError(f"question {self.key}: options repeat")
         return self
@@ -239,6 +245,11 @@ def _answer_space(spec: PlaySpec) -> list[dict[str, str]]:
         if k in tested:
             keys.append(k)
             values.append((*sorted(vals), ""))
+    size = 1
+    for v in values:
+        size *= len(v)
+    if size > MAX_ANSWER_SPACE:
+        raise ValueError(f"the questions allow {size} answer combinations; keep it under {MAX_ANSWER_SPACE}")
     out = []
     for combo in itertools.product(*values):
         facts = dict(zip(keys, combo, strict=True))

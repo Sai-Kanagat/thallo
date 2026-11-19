@@ -6,7 +6,7 @@
 // cache on sign-out and on tenant switch (lib/caches.ts).
 
 const SHELL = "thallo-shell-v2";
-const PAGES = ["/review", "/plan", "/connections", "/login"];
+const PAGES = ["/review", "/plan", "/growth", "/connections", "/login"];
 
 function cacheable(url) {
   return url.origin === self.location.origin && !url.pathname.startsWith("/api/");
