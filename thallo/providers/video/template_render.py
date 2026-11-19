@@ -33,7 +33,7 @@ from thallo.providers.image.template_render import TemplateRender
 
 NAME = "template_render"
 CAPABILITY = Capability.VIDEO
-DEFAULT_TEMPLATE = "video_frame-01"
+DEFAULT_TEMPLATE = "video_frame-03"  # no photo needed
 MAX_FRAMES = 12
 FADE_S = 0.4
 DEFAULT_MS_PER_FRAME = 2500

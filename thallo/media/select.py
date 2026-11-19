@@ -35,7 +35,7 @@ SWITCH_ENV = "THALLO_ALLOW_GENERATED_MEDIA"
 GENERATING = frozenset({"generated_hosted", "generated_local"})  # provider names that make new imagery
 VIDEO_CHANNELS = frozenset({Channel.INSTAGRAM, Channel.FACEBOOK, Channel.YOUTUBE, Channel.LINKEDIN_COMPANY,
                             Channel.LINKEDIN_PERSONAL})
-VIDEO_FRAME = "video_frame-01"
+VIDEO_FRAME = "video_frame-03"
 _RANK = {MediaProvenance.CLIENT_PHOTO: 0, MediaProvenance.CLIENT_GRAPHIC: 1, MediaProvenance.CLIENT_CLIP: 0,
          MediaProvenance.PERSON_FILE: 2, MediaProvenance.TEMPLATE_RENDER: 3,
          MediaProvenance.GENERATED_BACKGROUND: 8, MediaProvenance.GENERATED: 9}
