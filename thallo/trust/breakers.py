@@ -7,7 +7,7 @@ refused when, counting the estimate:
 - today's spend (UTC day) would pass the tenant's per-day cap (all providers, or that provider's);
 - today's spend across every tenant would pass the operator's global cap (all, or per provider);
 - a breaker already tripped today for that subject, or for this run, and no person reset it;
-- the global kill switch is on;
+- the global kill switch is on, no kill switch reader was given, or the business is paused;
 - anything at all goes wrong while checking (a read error, a missing reader): fail closed.
 
 A refusal that passes a cap trips the breaker: a `breaker_trip` row, a BREAKER_TRIPPED event and
@@ -33,7 +33,7 @@ from thallo.contracts.clock import Clock
 from thallo.contracts.enums import BreakerScope, Capability, HumanOnlyAction
 from thallo.contracts.events import BreakerPayload, EventName
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import CostEntry
+from thallo.contracts.models import CostEntry, Tenant
 from thallo.trust import ladder
 from thallo.trust import service as svc
 from thallo.trust.records import ALL_PROVIDERS, BreakerTrip, CostCap
@@ -193,8 +193,13 @@ def authorize(tx: Any, clock: Clock, *, run_ref: str, provider: str, estimate_eu
             return Authorization(False, "a run and a provider are needed")
         if global_caps is None:
             return Authorization(False, "no global caps configured; spending is off")
-        if kill_switch is not None and kill_switch():
+        if kill_switch is None:
+            return Authorization(False, "no kill switch reader; spending is off")
+        if kill_switch():
             return Authorization(False, "the global kill switch is on")
+        tenant = tx.get(Tenant, tx.tenant_id)
+        if tenant is None or tenant.paused:
+            return Authorization(False, "this business is paused")
         if task_type is not None:
             st, _ = svc.state(tx, clock, task_type)
             if st.paused:
@@ -239,6 +244,9 @@ def authorize(tx: Any, clock: Clock, *, run_ref: str, provider: str, estimate_eu
 def record_cost(tx: Any, clock: Clock, *, capability: Capability, provider: str, cost_eur: Decimal, run_ref: str,
                 model: str | None = None, units: Decimal = Decimal(0), subject_kind: str | None = None,
                 subject_id: str | None = None) -> CostEntry:
+    """A cost is a finite Decimal of at least 0. Refunds go through an operator path, not here."""
+    if not isinstance(cost_eur, Decimal) or not cost_eur.is_finite() or cost_eur < 0:
+        raise svc.TrustError("a cost is a finite Decimal of at least 0")
     now = clock.now()
     return tx.insert(CostEntry(id=new_id(clock), created_at=now, tenant_id=tx.tenant_id, capability=capability,
                                provider=provider, model=model, units=units, cost_eur=cost_eur, run_ref=run_ref,

@@ -117,9 +117,9 @@ def recent_items(tx: Any, task_type: str, since: datetime, limit: int) -> list[T
     """The newest `limit` items of this task type since `since`, newest first."""
     repo = _repo(tx)
     if repo is not None:
-        return repo.query(TrustItem, "SELECT * FROM trust_item WHERE task_type = %s AND occurred_at >= %s "
+        return repo.query(TrustItem, "SELECT * FROM trust_item WHERE task_type = %s AND occurred_at > %s "
                                      "ORDER BY occurred_at DESC, id DESC LIMIT %s", (task_type, since, limit))
-    rows = [r for r in tx.list_all(TrustItem, task_type=task_type) if r.occurred_at >= since]
+    rows = [r for r in tx.list_all(TrustItem, task_type=task_type) if r.occurred_at > since]
     rows.sort(key=lambda r: (r.occurred_at, r.id), reverse=True)
     return rows[:limit]
 
@@ -127,9 +127,9 @@ def recent_items(tx: Any, task_type: str, since: datetime, limit: int) -> list[T
 def canaries_since(tx: Any, task_type: str, since: datetime) -> list[TrustCanary]:
     repo = _repo(tx)
     if repo is not None:
-        return repo.query(TrustCanary, "SELECT * FROM trust_canary WHERE task_type = %s AND planted_at >= %s "
+        return repo.query(TrustCanary, "SELECT * FROM trust_canary WHERE task_type = %s AND planted_at > %s "
                                        "ORDER BY planted_at, id", (task_type, since))
-    return [c for c in tx.list_all(TrustCanary, task_type=task_type) if c.planted_at >= since]
+    return [c for c in tx.list_all(TrustCanary, task_type=task_type) if c.planted_at > since]
 
 
 # ---------------------------------------------------------------- level changes
@@ -248,7 +248,7 @@ def record_item(tx: Any, clock: Clock, *, task_type: str, subject_kind: str, sub
             raise TrustError("this item is already recorded")
         tx.update(TrustItem, prior.id, outcome=outcome, note=note)
         item = tx.get(TrustItem, prior.id)
-        in_window = prior.occurred_at >= st.changed_at
+        in_window = prior.occurred_at > st.changed_at
         was_defect = prior.outcome in COUNTS_AS_DEFECT
         fields: dict[str, Any] = {}
         if in_window:

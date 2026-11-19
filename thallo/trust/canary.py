@@ -140,10 +140,10 @@ def resolve(tx: Any, clock: Clock, *, variant_id: str, approved: bool, reviewer:
     if approved:
         svc.emit(tx, clock, svc.SYSTEM, EventName.CANARY_MISSED, CanaryPayload(variant_id=variant_id,
                                                                               task_type=st.task_type))
-        if canary.planted_at >= st.changed_at:
+        if canary.planted_at > st.changed_at:
             changes = svc._demote(tx, clock, st, ladder.down_one(st.level), "a reviewer canary was approved")
     else:
-        if canary.planted_at >= st.changed_at:
+        if canary.planted_at > st.changed_at:
             tx.update(AutonomyState, st.id, canaries_caught=st.canaries_caught + 1)
         svc.emit(tx, clock, svc.SYSTEM, EventName.CANARY_CAUGHT, CanaryPayload(variant_id=variant_id,
                                                                               task_type=st.task_type))

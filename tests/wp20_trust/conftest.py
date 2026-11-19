@@ -2,9 +2,9 @@
 memory and on Postgres as the per-run app role."""
 from __future__ import annotations
 
+from tests.wp09_api.conftest import pg_urls, world  # noqa: F401
 from thallo.contracts.actors import AgentActor, HumanActor
 from thallo.trust import service as svc
-from tests.wp09_api.conftest import pg_urls, world  # noqa: F401
 
 LIVE = "live-1"
 
@@ -29,6 +29,7 @@ def at_level(tx, clock, task_type, level):  # noqa: ANN001, ANN201
     """Test setup only: put a task type at a level as if it had earned it."""
     st, _ = svc.state(tx, clock, task_type)
     svc.change_level(tx, clock, st, level, "test setup")
+    clock.advance(seconds=1)  # the window holds what happens after the change
     return tx.get(type(st), st.id)
 
 

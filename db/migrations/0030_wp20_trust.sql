@@ -128,6 +128,10 @@ SELECT app_enable_tenant_rls('trust_audit_sentence');
 
 -- ------------------------------------------------------------------ spend totals
 
+-- A cost is never negative: a negative row would lower the totals and loosen every cap.
+-- Refunds go through an operator path, never through cost_ledger.
+ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_cost_not_negative CHECK (cost_eur >= 0);
+
 CREATE TABLE cost_day_total (
   tenant_id uuid NOT NULL REFERENCES tenant(id),
   day date NOT NULL,
@@ -172,3 +176,16 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
 AS $$ SELECT g.provider, g.total_eur FROM cost_global_day g WHERE g.day = d $$;
 REVOKE ALL ON FUNCTION app_global_spend(date) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app_global_spend(date) TO cortex_app;
+-- Supabase exposes public functions to its API roles; none of them may call these.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON FUNCTION app_global_spend(date) FROM %I', r);
+      EXECUTE format('REVOKE ALL ON FUNCTION app_cost_totals() FROM %I', r);
+      EXECUTE format('REVOKE ALL ON TABLE cost_global_day FROM %I', r);
+    END IF;
+  END LOOP;
+END
+$$;
