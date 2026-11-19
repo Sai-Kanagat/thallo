@@ -28,6 +28,7 @@ from api import (  # one router per line: parallel packages append without confl
     plan,
     review,
     tracking,
+    trust,
     voice,
 )
 from api.context import Services
@@ -69,6 +70,7 @@ def create_app(svc: Services) -> FastAPI:
         leads.router,
         tracking.router,
         voice.router,
+        trust.router,
     ):
         app.include_router(r)
     return app
