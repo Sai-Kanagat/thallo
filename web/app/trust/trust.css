@@ -1,0 +1,5 @@
+.trust-tasks, .audit-sentences { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 16px; }
+.trust-task, .audit-sentence { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; }
+.trust-task h3 { font-size: 17px; margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.audit-sentence p { margin: 0; overflow-wrap: anywhere; }
+.audit-sentence .row { display: flex; gap: 8px; flex-wrap: wrap; }
