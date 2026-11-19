@@ -19,7 +19,7 @@ from collections.abc import Mapping
 
 from fastapi import FastAPI, Request, Response
 
-from api import auth, connections, errors, plan, review
+from api import auth, connections, errors, plan, review, tracking
 from api.context import Services
 
 log = logging.getLogger("thallo.api")
@@ -50,7 +50,7 @@ def create_app(svc: Services) -> FastAPI:
         response.headers.setdefault("Cache-Control", "no-store")
         return response
 
-    for r in (auth.router, review.router, plan.router, connections.router):
+    for r in (auth.router, review.router, plan.router, connections.router, tracking.router):
         app.include_router(r)
     return app
 
@@ -122,7 +122,13 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     peers = frozenset(h.strip() for h in env.get("THALLO_WEB_PROXY_HOSTS", "").split(",") if h.strip())
     raw_stamp_key = env.get("THALLO_PROXY_STAMP_KEY", "")
     stamp_key = bytes.fromhex(raw_stamp_key) if _HEX_KEY.match(raw_stamp_key) else None
-    return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
+    redirector = None
+    if env.get("THALLO_REDIRECT_DATABASE_URL"):
+        from thallo.tracking.redirector import Redirector
+        from thallo.tracking.wiring import PgLinkDirectory, backend_recorder
+        redirector = Redirector(PgLinkDirectory(env["THALLO_REDIRECT_DATABASE_URL"]),
+                                backend_recorder(backend, clock), clock)
+    return Services(clock=clock, backend=backend, redirector=redirector, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
                     proxy_peers=peers, stamp_key=stamp_key,
