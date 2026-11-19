@@ -19,7 +19,16 @@ from collections.abc import Mapping
 
 from fastapi import FastAPI, Request, Response
 
-from api import auth, connections, errors, growth, plan, review, tracking
+from api import (  # one router per line: parallel packages append without conflicts
+    auth,
+    connections,
+    errors,
+    growth,
+    plan,
+    review,
+    tracking,
+    voice,
+)
 from api.context import Services
 
 log = logging.getLogger("thallo.api")
@@ -50,7 +59,15 @@ def create_app(svc: Services) -> FastAPI:
         response.headers.setdefault("Cache-Control", "no-store")
         return response
 
-    for r in (auth.router, review.router, plan.router, connections.router, growth.router, tracking.router):
+    for r in (
+        auth.router,
+        review.router,
+        plan.router,
+        connections.router,
+        growth.router,
+        tracking.router,
+        voice.router,
+    ):
         app.include_router(r)
     return app
 

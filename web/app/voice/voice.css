@@ -1,0 +1,10 @@
+.questions, .shots, .candidates { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 20px; }
+.question, .shot { border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 12px; }
+.question h2 { font-size: 18px; margin: 0; }
+.recorder, .answer { display: grid; gap: 8px; }
+.answer { background: var(--surface-2); padding: 12px; border-radius: 8px; }
+.consent { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; }
+.consent input { width: 22px; height: 22px; flex: none; margin-top: 2px; }
+.candidates { gap: 4px; margin: 4px 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+textarea { width: 100%; font: inherit; padding: 8px; border: 1px solid var(--rule); border-radius: 6px; }
