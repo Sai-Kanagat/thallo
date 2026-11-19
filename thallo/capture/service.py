@@ -211,7 +211,8 @@ def _get(tx: Rows, model: type, row_id: str) -> Any:
 def _consent(tx: Rows, tenant_id: str, actor: HumanActor, scope: ConsentScope, extra: list[ConsentScope],
              version: str, wording: str, clock: Clock) -> Consent:
     now = clock.now()
-    evidence = (f"Ticked in the Thallo voice page by app user {actor.id} in session {actor.session_id} "
+    session_ref = hashlib.sha256(actor.session_id.encode()).hexdigest()[:16]  # never the raw session id
+    evidence = (f"Ticked in the Thallo voice page by app user {actor.id} in session ref {session_ref} "
                 f"at {now.isoformat()}. Wording {version}: {wording}")
     return tx.insert(Consent(id=new_id(clock), created_at=now, tenant_id=tenant_id,
                              subject_label=f"app_user:{actor.id}", basis=ConsentBasis.OPT_IN, scope=scope,
