@@ -98,9 +98,10 @@ def plant(tx: Any, clock: Clock, *, source_variant_id: str, bundle_id: str, flaw
     st = tx.get(AutonomyState, st.id)
     if st.level < ladder.L2:
         raise CanaryError("canaries are planted from L2 on")
-    shown = src.rendered_text or src.text
     if flaw is CanaryFlaw.SWAPPED_CLAIM:
-        text = rendered = flawed_text(shown, flaw)  # the wrong number is literal: no slot fills it
+        if not src.rendered_text:
+            raise CanaryError("a swapped claim needs the filled text; this variant has none yet")
+        text = rendered = flawed_text(src.rendered_text, flaw)  # the wrong number is literal: no slot fills it
     else:
         text = flawed_text(src.text, flaw, banned_phrase=banned_phrase)
         rendered = flawed_text(src.rendered_text, flaw, banned_phrase=banned_phrase) if src.rendered_text else None
