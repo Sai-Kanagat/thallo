@@ -13,6 +13,7 @@ from thallo.contracts.clock import FAKE_EPOCH, FakeClock
 from thallo.contracts.enums import CampaignRole, Language, TouchKind
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import Ad, Campaign, Lead, Operator, Person, Tenant, Touch
+from thallo.contracts.states import AdState
 from thallo.tracking.capture import capture_call, capture_form, capture_walk_in, capture_whatsapp, form_fields
 from thallo.tracking.links import mint_code, mint_link, mint_qr, mint_whatsapp_link
 from thallo.tracking.models import CodeKind, TrackingCode
@@ -78,11 +79,12 @@ def _tenant(database, name):
                                          default_language=Language.EN, region_code="IT"))
 
 
-def _ad(repo, clock):
+def _ad(repo, clock, state=AdState.ACTIVE):
     camp = Campaign(id=new_id(clock), created_at=clock.now(), tenant_id=repo.tenant_id, platform="meta", name="c",
                     role=CampaignRole.LOCAL_SOCIAL)
     repo.insert(camp)
-    ad = Ad(id=new_id(clock), created_at=clock.now(), tenant_id=repo.tenant_id, campaign_id=camp.id, platform="meta")
+    ad = Ad(id=new_id(clock), created_at=clock.now(), tenant_id=repo.tenant_id, campaign_id=camp.id, platform="meta",
+            state=state)
     repo.insert(ad)
     return ad.id
 
@@ -111,18 +113,32 @@ def test_tracking_code_is_tenant_isolated(database, clock):
         assert capture_walk_in(repo, clock, code.code).code is None
 
 
-def test_redirector_role_reads_four_columns_and_nothing_else(database, clock, urls):
+def test_only_live_links_are_in_the_view(database, clock, urls):
+    a = _tenant(database, "Alpha")
+    with database.tenant(a.id) as repo:
+        paused = _ad(repo, clock, AdState.CREATED_PAUSED)
+        l_paused = mint_link(repo, clock, prefix=PREFIX, destination="https://a.example/", ad_id=paused)
+        l_none = mint_link(repo, clock, prefix=PREFIX, destination="https://a.example/n")
+    d = PgLinkDirectory(urls["redirector"])
+    assert d.lookup(l_paused.link.slug) is None and d.lookup(l_none.link.slug) is None
+    with database.tenant(a.id) as repo:
+        repo.execute("UPDATE ad SET state = 'active' WHERE id = %s", (paused,))
+    assert d.lookup(l_paused.link.slug).link_id == l_paused.link.id
+    assert d.lookup(l_none.link.slug) is None
+
+
+def test_redirector_role_reads_narrow_columns_and_nothing_else(database, clock, urls):
     import psycopg
 
     a, b = _tenant(database, "Alpha"), _tenant(database, "Beta")
     with database.tenant(a.id) as repo:
-        la = mint_link(repo, clock, prefix=PREFIX, destination="https://a.example/")
+        la = mint_link(repo, clock, prefix=PREFIX, destination="https://a.example/", ad_id=_ad(repo, clock))
     with database.tenant(b.id) as repo:
-        lb = mint_link(repo, clock, prefix=PREFIX, destination="https://b.example/")
+        lb = mint_link(repo, clock, prefix=PREFIX, destination="https://b.example/", ad_id=_ad(repo, clock))
     d = PgLinkDirectory(urls["redirector"])
     assert d.lookup(la.link.slug).tenant_id == a.id and d.lookup(lb.link.slug).destination == lb.link.destination
     assert d.lookup("zzzzzzzzzz") is None
-    for stmt in ("SELECT variant_id FROM tracked_link", "SELECT whatsapp_code FROM tracked_link",
+    for stmt in ("SELECT whatsapp_code FROM tracked_link", "SELECT text FROM variant", "SELECT * FROM approval",
                  "SELECT * FROM touch", "SELECT * FROM person", "SELECT * FROM tracking_code",
                  "UPDATE tracked_link SET destination = 'https://evil.example/'",
                  "DELETE FROM tracked_link",

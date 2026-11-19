@@ -17,7 +17,8 @@ NO_ACCESS = frozenset({"operator", "identity"})
 GLOBAL_READ_ONLY = frozenset({"system_setting"})
 # Narrow cross-tenant policies allowed to non-app roles only: (table, policy, role).
 WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker"),
-                             ("tracked_link", "redirector_lookup", "cortex_redirector")})  # 0024, SELECT only
+                             *((t, "redirector_lookup", "cortex_redirector")  # 0024, SELECT only
+                               for t in ("tracked_link", "variant", "bundle", "approval", "publication", "ad"))})
 
 _QUERY = """
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,

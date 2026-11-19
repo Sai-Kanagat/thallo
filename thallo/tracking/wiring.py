@@ -32,9 +32,30 @@ class PgLinkDirectory:
         if not is_slug(slug):
             return None
         with psycopg.connect(self.url, autocommit=True, connect_timeout=5) as conn:
-            row = conn.execute("SELECT id::text, tenant_id::text, destination FROM tracked_link WHERE slug = %s",
+            row = conn.execute("SELECT id::text, tenant_id::text, destination FROM tracked_link_live WHERE slug = %s",
                                (slug,)).fetchone()
         return PublicLink(row[1], row[0], row[2]) if row else None
+
+
+def is_live(rows: dict, link: TrackedLink, clock: Clock) -> bool:
+    """The rule of the tracked_link_live view (migration 0024), over in-memory tables."""
+    def same(r: Any) -> bool:
+        return r is not None and r.tenant_id == link.tenant_id
+    if link.variant_id:
+        if any(same(p) and p.variant_id == link.variant_id for p in rows.get("publication", {}).values()):
+            return True
+        v = rows.get("variant", {}).get(link.variant_id)
+        b = rows.get("bundle", {}).get(v.bundle_id) if same(v) else None
+        if same(b) and any(
+                same(a) and a.subject_kind.value == "bundle" and a.subject_id == b.id and a.voided_at is None
+                and a.expires_at > clock.now() and a.content_hash == b.root_hash
+                for a in rows.get("approval", {}).values()):
+            return True
+    if link.ad_id:
+        d = rows.get("ad", {}).get(link.ad_id)
+        if same(d) and d.state.value in ("active", "paused"):
+            return True
+    return False
 
 
 class MemoryLinkDirectory:
@@ -44,9 +65,11 @@ class MemoryLinkDirectory:
     def lookup(self, slug: str) -> PublicLink | None:
         if not is_slug(slug):
             return None
-        for row in self.backend.tables.rows.get("tracked_link", {}).values():
+        rows = self.backend.tables.rows
+        for row in rows.get("tracked_link", {}).values():
             if row.slug == slug:
-                return PublicLink(row.tenant_id, row.id, row.destination)
+                live = is_live(rows, row, self.backend.clock)
+                return PublicLink(row.tenant_id, row.id, row.destination) if live else None
         return None
 
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import TouchKind
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import TrackedLink, Touch
+from thallo.contracts.models import Touch, TrackedLink
 from thallo.tracking.codes import code_candidates, is_slug, normalise_code
 from thallo.tracking.destinations import REF_PARAM
 from thallo.tracking.links import Tx

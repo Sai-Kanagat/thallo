@@ -14,9 +14,23 @@ from api.directory import InMemoryDirectory
 from api.media_store import TenantMediaStore
 from thallo.connections.registry import ProviderRegistry
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
-from thallo.contracts.enums import Language, TouchKind
+from thallo.contracts.enums import ApprovalMethod, ApprovalSubject, CampaignRole, Channel, Language, TouchKind
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Lead, Operator, Person, Tenant, Touch, TrackedLink
+from thallo.contracts.models import (
+    Ad,
+    Approval,
+    Bundle,
+    Campaign,
+    Lead,
+    Operator,
+    Person,
+    Publication,
+    Tenant,
+    Touch,
+    TrackedLink,
+    Variant,
+)
+from thallo.contracts.states import AdState
 from thallo.gate.canonical import find_unresolved_links
 from thallo.tracking import redirector as rd
 from thallo.tracking.capture import (
@@ -59,6 +73,35 @@ def env(tmp_path):
     return clock, backend, a, b, TestClient(create_app(svc)), redirector
 
 
+def _live_ad(tx, clock, state=AdState.ACTIVE):
+    camp = Campaign(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id, platform="meta", name="c",
+                    role=CampaignRole.LOCAL_SOCIAL)
+    tx.insert(camp)
+    ad = Ad(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id, campaign_id=camp.id, platform="meta",
+            state=state)
+    tx.insert(ad)
+    return ad.id
+
+
+def _publish(tx, clock, variant_id):
+    tx.insert(Publication(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id, variant_id=variant_id,
+                          approval_id=new_id(clock), idempotency_key=new_id(clock), content_sha256="0" * 64))
+
+
+def _approved_variant(tx, clock, *, voided=False, ttl=timedelta(days=1), root="a" * 64, approved_hash="a" * 64):
+    bundle = Bundle(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id, asset_id=new_id(clock),
+                    root_hash=root, rule_version=1)
+    tx.insert(bundle)
+    variant = Variant(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id, bundle_id=bundle.id,
+                      channel=Channel.INSTAGRAM, language=Language.EN, text="t", task_type="post")
+    tx.insert(variant)
+    tx.insert(Approval(id=new_id(clock), created_at=clock.now(), tenant_id=tx.tenant_id,
+                       subject_kind=ApprovalSubject.BUNDLE, subject_id=bundle.id, content_hash=approved_hash,
+                       approver_id=new_id(clock), method=ApprovalMethod.PER_BUNDLE, approved_at=clock.now(),
+                       expires_at=clock.now() + ttl, voided_at=clock.now() if voided else None))
+    return variant.id
+
+
 def _touches(backend, tenant_id):
     with backend.tenant(tenant_id) as tx:
         return tx.list_all(Touch)
@@ -77,6 +120,8 @@ def test_each_entry_point_lands_with_the_right_source(env):
         call = mint_code(tx, clock, kind=CodeKind.CALL, variant_id=v_call)
         person = Person(id=new_id(clock), created_at=clock.now(), tenant_id=a.id)
         tx.insert(person)
+        _publish(tx, clock, v_link)
+        _publish(tx, clock, v_qr)
 
     # click and QR scan through the public route
     assert client.get(link.public_url.removeprefix("https://go.example"), follow_redirects=False).status_code == 302
@@ -142,8 +187,10 @@ def test_codes_and_slugs_do_not_cross_tenants(env):
 def test_the_gate_trusts_the_redirector_destination(env):
     clock, backend, a, _b, client, _r = env
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://Shop.example/spring?utm_source=ig")
-        wa = mint_whatsapp_link(tx, clock, prefix=PREFIX, business_number="393331234567", greeting="Ciao")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://Shop.example/spring?utm_source=ig",
+                         ad_id=_live_ad(tx, clock))
+        wa = mint_whatsapp_link(tx, clock, prefix=PREFIX, business_number="393331234567", greeting="Ciao",
+                                ad_id=_live_ad(tx, clock))
         text = f"Spring menu: {link.public_url} or chat {wa.public_url}"
         assert find_unresolved_links(text, lambda u: tx.gate.resolve_link(a.id, u)) == []
         resolved = tx.gate.resolve_link(a.id, link.public_url)
@@ -159,7 +206,7 @@ def test_the_gate_trusts_the_redirector_destination(env):
 def test_redirect_route_is_strict(env):
     clock, backend, a, _b, client, _r = env
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", ad_id=_live_ad(tx, clock))
     for path in ("/r/zzzzzzzzzz", "/r/short", "/r/ABCDEFGHIJ", "/r/abcdefghij0", "/r/%2F%2Fevil.example"):
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 404 and "location" not in r.headers
@@ -172,7 +219,7 @@ def test_redirect_route_is_strict(env):
 def test_counting_is_privacy_first(env):
     clock, backend, a, _b, client, _r = env
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", ad_id=_live_ad(tx, clock))
     path = f"/r/{link.link.slug}"
     assert client.head(path, follow_redirects=False).status_code == 302
     assert _touches(backend, a.id) == []  # HEAD never counts
@@ -191,7 +238,7 @@ def test_rate_limited_per_client(env, monkeypatch):
     clock, backend, a, _b, client, _r = env
     monkeypatch.setattr(rd, "PER_CLIENT", 5)
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", ad_id=_live_ad(tx, clock))
     codes = [client.get(f"/r/{link.link.slug}", follow_redirects=False).status_code for _ in range(7)]
     assert codes == [302] * 5 + [429] * 2
     clock.advance(seconds=61)
@@ -201,7 +248,7 @@ def test_rate_limited_per_client(env, monkeypatch):
 def test_a_tampered_destination_is_never_followed(env):
     clock, backend, a, _b, client, _r = env
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", ad_id=_live_ad(tx, clock))
     row = backend.tables.rows["tracked_link"][link.link.id]
     backend.tables.rows["tracked_link"][link.link.id] = row.model_copy(update={"destination": "javascript:alert(1)"})
     assert client.get(f"/r/{link.link.slug}", follow_redirects=False).status_code == 404
@@ -210,7 +257,7 @@ def test_a_tampered_destination_is_never_followed(env):
 def test_counting_failure_still_redirects(env):
     clock, backend, a, _b, _client, _r = env
     with backend.tenant(a.id) as tx:
-        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/")
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", ad_id=_live_ad(tx, clock))
 
     def boom(_link):
         raise RuntimeError("db down")
@@ -230,6 +277,45 @@ def test_self_report_question_is_fixed_options():
     q = question(Language.IT)
     assert q["field"] == "how_heard" and q["label"] == "Come ci hai conosciuto?"
     assert [o["value"] for o in q["options"]][-1] == "other"
+
+
+@pytest.mark.parametrize("make,status", [
+    (lambda tx, c: {"variant_id": _approved_variant(tx, c)}, 302),
+    (lambda tx, c: {"variant_id": _approved_variant(tx, c, voided=True)}, 404),
+    (lambda tx, c: {"variant_id": _approved_variant(tx, c, ttl=timedelta(seconds=-1))}, 404),
+    (lambda tx, c: {"variant_id": _approved_variant(tx, c, approved_hash="b" * 64)}, 404),  # content changed
+    (lambda tx, c: {"variant_id": new_id(c)}, 404),  # minted, never approved
+    (lambda tx, c: {"ad_id": _live_ad(tx, c, AdState.PAUSED)}, 302),
+    (lambda tx, c: {"ad_id": _live_ad(tx, c, AdState.CREATED_PAUSED)}, 404),
+    (lambda tx, c: {"ad_id": _live_ad(tx, c, AdState.ARCHIVED)}, 404),
+    (lambda tx, c: {}, 404),  # neither a variant nor an ad
+])
+def test_only_live_links_redirect(env, make, status):
+    clock, backend, a, _b, client, _r = env
+    with backend.tenant(a.id) as tx:
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", **make(tx, clock))
+        assert tx.gate.resolve_link(a.id, link.public_url) is not None  # the reviewer still sees it
+    r = client.get(f"/r/{link.link.slug}", follow_redirects=False)
+    assert r.status_code == status and (status == 302) == ("location" in r.headers)
+    assert len(_touches(backend, a.id)) == (1 if status == 302 else 0)
+
+
+def test_a_published_link_survives_a_later_void(env):
+    clock, backend, a, _b, client, _r = env
+    with backend.tenant(a.id) as tx:
+        vid = _approved_variant(tx, clock, voided=True)
+        _publish(tx, clock, vid)
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", variant_id=vid)
+    assert client.get(f"/r/{link.link.slug}", follow_redirects=False).status_code == 302
+
+
+def test_another_tenants_approval_does_not_make_a_link_live(env):
+    clock, backend, a, b, client, _r = env
+    with backend.tenant(b.id) as tx:
+        vid = _approved_variant(tx, clock)
+    with backend.tenant(a.id) as tx:
+        link = mint_link(tx, clock, prefix=PREFIX, destination="https://shop.example/", variant_id=vid)
+    assert client.get(f"/r/{link.link.slug}", follow_redirects=False).status_code == 404
 
 
 def test_qr_and_offer_codes_are_rows(env):

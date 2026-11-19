@@ -128,11 +128,11 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
         from thallo.tracking.wiring import PgLinkDirectory, backend_recorder
         redirector = Redirector(PgLinkDirectory(env["THALLO_REDIRECT_DATABASE_URL"]),
                                 backend_recorder(backend, clock), clock)
-    return Services(clock=clock, backend=backend, redirector=redirector, directory=OwnerDirectory(owner_url), sender=sender, media=media,
+    return Services(clock=clock, backend=backend, directory=OwnerDirectory(owner_url), sender=sender, media=media,
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
                     proxy_peers=peers, stamp_key=stamp_key,
-                    devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None))
+                    devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None), redirector=redirector)
 
 
 __all__ = ["API_CSP", "StartupRefused", "check_startup", "create_app", "services_from_env"]
