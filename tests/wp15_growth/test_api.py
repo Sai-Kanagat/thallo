@@ -51,7 +51,7 @@ def test_save_model_is_guessed_and_versions(world):
     assert r2.json()["model"]["version"] == m["version"] + 1
     with world.svc.backend.tenant(world.a.tenant.id) as tx:
         assert sum(1 for g in tx.list_all(GrowthModel) if g.active) == 1
-    assert c.get("/api/growth").json()["model"]["share_of_margin"] == "0.2"
+    assert float(c.get("/api/growth").json()["model"]["share_of_margin"]) == 0.2
 
 
 def test_model_refuses_a_client_tag(world):
