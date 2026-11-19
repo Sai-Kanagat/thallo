@@ -1,0 +1,8 @@
+{
+  "note": "Recorded grader replies for tests. Keyed by the start of the piece under grading.",
+  "replies": {
+    "Our sourdough": "{\"verdict\": \"pass\", \"reason\": \"on voice, specific\"}",
+    "Unlock the magic": "{\"verdict\": \"flag\", \"reason\": \"generic opener\"}",
+    "Fresh bread": "not json at all"
+  }
+}
