@@ -5,6 +5,9 @@ Safety rules, each with a test (tests/wp12_tracking):
   for that slug, byte for byte, re-checked by `check_destination` at redirect time. Nothing from the
   request (query string, headers, path beyond the slug) reaches the response. A slug that is not
   10 base32 characters is refused before any lookup. Unknown slug: 404, no redirect.
+- Only live links: the directory returns a link only when its variant is published or holds a
+  live approval on the current root hash, or its ad is active or paused (view tracked_link_live,
+  migration 0024). A minted, unapproved, voided or source-less link is a 404.
 - The same destination the gate trusts: `PgGateRepository.resolve_link` reads the same row for the
   same `<prefix><slug>` shape, so the reviewer approved exactly where the browser is sent.
 - Privacy-first counting: no cookie, no IP stored or logged, no fingerprint kept. The client address
