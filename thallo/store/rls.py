@@ -16,7 +16,9 @@ NO_ACCESS = frozenset({"operator", "identity"})
 # SELECT only, and SELECT the only privilege any cortex role holds. Not forced: the owner writes.
 GLOBAL_READ_ONLY = frozenset({"system_setting"})
 # Narrow cross-tenant policies allowed to non-app roles only: (table, policy, role).
-WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker")})
+WORKER_POLICIES = frozenset({("job", "worker_queue", "cortex_worker"),
+                             *((t, "redirector_lookup", "cortex_redirector")  # 0024, SELECT only
+                               for t in ("tracked_link", "variant", "bundle", "approval", "publication", "ad"))})
 
 _QUERY = """
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,

@@ -37,6 +37,7 @@ from thallo.contracts.clock import Clock
 from thallo.contracts.enums import UserRole
 from thallo.contracts.models import AppUser
 from thallo.gate.signing import GateSigner
+from thallo.tracking.redirector import Redirector
 
 COOKIE = "__Host-thallo_sid"
 DEVICE_COOKIE = "__Host-thallo_device"
@@ -70,6 +71,7 @@ class Services:
     allowed_origins: Collection[str] = ()
     mock_tenants: Collection[str] = ()
     environ: dict[str, str] = field(default_factory=dict)
+    redirector: Redirector | None = None  # WP-12 public /r/{slug}; None: every slug is a 404
 
     def __post_init__(self) -> None:
         if self.sessions is None:
