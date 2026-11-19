@@ -139,3 +139,11 @@ Open, in order:
 3. Vision grader is fixture-only: needs image input on the text request contract (lead change).
 4. `cortex_checker` role (ruling 5) before real tenants.
 5. Demo: approve PROPOSED.md values, six conflicting facts, reversed logo, LinkedIn 1200x627 lint, bundle Newsreader and Plex Mono.
+
+## Wiring and lead calls collected during wave 3 (20 Nov)
+- Provenance values for stock photos, edited clips of real footage and video uploads (contract change): today they come out GENERATED or CLIENT_PHOTO and the default video path fails the check stack.
+- Template video needs design-lint coverage in the check stack.
+- Learning rules not yet called by copy production; trust and cost breakers not yet called by review deck and check stack; blind comparison has no screen; vision grader needs image input on the text request.
+- Region policy rules, disclosure label wording and consent texts need a lawyer.
+- Cost caps (EUR 1 run, 5 tenant day, 50 global day) are guesses; cap check then record is not atomic.
+- Redirector owner-role lookup policy `redirect_slug_lookup`: keep or replace.
