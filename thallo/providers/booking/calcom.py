@@ -4,7 +4,8 @@ Slots, from cal.com/docs/api-reference/v2/slots (read 19 Nov 2026; fixtures hand
     GET https://api.cal.com/v2/slots?eventTypeId=..&start=..&end=..&timeZone=..
     cal-api-version: 2024-09-04          (required; other values fall back to an older version)
     {"status": "success", "data": {"2033-09-05": [{"start": "2033-09-05T09:00:00.000+02:00"}, ...]}}
-The slots of a public event type need no key, so no secret is used. The shared transport carries
+No key is sent: this assumes the slots of a public event type are readable without one (not
+verified against a live account; the docs page did not say). The shared transport carries
 one extra header: the fixed API version goes in that slot (it is not a secret).
 """
 from __future__ import annotations

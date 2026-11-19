@@ -71,6 +71,31 @@ def test_nurture_booking_pipeline_and_crm_routes(world):  # noqa: F811
     assert c.post("/api/nurture/crm/sync", headers=h).json()["status"] == "export_csv"
 
 
+def test_a_refused_tap_after_a_reply_discards_the_draft(world):  # noqa: F811
+    w = world
+    lead_id = _seed(w)
+    c, csrf = w.login(w.a.founder_email, w.a.tenant.id)
+    h = {CSRF_HEADER: csrf}
+    tid = c.post("/api/nurture/templates", headers=h, json={
+        "name": "n1", "channel": "whatsapp", "language": "it", "body": BODY,
+        "slot_sources": {"name": "person.display_name", "model": "answer.model"}}).json()["id"]
+    c.post(f"/api/nurture/templates/{tid}/approve", headers=h)
+    sid = c.post("/api/nurture/sequences", headers=h, json={
+        "name": "warm", "channel": "whatsapp", "steps": [{"template_id": tid, "wait_hours": 0}],
+        "quiet_start_hour": 22, "quiet_end_hour": 6}).json()["id"]
+    c.post(f"/api/nurture/leads/{lead_id}/enrol", headers=h, json={"sequence_id": sid})
+    c.post("/api/nurture/run", headers=h)
+    msg = next(m for m in c.get(f"/api/leads/{lead_id}").json()["messages"] if m["kind"] == "nurture")
+    w.clock.advance(minutes=5)
+    with w.svc.backend.tenant(w.a.tenant.id) as tx:
+        Desk(tx, w.a.tenant.id, w.clock).intake(TouchEvent(kind=TouchKind.WHATSAPP_CODE, occurred_at=w.clock.now(),
+                                                           display_name="Marco", phone="+39 333 123 4567"))
+    r = c.post(f"/api/nurture/messages/{msg['id']}/send", headers=h, json={"body_sha256": msg["body_sha256"]})
+    assert r.status_code == 409
+    after = next(m for m in c.get(f"/api/leads/{lead_id}").json()["messages"] if m["id"] == msg["id"])
+    assert after["state"] == "discarded"
+
+
 def test_roles_and_csrf(world):  # noqa: F811
     w = world
     _seed(w)

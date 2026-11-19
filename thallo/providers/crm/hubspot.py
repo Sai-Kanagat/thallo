@@ -2,8 +2,10 @@
 the environment (never a setting) and a private-app token in the vault. Otherwise `estimate()`
 raises `ProviderUnavailable` and the registry falls through to the manual CSV connection.
 
-API (HubSpot CRM v3, developers.hubspot.com/docs/api/crm/contacts; fixtures hand-written, not
-captured from a live portal):
+API (HubSpot CRM v3). The create call was checked against developers.hubspot.com (20 Nov 2026):
+body {"properties": {...}, "associations": []}, answer 201 with "id". The PATCH path and the
+`hs_lead_status` option values are from memory and NOT verified; a portal may have changed the
+options. Fixtures are hand-written, not captured from a live portal.
     POST  https://api.hubapi.com/crm/v3/objects/contacts            {"properties": {...}}  -> {"id": "..."}
     PATCH https://api.hubapi.com/crm/v3/objects/contacts/{id}       {"properties": {...}}  -> {"id": "..."}
     Authorization: Bearer <private app token>
@@ -113,7 +115,10 @@ class HubSpot:
         if secret is None or not secret:
             raise SyncFailed("the vault returned no token for this connection")
         transport = self.transport or PostizTransport()
-        body = json.dumps({"properties": props}).encode()
+        payload: dict[str, Any] = {"properties": props}
+        if method == "POST":
+            payload["associations"] = []  # the create schema lists it as required
+        body = json.dumps(payload).encode()
         try:
             reply = transport(RawCall(method, url, body, "application/json", Auth("authorization", secret, "Bearer ")))
         except TransportError as exc:

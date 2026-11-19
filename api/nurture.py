@@ -21,7 +21,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from api.context import member, services
-from api.errors import not_found
+from api.errors import ApiError, not_found
 from api.leads import DESK, _fail, _id, connection_registry
 from thallo.contracts.enums import Capability, Language, MessageChannel, UserRole
 from thallo.contracts.ids import is_id
@@ -142,7 +142,12 @@ def send(message_id: str, body: SendBody, request: Request) -> dict:
         reg.ensure_manual(ctx.tenant_id, Capability.MESSAGING)
         return d.approve_and_send(message_id, actor=ctx.human(), verifier=svc.verifier, sender=reg,
                                   body_sha256=body.body_sha256)
-    return _act(request, DESK, go)
+    try:
+        return _act(request, DESK, go)
+    except ApiError as exc:
+        if exc.code == "sequence_stopped":  # the refusal rolled back; record the stop in its own transaction
+            _act(request, DESK, lambda d, n, ctx, svc: n.run_due())
+        raise
 
 
 @router.post("/leads/{lead_id}/booking/offer")

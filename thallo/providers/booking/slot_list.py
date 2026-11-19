@@ -25,7 +25,7 @@ class SlotListSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     timezone: str = Field(default="Europe/Rome", pattern=r"^[A-Za-z_]+(/[A-Za-z_]+){0,2}$")
     # weekday (0 = Monday) to [open hour, close hour)
-    hours: dict[int, tuple[int, int]] = Field(default_factory=lambda: {d: (9, 18) for d in range(5)})
+    hours: dict[int, tuple[int, int]] = Field(min_length=1)  # required: no invented opening hours
     slot_minutes: int = Field(default=30, ge=10, le=240)
     days_ahead: int = Field(default=7, ge=1, le=30)
     lead_hours: int = Field(default=2, ge=0, le=72)  # no slot sooner than this
@@ -63,17 +63,22 @@ class SlotList:
         try:
             self.settings = SlotListSettings.model_validate(ctx.connection.settings)
         except ValueError:
-            self.settings = SlotListSettings()
+            self.settings = None
 
     def describe(self) -> c.ProviderInfo:
         return c.ProviderInfo(capability=self.capability, name=NAME, mode=self.mode, limits={"reads_diary": False},
                               licence_note="built in", sends_externally=False)
 
     def health(self) -> c.Health:
-        return c.Health(connected=True, checked_at=self.clock.now())
+        ok = self.settings is not None
+        return c.Health(connected=ok, checked_at=self.clock.now(), detail=None if ok else "opening hours not set")
 
     def estimate(self, request: c.Request) -> c.Estimate:
+        from thallo.connections.errors import ProviderUnavailable
+
         c.check_request(self, request)
+        if self.settings is None:
+            raise ProviderUnavailable("the slot list needs the opening hours in its settings")
         return c.Estimate(cost_eur=Decimal(0), seconds=0.0)
 
     def run(self, request: c.Request) -> c.RunResult:

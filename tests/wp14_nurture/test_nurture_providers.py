@@ -72,6 +72,12 @@ def test_slot_list_offers_opening_hours_only(clock, vault):
     assert all(t > clock.now() + timedelta(hours=1) and t.weekday() == 0 for t in out)
 
 
+def test_slot_list_without_hours_falls_to_manual(clock, vault):
+    p = slot_list.create(ctx(clock, vault, Capability.BOOKING, "slot_list", {}, None))
+    with pytest.raises(ProviderUnavailable):
+        p.estimate(slots_req())
+
+
 def test_calcom_reads_public_slots_with_the_api_version(clock, vault):
     body = {"status": "success", "data": {"2026-01-06": [{"start": "2026-01-06T09:00:00.000+01:00"},
                                                         {"start": "2026-01-06T10:00:00.000+01:00"}]}}
@@ -130,6 +136,7 @@ def test_hubspot_creates_updates_and_erases_allowlisted_fields(clock, vault):
     assert out.external_ids == {"p1": "501", "p2": "77", "p3": "88"}
     methods = [(x.method, x.url.rsplit("/", 1)[-1]) for x in t.calls]
     assert methods == [("POST", "contacts"), ("PATCH", "77"), ("PATCH", "88")]
+    assert json.loads(t.calls[0].body)["associations"] == [] and "associations" not in json.loads(t.calls[1].body)
     first = json.loads(t.calls[0].body)["properties"]
     assert first == {"firstname": "Marco", "email": "", "phone": "+39333", "hs_lead_status": "OPEN_DEAL"}
     assert json.loads(t.calls[2].body)["properties"] == {"firstname": "", "email": "", "phone": ""}

@@ -1,7 +1,11 @@
 "use client";
 
+import Link from "next/link";
+
 import { Empty, Failure, Loading } from "@/components/States";
 import { useLoad } from "@/lib/useLoad";
+
+import styles from "../leads/leads.module.css";
 
 type Board = {
   set_up: boolean;
@@ -13,6 +17,17 @@ type Board = {
   won_count?: number;
   won_amount?: string;
   lost_count?: number;
+};
+
+const STAGE: Record<string, string> = {
+  new: "New and qualifying",
+  nurturing: "In a follow-up sequence",
+  contacted: "Talking",
+  booked: "Meeting booked",
+  held: "Meeting happened",
+  won: "Won",
+  lost: "Lost",
+  parked: "Parked, low fit",
 };
 
 export default function PipelinePage() {
@@ -28,34 +43,42 @@ export default function PipelinePage() {
     );
   }
   return (
-    <section>
-      <h1 className="page-title">Pipeline</h1>
-      <p className="page-sub">
-        {b.booked_conversations} booked conversations, {b.booked_this_week} this week. {b.won_count} won,{" "}
-        {b.lost_count} lost.
-      </p>
-      <ul>
-        {(b.stages ?? []).map((s) => (
-          <li key={s.stage}>
-            <span className="chip">{s.stage}</span> <b>{s.count}</b>
-          </li>
-        ))}
-      </ul>
-      {b.unlogged_count ? (
-        <>
-          <h2>Not logged yet</h2>
-          <p className="page-sub">These meetings are past. Mark each one held, no show, won or lost on the lead.</p>
-          <ul>
+    <section className={styles.detail}>
+      <div className={styles.section}>
+        <h1 className="page-title">Pipeline</h1>
+        <p className="page-sub">What happened after each enquiry, from the taps on the lead desk.</p>
+        <div className={styles.two}>
+          <span><b>{b.booked_conversations}</b> booked conversations</span>
+          <span><b>{b.won_count}</b> won</span>
+        </div>
+        <table className={styles.table}>
+          <tbody>
+            {(b.stages ?? []).map((s) => (
+              <tr key={s.stage}>
+                <td>{STAGE[s.stage] ?? s.stage}</td>
+                <td>{s.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className={styles.section}>
+        <h2>Meetings to log</h2>
+        {b.unlogged_count ? (
+          <ul className={styles.grid}>
             {(b.unlogged ?? []).map((u) => (
               <li key={u.booking_id}>
-                <a href={`/leads/${u.lead_id}`}>
-                  {u.kind.replace("_", " ")}, {new Date(u.starts_at).toLocaleString()}
-                </a>
+                <Link href={`/leads/${u.lead_id}`} className={styles.row}>
+                  <span className={styles.name}>{u.kind.replace(/_/g, " ")}</span>
+                  <span className={styles.clock}>{new Date(u.starts_at).toLocaleString()}</span>
+                </Link>
               </li>
             ))}
           </ul>
-        </>
-      ) : null}
+        ) : (
+          <p className="page-sub">Every past meeting is logged.</p>
+        )}
+      </div>
     </section>
   );
 }
