@@ -21,9 +21,9 @@ from thallo.connections.registry import NoSettings
 from thallo.contracts import connection as c
 from thallo.contracts.actors import HumanActor
 from thallo.contracts.clock import FAKE_EPOCH, FakeClock
-from thallo.contracts.enums import Capability, ConnectionMode
+from thallo.contracts.enums import Capability, ConnectionMode, UserRole
 from thallo.contracts.ids import new_id
-from thallo.contracts.models import Edit
+from thallo.contracts.models import AppUser, Edit
 from thallo.contracts.testing.mocks import MockProvider
 
 T1 = "0190f3a0-0000-7000-8000-000000000001"
@@ -87,3 +87,13 @@ def make_edit(clock, before: str, after: str, tenant: str = T1) -> Edit:
                 editor_id=USER, before_text=before, after_text=after)
 
 
+
+
+def make_user(clock, role: UserRole = UserRole.FOUNDER, user_id: str = USER, tenant: str = T1) -> AppUser:
+    return AppUser(id=user_id, tenant_id=tenant, created_at=clock.now(), identity_id=new_id(clock),
+                   display_name="Sai", role=role)
+
+
+@pytest.fixture
+def approver(clock):
+    return make_user(clock)
