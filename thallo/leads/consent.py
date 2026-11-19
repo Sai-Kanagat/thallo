@@ -67,16 +67,19 @@ def decide(*, person_id: str, channel: MessageChannel, recipient: str, consents:
     if rule is None or not rule[0]:
         return ConsentDecision(False, NO_RULE, policy_version=policy.version)
     bases, footer = rule
-    mine = [c for c in consents if c.person_id == person_id and ConsentScope.CONTACT in c.scopes
-            and (c.channel is None or c.channel is channel) and c.given_at <= now
-            and (channel, recipient) in covered.get(c.id, ())]
+    relevant = [c for c in consents if c.person_id == person_id and ConsentScope.CONTACT in c.scopes
+                and (c.channel is None or c.channel is channel)]
+    # A withdrawal on ANY of the person's contact records for this channel (with or without a
+    # recipient row) wins over every yes given before it.
+    latest_withdrawal = max((c.withdrawn_at for c in relevant if c.withdrawn_at and c.withdrawn_at <= now),
+                            default=None)
+    # The recipient binding only picks the positive grant.
+    mine = [c for c in relevant if c.given_at <= now and (channel, recipient) in covered.get(c.id, ())]
     if not mine:
-        return ConsentDecision(False, NO_CONSENT, policy_version=policy.version)
+        return ConsentDecision(False, WITHDRAWN if latest_withdrawal else NO_CONSENT, policy_version=policy.version)
     live = [c for c in mine if c.withdrawn_at is None or c.withdrawn_at > now]
     if not live:
         return ConsentDecision(False, WITHDRAWN, policy_version=policy.version)
-    # A withdrawal on any record for this channel wins over an older yes.
-    latest_withdrawal = max((c.withdrawn_at for c in mine if c.withdrawn_at and c.withdrawn_at <= now), default=None)
     usable = [c for c in live if c.basis.value in bases
               and (latest_withdrawal is None or c.given_at > latest_withdrawal)]
     if not usable:

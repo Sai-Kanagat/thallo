@@ -153,3 +153,16 @@ def test_slots_take_only_clean_lead_words():
 def test_consent_covers_only_its_exact_recipient():
     d = _decide(consents=[_consent()], policy=_policy(RULES), now=NOW, recipient="+393339999999")
     assert not d.allowed and d.reason == cr.NO_CONSENT
+
+
+def test_a_withdrawal_without_a_recipient_row_still_blocks():
+    grant = _consent(given=NOW - timedelta(days=2))
+    stop = _consent(given=NOW - timedelta(days=3), withdrawn=NOW - timedelta(hours=2))
+    d = cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, recipient=TO, consents=[grant, stop],
+                  covered={grant.id: {(MessageChannel.WHATSAPP, TO)}}, policy=_policy(RULES), now=NOW)
+    assert not d.allowed and d.reason == cr.WITHDRAWN
+    later = _consent(given=NOW - timedelta(hours=1))
+    d = cr.decide(person_id=P, channel=MessageChannel.WHATSAPP, recipient=TO, consents=[grant, stop, later],
+                  covered={grant.id: {(MessageChannel.WHATSAPP, TO)}, later.id: {(MessageChannel.WHATSAPP, TO)}},
+                  policy=_policy(RULES), now=NOW)
+    assert d.allowed and d.consent_id == later.id
