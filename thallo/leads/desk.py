@@ -148,6 +148,9 @@ class Desk:
     clock: Clock
     drafter: Drafter = None  # type: ignore[assignment]
     play_loader: Callable[[str], LeadPlay] = load_play
+    # Extra message kinds this desk may send, each with a guard run at the tap after the consent
+    # re-check (WP-14 nurture: caps, quiet hours, stop rules). Empty by default: fail closed.
+    send_guards: dict[MessageKind, Callable[[Any, Message], None]] | None = None
 
     def __post_init__(self) -> None:
         if self.drafter is None:
@@ -522,7 +525,8 @@ class Desk:
         human: HumanActor = require_human(actor, HumanOnlyAction.FIRST_REPLY, verifier=verifier,
                                           tenant_id=self.tenant_id)
         msg = self._draft(message_id)
-        if msg.kind not in SELLER_KINDS:
+        guard = (self.send_guards or {}).get(msg.kind)
+        if msg.kind not in SELLER_KINDS and guard is None:
             raise DeskError("not_sendable", "only acknowledgements and reply drafts are sent from the lead desk")
         if self.tx.get(LeadMessageSend, msg.id) is not None:
             raise DeskError("already_tapped", "this message was already approved once")
@@ -540,6 +544,8 @@ class Desk:
             found = self.acknowledgement_template()
             if found is None or found[0].id != msg.template_id:
                 raise DeskError("template_not_live", "the acknowledgement template is no longer approved")
+        if guard is not None:
+            guard(self, msg)  # raises DeskError to refuse
         now = self.clock.now()
         record = LeadMessageSend(id=msg.id, created_at=now, tenant_id=self.tenant_id, channel=msg.channel,
                                  recipient=to, body_sha256=body_sha256, consent_id=decision.consent_id,
