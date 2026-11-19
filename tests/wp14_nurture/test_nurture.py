@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.wp13_leads.conftest import FakeSender, world  # noqa: F401 - the fixture
+from tests.wp13_leads.conftest import FakeSender
 from thallo.contracts.enums import ConsentBasis, Language, LeadRoute, MessageChannel, MessageKind, TouchKind
 from thallo.contracts.models import Consent, Lead, Message
 from thallo.contracts.states import LeadState, MessageState

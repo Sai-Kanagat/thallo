@@ -42,8 +42,8 @@ def offer(desk: Desk, lead_id: str, registry: Any, *, kind: str) -> dict[str, An
     lead = desk.lead(lead_id)
     if kind not in kinds_for(desk.setting().play_code):
         raise DeskError("bad_booking", "that is not a booked conversation for this play")
-    req = c.BookingRequest(tenant_id=desk.tenant_id, idempotency_key=f"booking-offer:{lead.id}:{desk.clock.now():%Y%m%d%H}",
-                           action="slots", lead_id=lead.id, kind=kind)
+    key = f"booking-offer:{lead.id}:{desk.clock.now():%Y%m%d%H}"
+    req = c.BookingRequest(tenant_id=desk.tenant_id, idempotency_key=key, action="slots", lead_id=lead.id, kind=kind)
     served = registry.run(desk.tenant_id, req)
     out = served.result.output
     now = desk.clock.now()

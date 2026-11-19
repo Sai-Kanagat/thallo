@@ -207,12 +207,13 @@ class Nurture:
         return None
 
     # ------------------------------------------------------------------ the runner
-    def run_due(self) -> dict[str, int]:
+    def run_due(self) -> dict[str, int]:  # noqa: PLR0915 - one readable pass over the rules
         """Draft the steps that are due. Sends nothing. Safe to run twice."""
         counts = {"drafted": 0, "deferred": 0, "stopped": 0, "done": 0, "waiting": 0}
         now = self.clock.now()
         tz = _tz(self.desk)
-        for e in self.tx.list_all(NurtureEnrolment):
+        for row in self.tx.list_all(NurtureEnrolment):
+            e = row
             if e.state is not EnrolmentState.ACTIVE:
                 continue
             seq = self.tx.get(NurtureSequence, e.sequence_id)

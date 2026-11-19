@@ -73,7 +73,8 @@ def pending(desk: Desk, provider: str) -> list[dict[str, Any]]:
     """Changed records only, with the CRM id when one is known."""
     ledger = {r.person_id: r for r in desk.tx.list_all(CrmSyncRecord) if r.provider == provider}
     batch: list[dict[str, Any]] = []
-    for pid, rec in sorted(project(desk).items()):
+    for pid, projected in sorted(project(desk).items()):
+        rec = projected
         prev = ledger.get(pid)
         if rec is None:
             if prev is None or prev.erased:
