@@ -55,7 +55,8 @@ class LiveMessagingProvider:
     settings_model: ClassVar[type[BaseModel]]
     licence_note: ClassVar[str]
 
-    def __init__(self, ctx: ProviderContext, *, transport: Any = None, environ: Mapping[str, str] | None = None) -> None:
+    def __init__(self, ctx: ProviderContext, *, transport: Any = None,
+                 environ: Mapping[str, str] | None = None) -> None:
         self.ctx = ctx
         self.clock = ctx.clock
         self.environ = environ

@@ -70,7 +70,7 @@ class Http:
         return self.reply
 
 
-WA_OK = RawReply(200, {"messaging_product": "whatsapp", "contacts": [{"input": "393331234567", "wa_id": "393331234567"}],
+WA_OK = RawReply(200, {"messaging_product": "whatsapp", "contacts": [{"wa_id": "393331234567"}],
                        "messages": [{"id": "wamid.HBgM", "message_status": "accepted"}]})
 RS_OK = RawReply(200, {"id": "49a3999c-0ce1-4ea6-ab68-afcd6dc2e794"})
 
