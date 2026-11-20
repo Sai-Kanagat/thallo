@@ -148,6 +148,9 @@ class Desk:
     clock: Clock
     drafter: Drafter = None  # type: ignore[assignment]
     play_loader: Callable[[str], LeadPlay] = load_play
+    # Extra message kinds this desk may send, each with a guard run at the tap after the consent
+    # re-check (WP-14 nurture: caps, quiet hours, stop rules). Empty by default: fail closed.
+    send_guards: dict[MessageKind, Callable[[Any, Message], None]] | None = None
 
     def __post_init__(self) -> None:
         if self.drafter is None:
@@ -494,8 +497,8 @@ class Desk:
 
     def edit_draft(self, message_id: str, body: str) -> Message:
         msg = self._draft(message_id)
-        if msg.kind is MessageKind.ACKNOWLEDGEMENT:
-            raise DeskError("template_fixed", "an acknowledgement is approved wording; discard it and reply instead")
+        if msg.template_id is not None or msg.kind not in (MessageKind.REPLY_DRAFT,):
+            raise DeskError("template_fixed", "this is approved wording; discard it and reply instead")
         text = (body or "").strip()
         if not text or len(text) > 2000:
             raise DeskError("bad_body", "a message needs between 1 and 2000 characters")
@@ -522,7 +525,8 @@ class Desk:
         human: HumanActor = require_human(actor, HumanOnlyAction.FIRST_REPLY, verifier=verifier,
                                           tenant_id=self.tenant_id)
         msg = self._draft(message_id)
-        if msg.kind not in SELLER_KINDS:
+        guard = (self.send_guards or {}).get(msg.kind)
+        if msg.kind not in SELLER_KINDS and guard is None:
             raise DeskError("not_sendable", "only acknowledgements and reply drafts are sent from the lead desk")
         if self.tx.get(LeadMessageSend, msg.id) is not None:
             raise DeskError("already_tapped", "this message was already approved once")
@@ -540,6 +544,10 @@ class Desk:
             found = self.acknowledgement_template()
             if found is None or found[0].id != msg.template_id:
                 raise DeskError("template_not_live", "the acknowledgement template is no longer approved")
+        if msg.template_id is not None or msg.kind is not MessageKind.REPLY_DRAFT:
+            self._check_template_bound(msg, lead, person, decision.footer)
+        if guard is not None:
+            guard(self, msg)  # raises DeskError to refuse
         now = self.clock.now()
         record = LeadMessageSend(id=msg.id, created_at=now, tenant_id=self.tenant_id, channel=msg.channel,
                                  recipient=to, body_sha256=body_sha256, consent_id=decision.consent_id,
@@ -567,6 +575,20 @@ class Desk:
                        external_id=out.external_id if isinstance(out, c.MessageSendResult) else None)
         return {"status": "open_in_app", "message_id": msg.id, "link": safe_link(link)}
 
+    def _check_template_bound(self, msg: Message, lead: Lead, person: Person, footer: str | None) -> None:
+        """Any template-bound message: its approval is live for the template's current hash, and its
+        body is the template's approved wording with only cleaned slot values filled in (plus the
+        consent footer). Answers may change after drafting; wording may not."""
+        t = self.tx.get(MessageTemplate, msg.template_id) if msg.template_id else None
+        if t is None or not t.active or t.kind is not msg.kind or t.channel is not msg.channel:
+            raise DeskError("template_not_live", "this message has no live approved template")
+        users = {u.id: u for u in self.tx.list_all(AppUser)}
+        a = live_approval(t, self.tx.list_all(Approval, subject_id=t.id), users, self.clock.now())
+        if a is None or a.id != msg.template_approval_id:
+            raise DeskError("template_not_live", "the template approval is no longer live")
+        if not _matches_template(t.body, msg.body, footer):
+            raise DeskError("changed", "the message no longer matches its approved template")
+
     def confirm_sent(self, message_id: str, *, actor: Actor, verifier: SessionVerifier) -> None:
         """The person sent it from their own app and says so."""
         human = require_human(actor, HumanOnlyAction.FIRST_REPLY, verifier=verifier, tenant_id=self.tenant_id)
@@ -586,7 +608,7 @@ class Desk:
         if msg.kind is MessageKind.ACKNOWLEDGEMENT:
             if lead.state is LeadState.NEW:
                 _move(self.tx, lead, LeadState.ACKNOWLEDGED)
-        elif LEAD.allowed(lead.state, LeadState.CONTACTED):
+        elif msg.kind is MessageKind.REPLY_DRAFT and LEAD.allowed(lead.state, LeadState.CONTACTED):
             _move(self.tx, lead, LeadState.CONTACTED)
 
     # ------------------------------------------------------------------ booking and outcome buttons
@@ -638,6 +660,23 @@ class Desk:
             if m.state is MessageState.DRAFTED:
                 self.tx.update(Message, m.id, state=MessageState.DISCARDED)
         return lead
+
+
+def _matches_template(template_body: str, body: str, footer: str | None) -> bool:
+    """True when `body` is the template wording with each slot replaced by a cleaned slot value
+    (one line, no links, at most MAX_SLOT_CHARS) and, optionally, the consent footer."""
+    from thallo.leads.templates import _LINKISH, MAX_SLOT_CHARS, SLOT
+
+    parts = SLOT.split(template_body.strip())
+    out = []
+    for i, p in enumerate(parts):
+        if i % 2:
+            out.append(f"([^\\n]{{0,{MAX_SLOT_CHARS}}})")
+        else:
+            out.append(r"\s*".join(re.escape(w) for w in re.split(r"\s+", p)) if p.strip() else r"\s*")
+    tail = f"(?:\\n\\n{re.escape(footer)})?" if footer else ""
+    m = re.fullmatch(r"\s*" + "".join(out) + r"\s*" + tail, body)
+    return m is not None and not any(_LINKISH.search(g or "") for g in m.groups())
 
 
 _SAFE_LINK = re.compile(r"^(https://wa\.me/\d{6,15}\?text=|mailto:|sms:|https://mail\.google\.com/)")
