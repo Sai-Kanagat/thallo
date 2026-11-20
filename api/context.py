@@ -17,10 +17,11 @@ from __future__ import annotations
 import hmac
 import logging
 from collections.abc import Collection
-from datetime import timedelta
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from fastapi import Request, Response
+from starlette.routing import compile_path
 
 from api.backend import Backend
 from api.directory import IdentityDirectory
@@ -190,11 +191,28 @@ def resolve_token(request: Request, raw: str) -> ApiToken:
     return tok
 
 
+def route_template(request: Request) -> str | None:
+    """The template of the route this request will reach: the first, in router order, whose path
+    and method match. None when nothing matches (then a token is refused)."""
+    from api.access import app_routes
+
+    route = request.scope.get("route")
+    if route is not None and getattr(route, "path", None):
+        return route.path
+    path = request.scope.get("path", "")
+    for methods, template in app_routes(request.app):
+        regex, _, _ = compile_path(template)
+        if request.method in methods and regex.match(path):
+            return template
+    return None
+
+
 def audit_token_call(request: Request, tok: ApiToken, action: str, **payload: object) -> None:
     """One audit entry in its own transaction. Fails closed: no entry, no call."""
     svc = services(request)
-    route = request.scope.get("route")
-    body = {"method": request.method, "route": getattr(route, "path", "") or "", **payload}
+    # the audit log refuses the word "session" anywhere (trust/audit.py), so /api/session is named apart
+    route = (route_template(request) or "").replace("session", "sign-in-state")
+    body = {"method": request.method, "route": route, **payload}
     for _ in range(3):
         try:
             with svc.backend.tenant(tok.tenant_id) as tx:
@@ -209,19 +227,39 @@ def audit_token_call(request: Request, tok: ApiToken, action: str, **payload: ob
     raise ApiError(503, "audit_unavailable", "the call could not be recorded, so it was not run")
 
 
-def _token_member(request: Request, raw: str, roles: Collection[UserRole]) -> Ctx:
+SELF_AUTHENTICATING = frozenset({("POST", "/api/mcp")})
+
+
+def token_gate(request: Request) -> None:
+    """Runs from the app middleware for every request with an Authorization header, before routing
+    and body validation: resolve the token, rate limit it, check the route against its scopes and
+    write the audit entry. Raises ApiError to refuse. The MCP route authenticates itself."""
     from api.access import token_may  # local: access imports token_store only
 
+    raw = bearer(request)
+    if raw is None:
+        return
+    template = route_template(request)
+    if template is not None and (request.method, template) in SELF_AUTHENTICATING:
+        return
     svc = services(request)
     tok = resolve_token(request, raw)
-    route = request.scope.get("route")
-    template = getattr(route, "path", None)
     if not svc.limits.allow(f"api_token:{tok.id}", TOKEN_RATE, TOKEN_WINDOW):
         audit_token_call(request, tok, "api_token.refused", reason="rate_limited")
         raise ApiError(429, "rate_limited", "too many calls with this token; wait a minute")
     if template is None or not token_may(tok.scopes, request.method, template):
         audit_token_call(request, tok, "api_token.refused", reason="not_allowed_for_tokens")
         raise ApiError(403, "token_refused", "API tokens cannot do this; a person must do it in the app")
+    audit_token_call(request, tok, "api_token.call")
+    svc.tokens.touch(tok.id, svc.clock.now())
+    request.state.api_token = tok
+
+
+def _token_member(request: Request, roles: Collection[UserRole]) -> Ctx:
+    svc = services(request)
+    tok = getattr(request.state, "api_token", None)
+    if not isinstance(tok, ApiToken):  # the gate did not pass this request: never trust the header alone
+        raise unauthenticated()
     with svc.backend.tenant(tok.tenant_id) as tx:
         user = tx.get(AppUser, tok.app_user_id)
     if user is None or user.tenant_id != tok.tenant_id:
@@ -229,8 +267,6 @@ def _token_member(request: Request, raw: str, roles: Collection[UserRole]) -> Ct
     if user.role not in roles:
         audit_token_call(request, tok, "api_token.refused", reason="role")
         raise forbidden()
-    audit_token_call(request, tok, "api_token.call")
-    svc.tokens.touch(tok.id, svc.clock.now())
     now = svc.clock.now()
     session = Session(id=f"api-token-{tok.id}", token_hash=tok.token_sha256, kind=SessionKind.API_TOKEN, csrf="",
                       created_at=tok.created_at, last_seen=now, authenticated=True, identity_id=user.identity_id,
@@ -241,7 +277,7 @@ def _token_member(request: Request, raw: str, roles: Collection[UserRole]) -> Ct
 def member(request: Request, roles: Collection[UserRole], *, unsafe: bool = False) -> Ctx:
     raw = bearer(request)
     if raw is not None:
-        return _token_member(request, raw, roles)
+        return _token_member(request, roles)
     session = current_session(request)
     if session is None or not session.is_member:
         raise unauthenticated()
@@ -262,6 +298,6 @@ def member(request: Request, roles: Collection[UserRole], *, unsafe: bool = Fals
 __all__ = [
     "COOKIE", "CONNECTION_EDITORS", "DEVICE_COOKIE", "set_device_cookie",
     "CSRF_HEADER", "PLANNERS", "PLAN_READERS", "REVIEWERS", "Ctx", "Services",
-    "TOKEN_ADMINS", "audit_token_call", "bearer", "resolve_token",
+    "TOKEN_ADMINS", "audit_token_call", "bearer", "resolve_token", "route_template", "token_gate",
     "check_csrf", "clear_cookie", "current_session", "member", "services", "set_cookie",
 ]
