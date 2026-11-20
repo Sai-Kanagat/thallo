@@ -40,6 +40,28 @@ class Tool:
 R, D, H, IA = Access.READ, Access.DRAFT, Access.HUMAN, Access.INTERACTIVE
 
 ROUTES: dict[tuple[str, str], tuple[Access, Tool | None]] = {
+    # planner, nurture, engagement (wave 3): a person in the app only, except plain reads
+    ("POST", "/api/plan/propose"): (IA, None),
+    ("POST", "/api/plan/mirror"): (IA, None),
+    ("POST", "/api/nurture/templates"): (IA, None),
+    ("POST", "/api/nurture/templates/{template_id}/approve"): (H, None),
+    ("POST", "/api/nurture/sequences"): (IA, None),
+    ("GET", "/api/nurture/sequences"): (R, None),
+    ("POST", "/api/nurture/leads/{lead_id}/enrol"): (IA, None),
+    ("POST", "/api/nurture/run"): (IA, None),
+    ("POST", "/api/nurture/messages/{message_id}/send"): (H, None),
+    ("POST", "/api/nurture/leads/{lead_id}/booking/offer"): (IA, None),
+    ("POST", "/api/nurture/leads/{lead_id}/booking"): (H, None),
+    ("GET", "/api/nurture/pipeline"): (R, None),
+    ("POST", "/api/nurture/crm/sync"): (H, None),
+    ("GET", "/api/nurture/crm/export.csv"): (IA, None),  # personal data leaves: a person only
+    ("GET", "/api/engage"): (R, None),
+    ("POST", "/api/engage"): (IA, None),
+    ("POST", "/api/engage/{item_id}/acknowledge"): (H, None),
+    ("POST", "/api/engage/{item_id}/edit"): (IA, None),
+    ("POST", "/api/engage/{item_id}/handled"): (IA, None),
+    ("POST", "/api/engage/{item_id}/dismiss"): (IA, None),
+    ("POST", "/api/engage/{item_id}/lead"): (IA, None),
     # sign-in, tokens, console: a person only
     ("GET", "/api/session"): (IA, None),
     ("POST", "/api/auth/request-code"): (IA, None),
