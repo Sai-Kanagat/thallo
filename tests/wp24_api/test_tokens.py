@@ -69,6 +69,7 @@ def test_every_route_is_classified_and_non_token_routes_refuse_bearer(w) -> None
     tok = w.token(w.a.founder_email, w.a.tenant.id, scopes=("read", "draft"))
     c = w.client()
     missing = []
+    calls = 0
     routes = app_routes(app)
     assert len(routes) > 50
     for methods, template in routes:
@@ -83,6 +84,9 @@ def test_every_route_is_classified_and_non_token_routes_refuse_bearer(w) -> None
                       "question_id", "answer_id", "shot_id", "task_type", "trip_id", "sentence_id", "token_id",
                       "media_id"):
                 path = path.replace("{" + p + "}", FAKE_ID)
+            calls += 1
+            if calls % 50 == 0:  # stay under the per-token rate limit as routes grow
+                tok = w.token(w.a.founder_email, w.a.tenant.id, scopes=("read", "draft"))
             r = c.request(method, path, json={}, headers=auth(tok))
             assert r.status_code in (401, 403), (method, template, r.status_code, r.text)
     assert missing == [], f"classify these routes in api/access.py: {missing}"
