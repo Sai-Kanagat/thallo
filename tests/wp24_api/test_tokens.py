@@ -81,7 +81,8 @@ def test_every_route_is_classified_and_non_token_routes_refuse_bearer(w) -> None
                 continue
             path = template
             for p in ("bundle_id", "variant_id", "slot_id", "connection_id", "code", "lead_id", "message_id",
-                      "question_id", "answer_id", "shot_id", "task_type", "trip_id", "sentence_id", "token_id", "template_id", "item_id",
+                      "question_id", "answer_id", "shot_id", "task_type", "trip_id", "sentence_id", "token_id",
+                      "template_id", "item_id",
                       "media_id"):
                 path = path.replace("{" + p + "}", FAKE_ID)
             calls += 1
