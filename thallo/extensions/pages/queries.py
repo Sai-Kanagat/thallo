@@ -88,12 +88,10 @@ def _fold(text: str) -> str:
 def words(text: str) -> frozenset[str]:
     """Meaningful words: folded, stopwords dropped, a trailing plural s trimmed."""
     out = set()
-    for w in re.findall(r"[a-z0-9]+", _fold(text)):
-        if w in STOPWORDS or len(w) < 2:
+    for raw in re.findall(r"[a-z0-9]+", _fold(text)):
+        if raw in STOPWORDS or len(raw) < 2:
             continue
-        if len(w) > 4 and w.endswith("s") and not w.endswith("ss"):
-            w = w[:-1]
-        out.add(w)
+        out.add(raw[:-1] if len(raw) > 4 and raw.endswith("s") and not raw.endswith("ss") else raw)
     return frozenset(out)
 
 

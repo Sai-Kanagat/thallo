@@ -30,8 +30,16 @@ from thallo.connections.errors import ConnectionsError
 from thallo.connections.registry import ConnectionRegistry
 from thallo.contracts import connection as c
 from thallo.contracts.clock import Clock
-from thallo.contracts.enums import Capability, Channel, CheckLayer, CheckVerdict, ConnectionMode, FunnelStage, Language
-from thallo.contracts.enums import TextRole
+from thallo.contracts.enums import (
+    Capability,
+    Channel,
+    CheckLayer,
+    CheckVerdict,
+    ConnectionMode,
+    FunnelStage,
+    Language,
+    TextRole,
+)
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import (
     AppUser,

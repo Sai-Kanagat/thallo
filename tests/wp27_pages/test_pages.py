@@ -51,7 +51,7 @@ def inputs(**over):
 
 def test_parse_export_reads_english_and_italian_headers():
     en = b"Top queries,Clicks,Impressions,CTR,Position\nboiler service cost,10,400,2.5%,8.2\nbad,1,,1%,3\n"
-    it = "Query principali,Clic,Impressioni,CTR,Posizione\ncosto caldaia,3,\"1,200\",1%,\"9,5\"\n".encode()
+    it = b"Query principali,Clic,Impressioni,CTR,Posizione\ncosto caldaia,3,\"1,200\",1%,\"9,5\"\n"
     assert parse_export(en) == [QueryRow("boiler service cost", 400, 10, 8.2)]
     row = parse_export(it)[0]
     assert row.impressions == 1200 and row.position == 9.5
