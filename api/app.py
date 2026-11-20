@@ -18,22 +18,27 @@ import re
 from collections.abc import Mapping
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from api import (  # one router per line: parallel packages append without conflicts
     auth,
     connections,
+    console,
     engage,
     errors,
     growth,
     leads,
+    mcp,
     nurture,
     plan,
     review,
+    tokens,
     tracking,
     trust,
     voice,
 )
-from api.context import Services
+from api.context import Services, token_gate
 
 log = logging.getLogger("thallo.api")
 
@@ -49,6 +54,16 @@ _HEADERS = {
 }
 
 
+async def _token_first(request: Request, call_next) -> Response:  # noqa: ANN001
+    """API tokens are checked (scope, rate, audit) before routing and body validation (WP-24)."""
+    if "authorization" in request.headers:
+        try:
+            await run_in_threadpool(token_gate, request)
+        except errors.ApiError as exc:
+            return JSONResponse({"error": exc.code, "message": exc.message}, status_code=exc.status)
+    return await call_next(request)
+
+
 def create_app(svc: Services) -> FastAPI:
     app = FastAPI(title="Thallo API", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.services = svc
@@ -56,7 +71,7 @@ def create_app(svc: Services) -> FastAPI:
 
     @app.middleware("http")
     async def _headers(request: Request, call_next) -> Response:  # noqa: ANN001
-        response = await call_next(request)
+        response = await _token_first(request, call_next)
         for k, v in _HEADERS.items():
             response.headers.setdefault(k, v)
         response.headers.setdefault("Content-Security-Policy", API_CSP)
@@ -75,6 +90,9 @@ def create_app(svc: Services) -> FastAPI:
         voice.router,
         trust.router,
         engage.router,
+        tokens.router,
+        console.router,
+        mcp.router,
     ):
         app.include_router(r)
     return app
@@ -121,7 +139,9 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
     from api.backend import PgBackend
     from api.directory import OwnerDirectory
     from api.media_store import TenantMediaStore
+    from api.operators import OwnerOperatorDirectory
     from api.sessions import ConsoleCodeSender, DeviceSigner, NoCodeSender
+    from api.token_store import OwnerTokenStore
     from thallo.connections.registry import ProviderRegistry
     from thallo.connections.vault import Vault
     from thallo.contracts.clock import SystemClock
@@ -157,7 +177,8 @@ def services_from_env(environ: Mapping[str, str] | None = None) -> Services:  # 
                     signer=signer, providers=ProviderRegistry.with_discovered(), vault=vault,
                     allowed_origins=origins, environ=connections.default_environ(),
                     proxy_peers=peers, stamp_key=stamp_key,
-                    devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None), redirector=redirector)
+                    devices=DeviceSigner(bytes.fromhex(device_key) if device_key else None), redirector=redirector,
+                    tokens=OwnerTokenStore(owner_url), operators=OwnerOperatorDirectory(owner_url))
 
 
 __all__ = ["API_CSP", "StartupRefused", "check_startup", "create_app", "services_from_env"]
