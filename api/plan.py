@@ -10,6 +10,12 @@ summed per funnel stage. It is shown as shares; with no pillars there is no targ
   GET  /api/plan?week=YYYY-MM-DD         the Monday of the week; defaults to this week
   POST /api/plan/slots/{id}/kill
   POST /api/plan/slots/{id}/move         {starts_at}
+  POST /api/plan/propose                 {week}: the planner proposes that week (WP-17)
+  POST /api/plan/mirror                  {week}: mirror the week to the calendar connection (WP-17)
+
+Planned weeks also carry the planner's two reasoning lines, what it chose not to do, its stage
+check against the play, and per slot the play, format, target metric, reason and the sealed
+forecast (labelled a guess until scored). Killing a planned slot also kills its idea.
 """
 from __future__ import annotations
 
@@ -22,16 +28,26 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from api.context import PLAN_READERS, PLANNERS, member, services
 from api.errors import bad_request, conflict, not_found
+from thallo.connections.registry import ConnectionRegistry
 from thallo.contracts.enums import FunnelStage
 from thallo.contracts.ids import is_id
-from thallo.contracts.models import Pillar, PlanSlot, Variant
-from thallo.contracts.states import PLAN_SLOT, IllegalTransition, PlanSlotState, VariantState
+from thallo.contracts.models import Forecast, ForecastScore, Idea, Pillar, PlanSlot, Tenant, Variant
+from thallo.contracts.states import IDEA, PLAN_SLOT, IdeaState, IllegalTransition, PlanSlotState, VariantState
+from thallo.planner import forecast as fc
+from thallo.planner.mirror import mirror_week
+from thallo.planner.plan import PlanRefused, plan_week
+from thallo.planner.records import PlannerMirror, PlannerSlot, PlannerWeek
 
 router = APIRouter(prefix="/api")
 
 _MOVABLE = frozenset({PlanSlotState.OPEN, PlanSlotState.FILLED})
 _HELD = frozenset({VariantState.SCHEDULED, VariantState.PUBLISHED, VariantState.READ_BACK_OK,
                    VariantState.READ_BACK_MISMATCH})
+
+
+class WeekBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    week: date
 
 
 class MoveBody(BaseModel):
@@ -53,9 +69,30 @@ def _week(raw: str | None, today: date) -> date:
     return _monday(d)
 
 
-def _slot_view(s: PlanSlot, pillars: dict[str, Pillar]) -> dict:
+def _planned(tx, slots: list[PlanSlot]) -> dict[str, dict]:  # noqa: ANN001
+    """slot id -> the planner's fields, for slots the planner made."""
+    extra = {p.slot_id: p for p in tx.list_all(PlannerSlot)}
+    if not extra:
+        return {}
+    forecasts = {f.id: f for f in tx.list_all(Forecast)}
+    scores = {s.forecast_id: s for s in tx.list_all(ForecastScore)}
+    out = {}
+    for s in slots:
+        p = extra.get(s.id)
+        if p is None:
+            continue
+        idea = tx.get(Idea, p.idea_id)
+        f = forecasts.get(p.forecast_id or "")
+        out[s.id] = {"play": p.play_code, "format": p.format, "target_metric": p.target_metric,
+                     "metric_day": p.metric_day, "reason": p.reason, "idea": idea.title if idea else None,
+                     "forecast": fc.view(f, scores.get(f.id) if f else None),
+                     "no_forecast_reason": p.no_forecast_reason}
+    return out
+
+
+def _slot_view(s: PlanSlot, pillars: dict[str, Pillar], planned: dict | None = None) -> dict:
     p = pillars.get(s.pillar_id or "")
-    return {"id": s.id, "channel": s.channel.value, "stage": s.stage.value, "state": s.state.value,
+    return {"planned": planned,"id": s.id, "channel": s.channel.value, "stage": s.stage.value, "state": s.state.value,
             "starts_at": s.starts_at.isoformat(), "day": s.starts_at.date().isoformat(),
             "pillar": p.name if p else None, "variant_id": s.variant_id,
             "reserved_for_experiment": s.reserved_for_experiment,
@@ -87,10 +124,50 @@ def week_plan(request: Request, week: str | None = None) -> dict:
     with svc.backend.tenant(ctx.tenant_id) as tx:
         slots = sorted(tx.list_all(PlanSlot, week_start=start), key=lambda s: (s.starts_at, s.channel.value, s.id))
         pillars = tx.list_all(Pillar)
+        planned = _planned(tx, slots)
+        weeks = tx.list_all(PlannerWeek, week_start=start)
+        mirrors = sorted(tx.list_all(PlannerMirror, week_start=start), key=lambda m: (m.mirrored_at, m.id))
     by_id = {p.id: p for p in pillars}
     days = [(start + timedelta(days=i)).isoformat() for i in range(7)]
-    return {"week_start": start.isoformat(), "days": days, "slots": [_slot_view(s, by_id) for s in slots],
-            "stage_mix": _mix(slots, pillars), "can_edit": ctx.user.role in PLANNERS}
+    w = weeks[0] if weeks else None
+    last = mirrors[-1] if mirrors else None
+    return {"week_start": start.isoformat(), "days": days,
+            "slots": [_slot_view(s, by_id, planned.get(s.id)) for s in slots],
+            "stage_mix": _mix(slots, pillars), "can_edit": ctx.user.role in PLANNERS,
+            "planner": None if w is None else {"play": w.play_code, "reasoning": w.reasoning,
+                                               "not_doing": w.not_doing, "stage_check": w.stage_check,
+                                               "experiment_slots": w.experiment_slots},
+            "mirror": None if last is None else {"provider": last.provider, "status": last.status,
+                                                 "mirrored": last.mirrored, "detail": last.detail,
+                                                 "at": last.mirrored_at.isoformat()}}
+
+
+@router.post("/plan/propose")
+def propose(body: WeekBody, request: Request) -> dict:
+    ctx = member(request, PLANNERS, unsafe=True)
+    svc = services(request)
+    with svc.backend.tenant(ctx.tenant_id) as tx:
+        tenant = tx.get(Tenant, ctx.tenant_id)
+        if tenant is None:
+            raise not_found()
+        try:
+            planned = plan_week(tx, svc.clock, tenant, body.week)
+        except PlanRefused as e:
+            raise conflict(" ".join(e.problems)) from None
+    return {"status": "planned", "week_start": planned.week.week_start.isoformat(),
+            "slots": len(planned.slots), "reasoning": planned.week.reasoning}
+
+
+@router.post("/plan/mirror")
+def mirror(body: WeekBody, request: Request) -> dict:
+    ctx = member(request, PLANNERS, unsafe=True)
+    svc = services(request)
+    conns, _secrets, health = svc.backend.connection_stores()
+    registry = ConnectionRegistry(clock=svc.clock, providers=svc.providers, connections=conns, vault=svc.vault,
+                                  health=health, mock_tenants=svc.mock_tenants, environ=svc.environ)
+    with svc.backend.tenant(ctx.tenant_id) as tx:
+        row = mirror_week(tx, registry, svc.clock, _week(body.week.isoformat(), body.week))
+    return {"status": row.status, "provider": row.provider, "mirrored": row.mirrored, "detail": row.detail}
 
 
 def _slot(tx, slot_id: str) -> PlanSlot:  # noqa: ANN001
@@ -112,6 +189,10 @@ def kill(slot_id: str, request: Request) -> dict:
         except IllegalTransition:
             raise conflict(f"a {slot.state.value} slot cannot be killed") from None
         tx.update(PlanSlot, slot.id, state=PlanSlotState.KILLED)
+        for p in tx.list_all(PlannerSlot, slot_id=slot.id):
+            idea = tx.get(Idea, p.idea_id)
+            if idea is not None and IDEA.allowed(idea.state, IdeaState.KILLED):
+                tx.update(Idea, idea.id, state=IdeaState.KILLED)
     return {"status": "killed", "slot_id": slot_id}
 
 
