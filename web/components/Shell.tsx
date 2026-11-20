@@ -17,6 +17,7 @@ const NAV = [
   { href: "/leads", label: "Leads" },
   { href: "/trust", label: "Trust" },
   { href: "/connections", label: "Connections" },
+  { href: "/console", label: "Console" },
 ];
 
 function useOnline() {
