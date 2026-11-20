@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request, Response
 from api import (  # one router per line: parallel packages append without conflicts
     auth,
     connections,
+    engage,
     errors,
     growth,
     leads,
@@ -73,6 +74,7 @@ def create_app(svc: Services) -> FastAPI:
         tracking.router,
         voice.router,
         trust.router,
+        engage.router,
     ):
         app.include_router(r)
     return app
