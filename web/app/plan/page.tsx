@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Empty, Failure, Loading } from "@/components/States";
 import { ApiError, post } from "@/lib/api";
-import type { Slot, WeekPlan } from "@/lib/types";
+import type { Forecast, PlannedSlot, Slot, WeekPlan } from "@/lib/types";
 import { useLoad } from "@/lib/useLoad";
 import { channelName } from "@/lib/words";
 
@@ -15,6 +15,27 @@ function shiftWeek(start: string, days: number): string {
   const d = new Date(`${start}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function ForecastLine({ f }: { f: Forecast }) {
+  return (
+    <p className="quiet-text">
+      {f.metric} by day {f.day}: {f.low} to {f.high} (baseline {f.baseline_low} to {f.baseline_high}).{" "}
+      {f.scored ? `Actual ${f.actual}${f.beat_baseline ? ", beat the baseline." : ", did not beat the baseline."}` : f.label}
+    </p>
+  );
+}
+
+function PlannedDetail({ p }: { p: PlannedSlot }) {
+  return (
+    <div className="slot-planned">
+      <p>
+        <strong>{p.idea ?? p.format}</strong> ({p.format}, play {p.play}). {p.reason}
+      </p>
+      <p className="quiet-text">Measured on {p.target_metric} at day {p.metric_day}.</p>
+      {p.forecast ? <ForecastLine f={p.forecast} /> : <p className="quiet-text">{p.no_forecast_reason ?? "No forecast."}</p>}
+    </div>
+  );
 }
 
 export default function PlanPage() {
@@ -50,6 +71,45 @@ export default function PlanPage() {
           Next
         </button>
       </div>
+
+      {plan.can_edit ? (
+        <div className="row">
+          {plan.planner === null ? (
+            <button type="button" className="button"
+                    onClick={() => act(() => post("/api/plan/propose", { week: plan.week_start }), "Week proposed.")}>
+              Propose this week
+            </button>
+          ) : null}
+          {plan.slots.length > 0 ? (
+            <button type="button" className="button small"
+                    onClick={() => act(() => post("/api/plan/mirror", { week: plan.week_start }), "Calendar updated.")}>
+              Mirror to calendar
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {plan.mirror ? (
+        <p className="quiet-text">
+          Calendar: {plan.mirror.provider}, {plan.mirror.status}, {plan.mirror.mirrored} event(s)
+          {plan.mirror.detail ? `. ${plan.mirror.detail}` : ""}.
+        </p>
+      ) : null}
+
+      {plan.planner ? (
+        <section className="mix-panel" aria-label="Why this week">
+          <h2>Why this week looks like this</h2>
+          {plan.planner.reasoning.map((line) => <p key={line}>{line}</p>)}
+          {plan.planner.not_doing.length > 0 ? (
+            <>
+              <h3>Not doing</h3>
+              <ul>{plan.planner.not_doing.map((line) => <li key={line}>{line}</li>)}</ul>
+            </>
+          ) : null}
+          {plan.planner.stage_check.ok ? null : (
+            <ul className="note bad">{plan.planner.stage_check.problems.map((line) => <li key={line}>{line}</li>)}</ul>
+          )}
+        </section>
+      ) : null}
 
       <section className="mix-panel" aria-label="Stage mix">
         <h2>Stage mix against the target</h2>
@@ -88,6 +148,7 @@ export default function PlanPage() {
                         <span className="chip">{s.stage}</span>
                         <span className="chip">{s.state}</span>
                       </div>
+                      {s.planned ? <PlannedDetail p={s.planned} /> : null}
                       {plan.can_edit ? (
                         <div className="row">
                           {s.can_move ? (

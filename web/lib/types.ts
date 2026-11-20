@@ -91,7 +91,48 @@ export type Slot = {
   reserved_for_experiment: boolean;
   can_kill: boolean;
   can_move: boolean;
+  planned: PlannedSlot | null;
 };
+
+export type Forecast = {
+  id: string;
+  seq: number;
+  metric: string;
+  day: number;
+  low: number;
+  high: number;
+  baseline_low: number;
+  baseline_high: number;
+  sealed_at: string;
+  seal_hash: string;
+  scored: boolean;
+  label: string;
+  actual?: number;
+  interval_score?: number;
+  baseline_score?: number;
+  beat_baseline?: boolean;
+};
+
+export type PlannedSlot = {
+  play: string;
+  format: string;
+  target_metric: string;
+  metric_day: number;
+  reason: string;
+  idea: string | null;
+  forecast: Forecast | null;
+  no_forecast_reason: string | null;
+};
+
+export type PlannerWeek = {
+  play: string;
+  reasoning: string[];
+  not_doing: string[];
+  stage_check: { ok: boolean; problems: string[] };
+  experiment_slots: number;
+};
+
+export type MirrorStatus = { provider: string; status: string; mirrored: number; detail: string | null; at: string };
 
 export type WeekPlan = {
   week_start: string;
@@ -99,6 +140,8 @@ export type WeekPlan = {
   slots: Slot[];
   stage_mix: { stage: string; slots: number; share: number; target: number | null }[];
   can_edit: boolean;
+  planner: PlannerWeek | null;
+  mirror: MirrorStatus | null;
 };
 
 export type ConnectionRow = {

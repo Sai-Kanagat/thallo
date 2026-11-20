@@ -381,6 +381,8 @@ progress::-moz-progress-bar { background: var(--accent); }
 .day ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .slot { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-2); padding: 12px 16px; display: grid; gap: 8px; }
 .slot-main { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.slot-planned { margin-top: 8px; }
+.slot-planned p { margin: 4px 0; }
 .slot-time { font: 700 14px/1 var(--mono); }
 .slot-pillar { font-weight: 700; }
 .slot-killed { opacity: 0.6; }
