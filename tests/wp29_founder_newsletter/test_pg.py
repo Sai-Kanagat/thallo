@@ -7,7 +7,7 @@ from datetime import date
 import psycopg
 import pytest
 
-from tests.wp01_store.conftest import URL, make_tenant
+from tests.wp01_store.conftest import URL, admin, database, make_tenant, urls  # noqa: F401
 from thallo.contracts.actors import HumanActor
 from thallo.contracts.enums import Channel, FunnelStage, Language, UserRole
 from thallo.contracts.ids import new_id
@@ -22,11 +22,12 @@ class Verifier:
         return actor.session_id == "live"
 
 
-def seed(database, tenant):
+def seed(database, admin, tenant):  # noqa: F811
     clock = database.clock
-    with database.admin() as a:
-        ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid")
-        a.insert(ident)
+    ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid",
+                     display_name="Founder")
+    admin.execute("INSERT INTO identity (id, created_at, email, display_name) VALUES (%s, %s, %s, %s)",
+                  (ident.id, ident.created_at, ident.email, ident.display_name))
     with database.tenant(tenant.id) as tx:
         now = clock.now()
         user = tx.insert(AppUser(id=new_id(clock), created_at=now, tenant_id=tenant.id, identity_id=ident.id,
@@ -49,9 +50,9 @@ def seed(database, tenant):
     return user, person, issue
 
 
-def test_subscribe_unsubscribe_and_guards(database):
+def test_subscribe_unsubscribe_and_guards(database, admin):  # noqa: F811
     tenant = make_tenant(database, "Letters")
-    user, person, issue = seed(database, tenant)
+    user, person, issue = seed(database, admin, tenant)
     clock = database.clock
     actor = HumanActor(id=user.id, tenant_id=tenant.id, session_id="live")
     with database.tenant(tenant.id) as tx:
