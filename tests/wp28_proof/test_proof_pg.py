@@ -28,9 +28,10 @@ class Verifier:
 
 def setup(database, tenant, admin):
     clock = database.clock
-    ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid")
-    admin.execute("INSERT INTO identity (id, created_at, email) VALUES (%s, %s, %s)",
-                  (ident.id, ident.created_at, ident.email))
+    ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid",
+                     display_name="Seller")
+    admin.execute("INSERT INTO identity (id, created_at, email, display_name) VALUES (%s, %s, %s, %s)",
+                  (ident.id, ident.created_at, ident.email, ident.display_name))
     with database.tenant(tenant.id) as tx:
         now = clock.now()
         user = tx.insert(AppUser(id=new_id(clock), created_at=now, tenant_id=tenant.id, identity_id=ident.id,

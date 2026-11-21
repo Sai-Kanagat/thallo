@@ -21,8 +21,8 @@ Rules this module holds, whatever the caller does:
   a person's tap. This module never builds a send request.
 - Withdrawal marks the material, pieces and notes withdrawn so no future piece can use them, and
   writes a flag for every piece already placed in a variant: `live` when it was published, so a
-  person takes it down. With the gate repository it also writes a FAIL check row for the
-  variant's current content, so the gate refuses approval and publish. Nothing is unpublished.
+  person takes it down. The gate refuses any variant carrying such a piece at approval and at
+  publish, for any content hash (see `gate.py`). Nothing is unpublished by the machine.
 """
 from __future__ import annotations
 
@@ -36,8 +36,6 @@ from typing import Any
 from thallo.contracts.actors import Actor, SessionVerifier, require_human
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import (
-    CheckLayer,
-    CheckVerdict,
     ConsentBasis,
     ConsentScope,
     HumanOnlyAction,
@@ -48,7 +46,6 @@ from thallo.contracts.enums import (
 )
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import (
-    CheckResult,
     Claim,
     Consent,
     Deal,
@@ -76,10 +73,8 @@ from thallo.extensions.proof.records import (
     ProofPiece,
     Use,
 )
-from thallo.gate.repository import content_hashes
 from thallo.truth.claims import problem as claim_problem
 
-BLOCK_CHECK = "proof.consent"
 MAX_QUOTE = 300
 MIN_QUOTE = 8
 MAX_NOTES = 20
@@ -122,7 +117,6 @@ class Proof:
     tx: Any
     tenant_id: str
     clock: Clock
-    gate: Any = None  # the gate's GateRepository, to block withdrawn proof at the gate (see sweep)
 
     # ------------------------------------------------------------------ consent (the guard)
     def won_deal(self, deal_id: str) -> tuple[Deal, Lead, Person]:
@@ -335,7 +329,7 @@ class Proof:
         Keyed on `consent.withdrawn_at`, so it also catches withdrawals recorded elsewhere."""
         now = self.clock.now()
         gone = {c.id for c in self.tx.list_all(Consent) if c.withdrawn_at is not None and c.withdrawn_at <= now}
-        counts = {"material": 0, "pieces": 0, "notes": 0, "flags": 0, "live_flags": 0, "blocks": 0}
+        counts = {"material": 0, "pieces": 0, "notes": 0, "flags": 0, "live_flags": 0}
         if not gone:
             return counts
         for m in self.tx.list_all(ProofMaterial):
@@ -367,32 +361,7 @@ class Proof:
             elif live and not old.live:  # published after the flag was written: a person must take it down
                 self.tx.update(ProofFlag, old.id, live=True, resolved_by=None, resolved_at=None)
                 counts["live_flags"] += 1
-            counts["blocks"] += self._block_variant(p.variant_id)
         return counts
-
-    def _block_variant(self, variant_id: str) -> int:
-        """A FAIL check row for the variant's current content, so the gate refuses it at approval and
-        at publish (gate/checks.py: a FAIL bound to the current hash blocks both). Written at the
-        key's next attempt, so no earlier row can clear it. Needs the gate repository to compute the
-        hash exactly as the gate does; without one, nothing is written and the flag stands."""
-        if self.gate is None:
-            return 0
-        v = self.tx.get(Variant, variant_id)
-        if v is None:
-            return 0
-        sha = content_hashes(self.gate, self.tenant_id, v.bundle_id).get(variant_id)
-        if sha is None:
-            return 0
-        mine = [r for r in self.tx.list_all(CheckResult, variant_id=variant_id)
-                if r.layer is CheckLayer.CODE and r.check_name == BLOCK_CHECK]
-        if any(r.content_sha256 == sha and r.verdict is CheckVerdict.FAIL for r in mine):
-            return 0
-        self.tx.insert(CheckResult(id=new_id(self.clock), created_at=self.clock.now(), tenant_id=self.tenant_id,
-                                   variant_id=variant_id, layer=CheckLayer.CODE, check_name=BLOCK_CHECK,
-                                   verdict=CheckVerdict.FAIL, attempt=max((r.attempt for r in mine), default=0) + 1,
-                                   content_sha256=sha,
-                                   reason="uses customer proof whose consent was withdrawn"))
-        return 1
 
     def open_flags(self) -> list[ProofFlag]:
         return [f for f in self.tx.list_all(ProofFlag) if f.resolved_at is None]
