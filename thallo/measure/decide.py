@@ -32,15 +32,17 @@ from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
-from thallo.contracts.actors import Actor, SessionVerifier, require_human
+from thallo.contracts.actors import Actor, ActorRef, HumanActor, SessionVerifier, require_human
 from thallo.contracts.clock import Clock
 from thallo.contracts.enums import HumanOnlyAction
-from thallo.contracts.ids import new_id
+from thallo.contracts.ids import is_id, new_id
 from thallo.contracts.models import AppUser, Brief, Forecast, ForecastScore, Idea, Pillar
 from thallo.gate.approvals import approver_problem
+from thallo.gate.signing import GateSigner
 from thallo.measure.estimate import SMALL_SAMPLE, estimate, prob_above_half, prob_beats
 from thallo.measure.ladder import MATURE_DAYS, RUNGS, VIEWS, PieceRow, pieces
 from thallo.measure.records import DecisionKind, DecisionProposal, DecisionState
+from thallo.trust.audit import AuditLog
 
 NO_DECISION = "no decision this month"
 MIN_PROBABILITY = 0.80
@@ -151,15 +153,18 @@ def capped_shares(shares: dict[str, Decimal], floors: dict[str, Decimal], target
             return None
         total_room = sum(room.values(), Decimal(0))
         take = {k: (move * room[k] / total_room).quantize(STEP, ROUND_DOWN) for k in others}
+        roomiest = max(others, key=lambda k: (room[k] - take[k], k))
+        take[roomiest] += min(move - sum(take.values(), Decimal(0)), room[roomiest] - take[roomiest])
         out = {k: shares[k] - take[k] for k in others}
         out[target] = shares[target] + sum(take.values(), Decimal(0))
     else:
         move = min(MAX_MOVE, shares[target] - floor[target]).quantize(STEP, ROUND_DOWN)
         if move <= 0:
             return None
-        give = (move / len(others)).quantize(STEP, ROUND_DOWN)
-        out = {k: shares[k] + give for k in others}
-        out[target] = shares[target] - give * len(others)
+        give = {k: (move / len(others)).quantize(STEP, ROUND_DOWN) for k in others}
+        give[others[0]] += move - sum(give.values(), Decimal(0))
+        out = {k: shares[k] + give[k] for k in others}
+        out[target] = shares[target] - move
     return out
 
 
@@ -251,11 +256,25 @@ def propose_month(tx: Any, clock: Clock) -> list[DecisionProposal]:
 # ---------------------------------------------------------------- sign-off
 
 
-def _person(actor: Actor, verifier: SessionVerifier, approver: AppUser | None, tenant_id: str) -> str:
+ACTION_SIGNED = "decision.signed"
+ACTION_DECLINED = "decision.declined"
+AUDIT_SUBJECT = "decision_proposal"
+
+
+def decision_fields(p: DecisionProposal, action: str, person_id: str, at: datetime) -> dict[str, Any]:
+    """What the decision MAC covers: which proposal, of what content, who, when, and the verb."""
+    return {"action": action, "proposal_id": p.id, "tenant_id": p.tenant_id, "period": p.period,
+            "dimension": p.dimension, "subject": p.subject, "kind": p.kind.value,
+            "content_hash": p.content_sha256, "person_id": person_id, "at": at.isoformat()}
+
+
+def _person(actor: Actor, verifier: SessionVerifier, approver: AppUser | None, tenant_id: str) -> HumanActor:
     person = require_human(actor, HumanOnlyAction.APPROVE, verifier=verifier, tenant_id=tenant_id)
+    if not is_id(person.id):
+        raise DecisionRefused("approver id is not a valid id")
     if problem := approver_problem(approver, person.id, tenant_id):
         raise DecisionRefused(problem)
-    return person.id
+    return person
 
 
 def _open(tx: Any, proposal_id: str, content_sha256: str) -> DecisionProposal:
@@ -269,22 +288,55 @@ def _open(tx: Any, proposal_id: str, content_sha256: str) -> DecisionProposal:
     return p
 
 
-def sign(tx: Any, clock: Clock, proposal_id: str, content_sha256: str, *, actor: Actor,
-         verifier: SessionVerifier, approver: AppUser | None) -> DecisionProposal:
-    """A named person signs exactly the proposal they saw. Recording only: nothing is applied."""
+def _transition(tx: Any, p: DecisionProposal, **fields: Any) -> None:
+    """Move a proposed row in one conditional statement: only while it is still proposed with the
+    hash that was shown. Two people acting at once: one wins, the other is refused."""
+    repo = getattr(tx, "repo", tx)
+    if hasattr(repo, "execute"):  # Postgres: one UPDATE ... WHERE state and hash still match
+        from psycopg import sql
+
+        sets = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(k)) for k in fields)
+        cur = repo.execute(sql.SQL("UPDATE decision_proposal SET {} WHERE id = %s AND state = 'proposed' "
+                                   "AND content_sha256 = %s").format(sets),
+                           [v.value if isinstance(v, DecisionState) else v for v in fields.values()]
+                           + [p.id, p.content_sha256])
+        changed = cur.rowcount == 1
+    else:  # memory: one in-process check and set, no other writer between the two
+        cur_row = tx.get(DecisionProposal, p.id)
+        changed = (cur_row is not None and cur_row.state is DecisionState.PROPOSED
+                   and cur_row.content_sha256 == p.content_sha256 and tx.update(DecisionProposal, p.id, **fields))
+    if not changed:
+        raise DecisionRefused("the proposal was already acted on or changed")
+
+
+def _act(tx: Any, clock: Clock, proposal_id: str, content_sha256: str, *, actor: Actor, verifier: SessionVerifier,
+         approver: AppUser | None, audit: AuditLog, signer: GateSigner, signing: bool) -> DecisionProposal:
+    if not isinstance(signer, GateSigner):
+        raise DecisionRefused("no gate signer configured")
     p = _open(tx, proposal_id, content_sha256)
-    who = _person(actor, verifier, approver, p.tenant_id)
+    person = _person(actor, verifier, approver, p.tenant_id)
     now = clock.now()
-    tx.update(DecisionProposal, p.id, state=DecisionState.SIGNED, signed_by=who, signed_at=now)
-    return p.model_copy(update={"state": DecisionState.SIGNED, "signed_by": who, "signed_at": now})
+    state, action = (DecisionState.SIGNED, ACTION_SIGNED) if signing else (DecisionState.DECLINED, ACTION_DECLINED)
+    who = {"signed_by": person.id, "signed_at": now} if signing else {"declined_by": person.id, "declined_at": now}
+    _transition(tx, p, state=state, **who)
+    audit.append(p.tenant_id, ActorRef.of(person), action, subject_kind=AUDIT_SUBJECT, subject_id=p.id,
+                 payload={"content_hash": p.content_sha256, "period": p.period, "kind": p.kind.value,
+                          "at": now.isoformat(), "mac": signer.sign(decision_fields(p, action, person.id, now))})
+    return p.model_copy(update={"state": state, **who})
 
 
-def decline(tx: Any, proposal_id: str, content_sha256: str, *, actor: Actor, verifier: SessionVerifier,
-            approver: AppUser | None) -> DecisionProposal:
-    p = _open(tx, proposal_id, content_sha256)
-    _person(actor, verifier, approver, p.tenant_id)
-    tx.update(DecisionProposal, p.id, state=DecisionState.DECLINED)
-    return p.model_copy(update={"state": DecisionState.DECLINED})
+def sign(tx: Any, clock: Clock, proposal_id: str, content_sha256: str, *, actor: Actor, verifier: SessionVerifier,
+         approver: AppUser | None, audit: AuditLog, signer: GateSigner) -> DecisionProposal:
+    """A named person signs exactly the proposal they saw. Recording only: nothing is applied."""
+    return _act(tx, clock, proposal_id, content_sha256, actor=actor, verifier=verifier, approver=approver,
+                audit=audit, signer=signer, signing=True)
+
+
+def decline(tx: Any, clock: Clock, proposal_id: str, content_sha256: str, *, actor: Actor,
+            verifier: SessionVerifier, approver: AppUser | None, audit: AuditLog,
+            signer: GateSigner) -> DecisionProposal:
+    return _act(tx, clock, proposal_id, content_sha256, actor=actor, verifier=verifier, approver=approver,
+                audit=audit, signer=signer, signing=False)
 
 
 # ---------------------------------------------------------------- forecasts as the referee

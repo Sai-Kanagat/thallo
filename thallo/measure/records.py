@@ -43,6 +43,8 @@ class DecisionProposal(TenantRow):
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     signed_by: Id | None = None
     signed_at: AwareDatetime | None = None
+    declined_by: Id | None = None
+    declined_at: AwareDatetime | None = None
 
 
 __all__ = ["DecisionKind", "DecisionProposal", "DecisionState"]
