@@ -121,9 +121,12 @@ class PgGateRepository:
 
     def get_check_results(self, tenant_id: str, variant_id: str, content_sha256: str) -> Sequence[CheckResult]:
         own(self.repo, tenant_id)
-        return self.repo.query_all(
+        rows = self.repo.query_all(
             CheckResult, "SELECT * FROM check_result WHERE variant_id = %s AND content_sha256 = %s ORDER BY id",
             (variant_id, content_sha256))
+        from thallo.extensions.proof.gate import blocking_rows  # WP-28: withdrawn proof refuses at any hash
+        return [*rows, *blocking_rows(self.repo.list_all, self.repo.get, tenant_id=tenant_id, variant_id=variant_id,
+                                      content_sha256=content_sha256, now=self.repo.now())]
 
     def get_audit_chain(self, tenant_id: str, from_seq: int) -> Sequence[AuditEntry]:
         return self.audit.since(tenant_id, from_seq)

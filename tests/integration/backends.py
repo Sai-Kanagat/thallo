@@ -260,7 +260,10 @@ class MemoryGate:
 
     def get_check_results(self, tenant_id, variant_id, content_sha256):
         self._o(tenant_id)
-        return self.s.list(CheckResult, variant_id=variant_id, content_sha256=content_sha256)
+        from thallo.extensions.proof.gate import blocking_rows  # WP-28: withdrawn proof refuses at any hash
+        rows = self.s.list(CheckResult, variant_id=variant_id, content_sha256=content_sha256)
+        return [*rows, *blocking_rows(self.s.list, self.s.get, tenant_id=tenant_id, variant_id=variant_id,
+                                      content_sha256=content_sha256, now=self.s.audit.clock.now())]
 
     def get_audit_chain(self, tenant_id, from_seq):
         return [e for e in MemoryAuditStore(self.s).entries(tenant_id) if e.seq >= from_seq]
