@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from thallo.contracts.actors import Actor, SessionVerifier
@@ -23,9 +23,20 @@ from thallo.contracts.enums import Language, SourceKind
 from thallo.contracts.events import Event
 from thallo.contracts.ids import new_id
 from thallo.contracts.models import Claim, Source
-from thallo.extensions.packs.pack import PackError, TrustedKeys, canonical, check_item, check_window, open_pack
+from thallo.extensions.packs.pack import (
+    MAX_LIFETIME,
+    PackError,
+    TrustedKeys,
+    canonical,
+    check_item,
+    check_window,
+    open_pack,
+    text_problems,
+)
 from thallo.truth.claims import new_candidate, next_code, verify_claim
 from thallo.truth.repository import ClaimRepository
+
+CLOCK_SKEW = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -68,14 +79,23 @@ def import_pack(data: bytes | str | Mapping[str, Any], *, trusted: TrustedKeys, 
     if now >= body.expires_at:
         raise PackError(f"the pack expired at {body.expires_at.isoformat()}")
     check_window(body.issued_at, body.expires_at)
+    if body.issued_at > now + CLOCK_SKEW:
+        raise PackError("the pack is dated in the future")
+    if body.expires_at > now + MAX_LIFETIME:
+        raise PackError(f"a pack may live at most {MAX_LIFETIME.days} days from today")
+    for label, text in (("title", body.title), ("publisher", body.publisher)):
+        if text_problems(text):
+            raise PackError(f"pack {label} contains personal or contact data")
     for item in body.items:
         check_item(item, tenant_languages)
+        if text_problems(f"{body.publisher}: {item.source.title}"):
+            raise PackError(f"{item.key}: source title contains personal or contact data")
     codes = list(existing_codes)
     sources, claims, links, events = [], [], [], []
     for item in body.items:
         src = Source(id=new_id(clock), created_at=now, tenant_id=tenant_id, kind=SourceKind.DOCUMENT,
                      title=f"{body.publisher}: {item.source.title}"[:300], uri=item.source.uri,
-                     captured_at=datetime.combine(item.source.captured_on, time(0), tzinfo=timezone.utc))
+                     captured_at=datetime.combine(item.source.captured_on, time(0), tzinfo=UTC))
         code = next_code(codes)
         codes.append(code)
         claim, event = new_candidate(

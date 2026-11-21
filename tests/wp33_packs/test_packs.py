@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import timedelta
 
 import pytest
 
@@ -24,6 +25,7 @@ from thallo.truth import InMemoryClaimRepository, build
 from thallo.truth.compiler import CompileFailed
 from thallo.truth.fill import LibraryError
 
+MINUTE = timedelta(minutes=1)
 B = "0190f3a0-0000-7000-8000-0000000000bb"
 
 
@@ -164,6 +166,22 @@ def test_reimport_refused_and_importer_reruns_rules():
                                                                              "unit": "EUR"})]})
     with pytest.raises(PackError, match="price"):
         do_import(sign_body(bad, s).model_dump(mode="json"), s, clock)
+
+
+def test_import_refuses_future_dated_overlong_and_contact_data():
+    pack, s, clock, _ = make()
+    body = open_pack(json.loads(to_bytes(pack)), trusting(s))[0]
+    future = body.model_copy(update={"issued_at": clock.now() + DAY, "expires_at": clock.now() + 50 * DAY})
+    with pytest.raises(PackError, match="future"):
+        do_import(sign_body(future, s).model_dump(mode="json"), s, clock)
+    edge = body.model_copy(update={"issued_at": clock.now() + 5 * MINUTE,
+                                   "expires_at": clock.now() + 5 * MINUTE + 365 * DAY})
+    with pytest.raises(PackError, match="365"):
+        do_import(sign_body(edge, s).model_dump(mode="json"), s, clock)
+    for field, text in (("title", "Call 051 123 4567"), ("publisher", "anna@maker.it")):
+        bad = body.model_copy(update={field: text})
+        with pytest.raises(PackError, match="personal"):
+            do_import(sign_body(bad, s).model_dump(mode="json"), s, clock)
 
 
 def test_non_canonical_or_extra_fields_refused():
