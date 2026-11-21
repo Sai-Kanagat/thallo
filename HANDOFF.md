@@ -147,3 +147,9 @@ Open, in order:
 - Region policy rules, disclosure label wording and consent texts need a lawyer.
 - Cost caps (EUR 1 run, 5 tenant day, 50 global day) are guesses; cap check then record is not atomic.
 - Redirector owner-role lookup policy `redirect_slug_lookup`: keep or replace.
+
+## Wave 3+ status (21 Nov, after the build-fast push)
+Merged since 19 Nov: WP-10 to 20, 23, 24, 26, 27, 28, 29, 33 (28 of 42). CI on main 3,218 passed, 5 skipped, with Postgres. Migrations 0024 to 0041 run on Docker only; none on Supabase. Run CI with `CI_PG_PORT=<free port>` when agents are also running CI.
+Not started: WP-21, 22, 25, 30, 31, 32, 34 to 41.
+Open for Sai (collected from reports): founder approval of own posts needs a gate change; newsletter one-tap send to all subscribers; GBP API access and OAuth client; claim-pack publisher key; proof consent wording; meeting types per play; CRM transfer legal basis; region policy and disclosure wording; cost cap defaults; Italian and Tamil question wording.
+Wiring still to do: learning rules into copy production; trust breakers into review deck and check stack; scheduler for nurture, signals, newsletter and planner jobs; pillar rows for real tenants; newsletter subscribe and unsubscribe routes; pack import UI; blind comparison screen; vision grader image input; provenance values for stock and edited clips; template video lint coverage.
