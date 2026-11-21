@@ -155,11 +155,23 @@ def approve_reply(draft: ReplyDraft, item: InboxItem, *, actor: Actor, approver:
                     actor_id=human.id, read_confirmed=read_confirmed, note=note)
 
 
+SUBJECT_KINDS = ("reply_draft", "profile_proposal")
+
+
 def mark_done(subject_kind: str, subject_id: str, subject_sha256: str, *, tenant_id: str, actor: Actor,
-              verifier: SessionVerifier, clock: Clock, note: str | None = None) -> Decision:
-    """A person says they pasted the approved text (or applied the change) in the dashboard."""
+              approver: AppUser | None, verifier: SessionVerifier, decisions: Sequence[Decision], clock: Clock,
+              note: str | None = None) -> Decision:
+    """A person says they pasted the approved text (or applied the change) in the dashboard. Only an
+    approver of this tenant, only for an item whose latest decision on this exact hash is "approved"."""
+    if subject_kind not in SUBJECT_KINDS:
+        raise ReplyRefused(f"{subject_kind!r} is not something a person marks done here")
     action = HumanOnlyAction.PUBLIC_REPLY if subject_kind == "reply_draft" else HumanOnlyAction.APPROVE
     human = require_human(actor, action, verifier=verifier, tenant_id=tenant_id)
+    if (problem := approver_problem(approver, human.id, tenant_id)) is not None:
+        raise ReplyRefused(problem)
+    mine = [d for d in decisions if d.tenant_id == tenant_id and d.subject_kind == subject_kind]
+    if standing(subject_id, subject_sha256, mine) != "approved":
+        raise ReplyRefused("only an approved item, on its exact approved text, can be marked done")
     return Decision(id=new_id(clock), tenant_id=tenant_id, subject_kind=subject_kind, subject_id=subject_id,
                     decision="done_by_person", subject_sha256=subject_sha256, actor_id=human.id, note=note)
 
