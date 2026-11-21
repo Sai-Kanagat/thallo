@@ -24,12 +24,13 @@ class Verifier:
         return actor.session_id == "s1"
 
 
-def test_round_trip_isolation_and_append_only(database):
+def test_round_trip_isolation_and_append_only(database, urls):  # noqa: F811
     ck = database.clock
     tenant = make_tenant(database, "Gbp pg")
-    with database.admin() as a:
-        ident = Identity(id=new_id(ck), created_at=ck.now(), email=f"{new_id(ck)}@example.invalid")
-        a.insert(ident)
+    ident = Identity(id=new_id(ck), created_at=ck.now(), email=f"{new_id(ck)}@example.invalid", display_name="Owner")
+    with psycopg.connect(urls["admin"]) as conn:
+        conn.execute("INSERT INTO identity (id, created_at, email, display_name) VALUES (%s, %s, %s, %s)",
+                     (ident.id, ident.created_at, ident.email, ident.display_name))
     with database.tenant(tenant.id) as tx:
         user = tx.insert(AppUser(id=new_id(ck), created_at=ck.now(), tenant_id=tenant.id, identity_id=ident.id,
                                  display_name="Owner", role=UserRole.APPROVER))
