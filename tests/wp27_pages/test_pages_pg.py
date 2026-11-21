@@ -16,14 +16,17 @@ pytestmark = pytest.mark.skipif(not URL, reason="DATABASE_URL unset: run scripts
 
 def setup(database, tenant):
     clock = database.clock
-    with database.admin() as a:
-        ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid")
-        a.insert(ident)
+    ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid",
+                     display_name="Reviewer")
+    with psycopg.connect(database.admin_url) as conn:  # identity is owner-only (0012)
+        conn.execute("INSERT INTO identity (id, created_at, email, display_name) VALUES (%s, %s, %s, %s)",
+                     (ident.id, ident.created_at, ident.email, ident.display_name))
     with database.tenant(tenant.id) as tx:
         user = AppUser(id=new_id(clock), created_at=clock.now(), tenant_id=tenant.id, identity_id=ident.id,
                        display_name="Reviewer", role=UserRole.APPROVER)
         tx.insert(user)
         claims, src = make_claims(tenant.id, base=200)
+        claims = {k: c.model_copy(update={"verified_by": user.id}) for k, c in claims.items()}
         for s in src.values():
             tx.insert(s)
         for c in claims.values():
