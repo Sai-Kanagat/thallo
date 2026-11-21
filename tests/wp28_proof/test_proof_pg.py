@@ -1,4 +1,5 @@
 """WP-28 on Postgres: the tables refuse material without consent, round trip, tenant isolation, no delete."""
+# ruff: noqa: F811  (store fixtures imported from wp01)
 from __future__ import annotations
 
 from datetime import timedelta
@@ -7,7 +8,7 @@ from decimal import Decimal
 import psycopg
 import pytest
 
-from tests.wp01_store.conftest import URL, make_tenant
+from tests.wp01_store.conftest import URL, admin, clock, database, make_tenant, urls  # noqa: F401
 from tests.wp28_proof.conftest import TRANSCRIPT
 from thallo.contracts.actors import HumanActor
 from thallo.contracts.enums import ClaimKind, Language, OutcomeKind, SourceKind, UserRole
@@ -25,11 +26,11 @@ class Verifier:
         return True
 
 
-def setup(database, tenant):
+def setup(database, tenant, admin):
     clock = database.clock
-    with database.admin() as a:
-        ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid")
-        a.insert(ident)
+    ident = Identity(id=new_id(clock), created_at=clock.now(), email=f"{new_id(clock)}@example.invalid")
+    admin.execute("INSERT INTO identity (id, created_at, email) VALUES (%s, %s, %s)",
+                  (ident.id, ident.created_at, ident.email))
     with database.tenant(tenant.id) as tx:
         now = clock.now()
         user = tx.insert(AppUser(id=new_id(clock), created_at=now, tenant_id=tenant.id, identity_id=ident.id,
@@ -51,9 +52,9 @@ def setup(database, tenant):
     return user, person, deal, src, claim
 
 
-def test_round_trip_withdrawal_isolation_and_refusals(database):
+def test_round_trip_withdrawal_isolation_and_refusals(database, admin):  # noqa: F811
     tenant = make_tenant(database, "Proof")
-    user, person, deal, src, claim = setup(database, tenant)
+    user, person, deal, src, claim = setup(database, tenant, admin)
     human = HumanActor(id=user.id, tenant_id=tenant.id, session_id="live")
     s = TRANSCRIPT.index(WORDS)
     with database.tenant(tenant.id) as tx:
