@@ -1,4 +1,4 @@
-# Cortex Operator: a marketing department for one-person marketers
+# Thallo: a marketing department for one-person marketers
 
 > Superseded on 11 Nov 2026 by `docs/BUILD_PLAN.md`. Kept for history. Do not build from this file.
 
@@ -8,7 +8,7 @@ Sai wants a full-stack AI marketing system that serves four goals at once: his p
 
 ## The thesis
 
-Every AI marketing tool can write. Cortex knows three things they do not, with receipts:
+Every AI marketing tool can write. Thallo knows three things they do not, with receipts:
 
 1. **Truth:** what can be said. Claim Ledger with evidence; factual sentences without a source cannot compile; claims decay unless reconfirmed.
 2. **Taste:** what you would approve. Repeated edits and rejections become proposed rules, accepted like code changes. A graveyard records every killed idea and why.
