@@ -1,9 +1,6 @@
-<img width="1584" height="396" alt="LinkedIn banner@1x" src="https://github.com/user-attachments/assets/6c049607-5ffe-49dc-bd6e-41d2a7a6bbed" />
-
+<a href="https://saikanagat.com/thallo"><img src=".github/assets/banner.svg" width="100%" alt="Thallo. Grown, not generated. A press stamps each piece before it leaves the belt."></a>
 
 # Thallo
-
-**Grown, not generated.**
 
 Thallo is a marketing system for small businesses and the people who run their marketing. It plans the week, drafts each piece from facts the business has confirmed, and publishes only what a person has approved.
 
